@@ -4,6 +4,13 @@ import { EventStore } from './persistence.js';
 import { Broker } from './broker.js';
 import { mountTransports } from './transports.js';
 import { defaultDbPath } from './paths.js';
+import {
+  daemonStatus,
+  restartDaemon,
+  startDaemon,
+  stopDaemon,
+} from './daemon.js';
+import { runConnectTest } from './connect-test.js';
 
 const program = new Command();
 program
@@ -23,8 +30,8 @@ program
     const broker = new Broker(store);
 
     const transports = await mountTransports(broker, {
+      mode: opts.stdioOnly ? 'stdio' : 'both',
       port: opts.stdioOnly ? undefined : opts.port,
-      stdioOnly: opts.stdioOnly,
     });
 
     const shutdown = async (sig: string) => {
@@ -70,6 +77,89 @@ program
     });
     console.log(JSON.stringify(result, null, 2));
     store.close();
+  });
+
+// ---- daemon subcommands ----
+
+const daemon = program.command('daemon').description('Manage the long-running Switch daemon.');
+
+daemon
+  .command('start')
+  .description('Start the Switch daemon bound to 127.0.0.1:<port>.')
+  .option('-p, --port <port>', 'HTTP/SSE port', (v) => Number(v), 7777)
+  .option('--db <path>', 'SQLite path', defaultDbPath())
+  .option('--detach', 'Fork into background and return; otherwise run in foreground.', false)
+  .option('--force', 'Override a stale or running PID file.', false)
+  .action(async (opts: { port: number; db: string; detach: boolean; force: boolean }) => {
+    try {
+      const result = await startDaemon({
+        port: opts.port,
+        db: opts.db,
+        detach: opts.detach,
+        force: opts.force,
+      });
+      if (result.detached) {
+        console.log(JSON.stringify({ ok: true, detached: true, pid: result.pid, port: opts.port, db: opts.db }, null, 2));
+        process.exit(0);
+      }
+      // Foreground: startDaemon blocks; we won't reach here unless it returned synthetically.
+    } catch (err) {
+      console.error(`[cowire] daemon start failed: ${(err as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+daemon
+  .command('stop')
+  .description('Send SIGTERM to the running daemon, fall back to SIGKILL after 10s.')
+  .action(async () => {
+    const result = await stopDaemon();
+    if (result.pid === 0) {
+      console.error('[cowire] no PID file found; nothing to stop');
+      process.exit(1);
+    }
+    if (!result.stopped) {
+      console.error(`[cowire] failed to stop daemon (pid ${result.pid})`);
+      process.exit(1);
+    }
+    console.log(JSON.stringify({ ok: true, stopped: true, pid: result.pid }, null, 2));
+  });
+
+daemon
+  .command('status')
+  .description('Print daemon status (running PID, port, uptime, connected clients, event count).')
+  .action(async () => {
+    const status = await daemonStatus();
+    console.log(JSON.stringify(status, null, 2));
+    if (!status.running) process.exit(1);
+  });
+
+daemon
+  .command('restart')
+  .description('Stop and start the daemon, preserving port/db from the previous run.')
+  .action(async () => {
+    try {
+      const result = await restartDaemon();
+      console.log(JSON.stringify({ ok: true, restarted: true, ...result }, null, 2));
+    } catch (err) {
+      console.error(`[cowire] daemon restart failed: ${(err as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('connect-test')
+  .description('Smoke-test the daemon: connect via SSE, emit a test event, subscribe, print received notifications.')
+  .option('-u, --url <url>', 'Daemon SSE URL', 'http://127.0.0.1:7777/mcp/sse')
+  .option('-w, --wait-ms <n>', 'How long to wait for notifications after emit (ms)', (v) => Number(v), 2000)
+  .action(async (opts: { url: string; waitMs: number }) => {
+    try {
+      const result = await runConnectTest({ url: opts.url, waitMs: opts.waitMs });
+      console.log(JSON.stringify(result, null, 2));
+    } catch (err) {
+      console.error(`[cowire] connect-test failed: ${(err as Error).message}`);
+      process.exit(1);
+    }
   });
 
 program.parseAsync(process.argv).catch((err) => {

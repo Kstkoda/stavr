@@ -196,6 +196,14 @@ export class EventStore {
     return (this.db.prepare(`SELECT COUNT(*) AS c FROM events`).get() as { c: number }).c;
   }
 
+  pendingDecisionCount(): number {
+    return (
+      this.db.prepare(`SELECT COUNT(*) AS c FROM decisions WHERE status='open'`).get() as {
+        c: number;
+      }
+    ).c;
+  }
+
   createDecision(
     correlationId: string,
     question: string,

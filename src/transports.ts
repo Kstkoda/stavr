@@ -6,8 +6,18 @@ import { createSwitchServer } from './server.js';
 import type { Broker } from './broker.js';
 import { startupDecisionSweep } from './tools/decisions.js';
 
+/**
+ * Transport modes:
+ *  - 'stdio'  : stdio transport only (for direct CC spawn / `cowire run`).
+ *  - 'daemon' : HTTP/SSE only; binding the port is required (failure is fatal).
+ *  - 'both'   : stdio + optional HTTP/SSE; EADDRINUSE falls back to stdio (back-compat for `cowire start`).
+ */
+export type TransportMode = 'stdio' | 'daemon' | 'both';
+
 export interface TransportOpts {
+  mode?: TransportMode;
   port?: number;
+  /** Deprecated: prefer `mode`. Kept for `cowire start --stdio-only`. */
   stdioOnly?: boolean;
   silent?: boolean;
 }
@@ -15,6 +25,8 @@ export interface TransportOpts {
 export interface MountedTransports {
   httpServer?: HttpServer;
   shutdown: () => Promise<void>;
+  /** Live count of connected SSE sessions (daemon mode only). */
+  sseSessionCount: () => number;
 }
 
 export async function mountTransports(
@@ -25,22 +37,39 @@ export async function mountTransports(
     if (!opts.silent) console.error(`[cowire] ${m}`);
   };
 
+  // Resolve mode from explicit param or legacy `stdioOnly`.
+  const mode: TransportMode = opts.mode ?? (opts.stdioOnly ? 'stdio' : 'both');
+
   const sweptCount = await startupDecisionSweep(broker);
   if (sweptCount > 0) log(`startup sweep expired ${sweptCount} stale decision(s)`);
 
-  const stdioHandle = createSwitchServer(broker);
-  await stdioHandle.server.connect(new StdioServerTransport());
-  log('stdio transport ready');
+  if (mode !== 'daemon') {
+    const stdioHandle = createSwitchServer(broker);
+    await stdioHandle.server.connect(new StdioServerTransport());
+    log('stdio transport ready');
+  }
 
   let httpServer: HttpServer | undefined;
   const sseSessions = new Map<string, SSEServerTransport>();
 
-  if (!opts.stdioOnly && opts.port) {
+  const wantHttp = mode === 'daemon' || (mode === 'both' && opts.port !== undefined);
+  if (wantHttp) {
+    if (opts.port === undefined) throw new Error('port is required when mode includes HTTP/SSE');
+
     const app = express();
     app.use(express.json({ limit: '4mb' }));
 
     app.get('/healthz', (_req, res) => {
       res.json({ ok: true, events: broker.store.eventCount() });
+    });
+
+    app.get('/status', (_req, res) => {
+      res.json({
+        ok: true,
+        events: broker.store.eventCount(),
+        sse_sessions: sseSessions.size,
+        pending_decisions: broker.store.pendingDecisionCount(),
+      });
     });
 
     app.get('/mcp/sse', async (_req: Request, res: Response) => {
@@ -65,12 +94,18 @@ export async function mountTransports(
       await transport.handlePostMessage(req, res, req.body);
     });
 
-    httpServer = await new Promise<HttpServer | undefined>((resolve) => {
-      const s = app.listen(opts.port!, () => {
-        log(`HTTP/SSE listening on :${opts.port}`);
+    httpServer = await new Promise<HttpServer | undefined>((resolve, reject) => {
+      const s = app.listen(opts.port!, '127.0.0.1', () => {
+        log(`HTTP/SSE listening on 127.0.0.1:${opts.port}`);
         resolve(s);
       });
       s.on('error', (err: NodeJS.ErrnoException) => {
+        if (mode === 'daemon') {
+          // Daemon mode: bind failure is fatal — there's nothing else for us to do.
+          reject(err);
+          return;
+        }
+        // 'both' mode: legacy `cowire start` behaviour — degrade to stdio-only.
         if (err.code === 'EADDRINUSE') {
           log(
             `port ${opts.port} already in use; continuing with stdio-only ` +
@@ -91,5 +126,5 @@ export async function mountTransports(
     broker.store.close();
   };
 
-  return { httpServer, shutdown };
+  return { httpServer, shutdown, sseSessionCount: () => sseSessions.size };
 }
