@@ -11,16 +11,39 @@ import type { EventStore } from './persistence.js';
 import { registerDecisionTools } from './tools/decisions.js';
 import { registerGithubTools } from './adapters/github.js';
 import { registerGithubWriteTools } from './adapters/github-writes.js';
+import { WorkerOrchestrator } from './workers/orchestrator.js';
+import { allSpawners } from './workers/spawners-registry.js';
+import { registerWorkerTools } from './workers/tools.js';
 
 export interface SwitchServerHandle {
   server: McpServer;
   sessionId: string;
+  orchestrator: WorkerOrchestrator;
+}
+
+/**
+ * Shared orchestrator per broker. The orchestrator owns the in-process map of
+ * live worker instances; we want a single registry across all MCP sessions
+ * connecting to the same daemon (otherwise two clients could spawn workers
+ * the other never sees).
+ */
+const orchestratorsByBroker = new WeakMap<Broker, WorkerOrchestrator>();
+
+function getOrCreateOrchestrator(broker: Broker): WorkerOrchestrator {
+  const existing = orchestratorsByBroker.get(broker);
+  if (existing) return existing;
+  const orch = new WorkerOrchestrator({ broker, store: broker.store });
+  for (const s of allSpawners) orch.register(s);
+  orchestratorsByBroker.set(broker, orch);
+  return orch;
 }
 
 export function createSwitchServer(broker: Broker): SwitchServerHandle {
   const sessionId = newSessionId();
   const server = new McpServer({ name: 'cowire-switch', version: '0.1.0' });
   broker.registerSession(sessionId, server);
+
+  const orchestrator = getOrCreateOrchestrator(broker);
 
   registerEmitEvent(server, broker);
   registerSubscribe(server, broker, sessionId);
@@ -29,8 +52,8 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   registerDecisionTools(server, broker);
   registerGithubTools(server);
   registerGithubWriteTools(server, broker);
-
-  return { server, sessionId };
+  registerWorkerTools(server, orchestrator);
+  return { server, sessionId, orchestrator };
 }
 
 function registerEmitEvent(server: McpServer, broker: Broker): void {

@@ -34,5 +34,10 @@ Copy [`000-template.md`](./000-template.md) and rename to `NNN-short-kebab-title
 - [ADR-007 — EADDRINUSE graceful fallback](./007-eaddrinuse-graceful-fallback.md)
 - [ADR-008 — gh CLI write actions through `await_decision`](./008-write-actions-await-decision.md)
 - [ADR-009 — Stdio→SSE shim for clients that don't recognize remote MCP](./009-stdio-sse-shim.md)
-- [ADR-017](./017-a2a-protocol-decision.md) — A2A protocol compatibility decision)
-- [ADR-018](./018-destructive-operations-stay-manual.md) — Destructive operations stay manual)
+- [ADR-012](./012-event-driven-over-polling.md) — Event-driven over polling
+- [ADR-013](./013-single-workers-table-with-type-discriminator.md) — Single workers table with type discriminator
+- [ADR-014](./014-spawner-static-registry.md) — Spawner static registry
+- [ADR-015](./015-federation-readiness-design-constraint.md) — Federation-readiness as design constraint
+- [ADR-016](./016-cc-worker-uses-git-worktree-isolation.md) — CC worker uses git worktree isolation
+- [ADR-017](./017-a2a-protocol-decision.md) — A2A protocol compatibility decision
+- [ADR-018](./018-destructive-operations-stay-manual.md) — Destructive operations stay manual

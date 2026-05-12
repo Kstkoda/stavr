@@ -171,6 +171,37 @@ GET  http://127.0.0.1:7777/status         # live counts (sse_sessions, events, p
 | `get_events` | Query historical events. |
 | `await_decision` | Block until response (Pattern A). 30-min cap. |
 | `respond_to_decision` | Resolve a pending decision. |
+| `worker_list_types` | List registered worker types. |
+| `worker_spawn` | Spawn a worker (cc / shell / …). |
+| `worker_list` | List workers. |
+| `worker_status` | One worker's state. |
+| `worker_dispatch` | Send an instruction to a worker. |
+| `worker_terminate` | Stop a worker. |
+
+## Workers (Spec 42 — event-driven orchestration)
+
+Switch is also a generic orchestrator for spawnable workloads — Claude Code sessions, shell commands, and (in follow-ups) Unity Hub, Roblox Studio, Python scripts. Each worker type plugs in as a single file under `src/workers/<type>.ts` implementing the `WorkerSpawner` interface (see `src/workers/types.ts`). Two non-negotiable invariants:
+
+1. **Event-driven, never polling.** Process exits use `child_process` `'exit'` events. Filesystem changes use `chokidar`. The only bounded one-shot timer is the per-worker idle marker (5 min), reset on every activity.
+2. **Pluggable.** Adding a new worker type is one file in `src/workers/` plus one line in `src/workers/spawners-registry.ts`. No edits to `server.ts`, persistence, or future dashboard code.
+
+v1 ships two spawners:
+
+- **`cc`** — Claude Code sessions in dedicated `git worktree` directories (ADR-016). Each spawn creates `<repo>/.cowire-worktrees/<worker-name>` and opens a visible `cmd` window running `claude --mcp-config .cowire-mcp.json …`. Git state inside the worktree is observed via `chokidar` on `.git/HEAD`, `.git/refs/heads/<branch>`, `.git/index` — `worker_metadata_changed` events fire within ~50ms of any git operation.
+- **`shell`** — `cmd` / `powershell` / `bash` commands. `interactive: false` pipes stdout+stderr through `readline`, emitting one `worker_progress` event per line. `interactive: true` opens a visible window the user can type into.
+
+Six type-agnostic MCP tools:
+
+| Tool | Tier | Purpose |
+|---|---|---|
+| `worker_list_types` | auto | Registry of available spawners + their param schemas. |
+| `worker_spawn` | per-spawner (default confirm) | Spawn a worker of any registered type. |
+| `worker_list` | auto | List workers, filter by type/status. |
+| `worker_status` | auto | Full state of one worker by id or name. |
+| `worker_dispatch` | per-spawner | Deliver an instruction (errors if the spawner doesn't support dispatch). |
+| `worker_terminate` | confirm | Stop a worker, force-killable. |
+
+Adding a new worker type: see [`docs/writing-a-worker.md`](./docs/writing-a-worker.md).
 
 ## GitHub adapter
 

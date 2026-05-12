@@ -231,6 +231,83 @@ To add a new adapter, see [`docs/writing-an-adapter.md`](./docs/writing-an-adapt
 
 ---
 
+## Worker orchestration
+
+Switch is also a process orchestrator. The worker subsystem lives under `src/workers/` and is the spec 42 implementation. It turns "spawn me a Claude Code session" or "run npm test in a window" into events on the same broker, durable in the same SQLite store.
+
+### The worker model
+
+A **worker** is any spawnable workload Switch can start, observe, and stop. Every worker has the same envelope (`id`, `name`, `type`, `cwd`, `pid?`, `status`, `started_at`, `metadata`, `spawn_params_hash`) in the `workers` SQLite table (see [ADR-013](./adr/013-single-workers-table-with-type-discriminator.md)). Type-specific fields (branch for cc, command for shell, project for unity, …) live in `metadata_json`.
+
+### The spawner interface
+
+Each worker type is one file in `src/workers/<type>.ts` exporting a default `WorkerSpawner` (`src/workers/types.ts`). The interface has six fields:
+
+- `type`, `displayName`, `description` — descriptive.
+- `tier: 'auto' | 'confirm' | 'never'` — spec 39 authorization tier. Enforced once by the orchestrator.
+- `paramsSchema: z.ZodTypeAny` — Zod schema for spawn input.
+- `spawn(params, ctx) → WorkerInstance` — start the workload. Returns a handle whose `events` emitter the orchestrator subscribes to.
+- `dispatch?(worker, message, ctx)` — optional; deliver an instruction.
+
+Every spawner is event-driven by construction: child-process exits use `'exit'` listeners, filesystem changes use `chokidar`, line streams use `readline`. The orchestrator forbids `setInterval` in spawners; the only `setTimeout` allowed is the bounded one-shot idle marker on the orchestrator itself (see [ADR-012](./adr/012-event-driven-over-polling.md)).
+
+### v1 spawners
+
+**`src/workers/cc.ts` — Claude Code.** Each spawn:
+
+1. `git worktree add <repo>/.cowire-worktrees/<name> -B <branch> origin/<base>` — every CC worker gets a dedicated worktree so parallel workers in the same repo never collide. State-of-the-art 2026 pattern (Conductor, Vibe Kanban, Claude Squad). See [ADR-016](./adr/016-cc-worker-uses-git-worktree-isolation.md).
+2. Write `<worktree>/.cowire-mcp.json` with the daemon URL (SSE or shim).
+3. Spawn `cmd.exe /c start cc:<name> cmd /K claude --mcp-config .cowire-mcp.json …` so the user sees a visible window.
+4. `chokidar.watch` on `.git/HEAD`, `.git/refs/heads/<branch>`, `.git/index` in the worktree — replaces the prior 10s `git status` poller. Metadata events arrive within ~50 ms of an `git commit` / branch update.
+5. On exit (or `worker_terminate`), best-effort `git worktree remove --force` cleans up.
+
+**`src/workers/shell.ts` — generic shell.** `cmd` / `powershell` / `bash`. `interactive: false` pipes stdout+stderr through `readline`, emitting one `worker_progress` event per line. `interactive: true` opens a visible window. `dispatch` is not supported (errors with `dispatch_not_supported`).
+
+### MCP tools
+
+```mermaid
+sequenceDiagram
+    participant Co as Co (caller)
+    participant Sv as Switch tools.ts
+    participant Or as WorkerOrchestrator
+    participant Sp as Spawner (cc | shell)
+    participant DB as workers table
+    participant Br as Broker
+
+    Co->>Sv: worker_spawn { type, name, params }
+    Sv->>Or: spawn(type, name, params)
+    Or->>DB: nameIsAvailable(name)?
+    alt tier === 'confirm'
+      Or->>Br: publish(decision_request)
+      Note over Or: await_decision blocks
+      Br-->>Or: response 'approve'
+    end
+    Or->>Sp: spawn(params, ctx)
+    Sp-->>Or: WorkerInstance + events
+    Or->>DB: upsertWorker(record)
+    Or->>Br: publish(worker_spawned)
+    Note over Or,Sp: instance.events.on(progress/metadata/activity/exit) wired
+    Sp-->>Or: chokidar 'change' fires
+    Or->>Br: publish(worker_metadata_changed)
+    Sp-->>Or: child_process 'exit' fires
+    Or->>DB: markWorkerTerminated(...)
+    Or->>Br: publish(worker_terminated)
+```
+
+The orchestrator (`src/workers/orchestrator.ts`) is the only thing that talks to the spawners directly; tools, persistence, and broker fan-out all go through it.
+
+### Resolutions for open design questions (in-phase)
+
+1. **CC's `--mcp-config` SSE vs shim.** `.cowire-mcp.json` is written with `type: "sse"` pointing at the daemon. CC builds that don't speak SSE natively use the shim entry from the daemon README — same file, different URL.
+2. **PID capture under `cmd /K start`.** `child.pid` is the launcher cmd's PID, not `claude.exe`. We record `launcher_pid` in worker metadata; the dashboard surfaces it as "this is the window, not the process inside." A future spawner option could `start /B` for headless modes to capture the inner PID directly.
+3. **`worker_dispatch_request` reaches the spawned CC.** Mechanism (a): the orchestrator publishes the event on the broker; the spawned CC subscribed to its own dispatch kind via the MCP `subscribe_to_events` tool at startup picks it up. No filesystem polling, no extra ingress.
+
+### Federation-readiness (constraint, not v1)
+
+The `worker_*` event taxonomy is treated as a public API — see [ADR-015](./adr/015-federation-readiness-design-constraint.md). External orchestrators (Anthropic Agent Teams, n8n, A2A-speaking agents) should be able to produce these events too, so the schemas avoid Cowire-internal metadata an external worker couldn't supply. A future `src/workers/external.ts` will represent off-host work without spawning anything locally.
+
+---
+
 ## Cross-references
 
 Cowire is the reference implementation; the design docs that drove it live in the sibling `privacy tracker/specs/` directory. This repo is self-contained — you do not need those specs to contribute. They are useful when you want the *why*:

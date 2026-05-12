@@ -10,6 +10,29 @@ export interface StoredEvent extends Event {
   persisted_at: string;
 }
 
+export type WorkerStatusT =
+  | 'starting'
+  | 'running'
+  | 'idle'
+  | 'terminated'
+  | 'crashed';
+
+export interface WorkerRecord {
+  id: string;
+  name: string;
+  type: string;
+  cwd: string;
+  pid?: number;
+  status: WorkerStatusT;
+  started_at: string;
+  ended_at?: string;
+  last_activity_at?: string;
+  metadata: Record<string, unknown>;
+  spawn_params_hash: string;
+  termination_reason?: 'completed' | 'crashed' | 'terminated_by_user';
+  exit_code?: number;
+}
+
 export interface DecisionRecord {
   correlation_id: string;
   question: string;
@@ -97,6 +120,26 @@ export class EventStore {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS workers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        pid INTEGER,
+        status TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        last_activity_at TEXT,
+        metadata_json TEXT NOT NULL,
+        spawn_params_hash TEXT NOT NULL,
+        termination_reason TEXT,
+        exit_code INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_workers_status ON workers(status);
+      CREATE INDEX IF NOT EXISTS idx_workers_type ON workers(type);
+      CREATE INDEX IF NOT EXISTS idx_workers_name_active
+        ON workers(name) WHERE status NOT IN ('terminated', 'crashed');
     `);
   }
 
@@ -337,10 +380,170 @@ export class EventStore {
     return expired;
   }
 
+  upsertWorker(record: WorkerRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO workers
+           (id, name, type, cwd, pid, status, started_at, ended_at, last_activity_at,
+            metadata_json, spawn_params_hash, termination_reason, exit_code)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
+           type = excluded.type,
+           cwd = excluded.cwd,
+           pid = excluded.pid,
+           status = excluded.status,
+           ended_at = excluded.ended_at,
+           last_activity_at = excluded.last_activity_at,
+           metadata_json = excluded.metadata_json,
+           spawn_params_hash = excluded.spawn_params_hash,
+           termination_reason = excluded.termination_reason,
+           exit_code = excluded.exit_code`,
+      )
+      .run(
+        record.id,
+        record.name,
+        record.type,
+        record.cwd,
+        record.pid ?? null,
+        record.status,
+        record.started_at,
+        record.ended_at ?? null,
+        record.last_activity_at ?? null,
+        JSON.stringify(record.metadata),
+        record.spawn_params_hash,
+        record.termination_reason ?? null,
+        record.exit_code ?? null,
+      );
+  }
+
+  getWorker(idOrName: string): WorkerRecord | undefined {
+    const byId = this.db.prepare(`SELECT * FROM workers WHERE id = ?`).get(idOrName) as
+      | WorkerRow
+      | undefined;
+    if (byId) return workerRowToRecord(byId);
+    // Prefer non-terminated rows when looking up by name.
+    const row = this.db
+      .prepare(
+        `SELECT * FROM workers
+         WHERE name = ?
+         ORDER BY (status IN ('terminated','crashed')) ASC, started_at DESC
+         LIMIT 1`,
+      )
+      .get(idOrName) as WorkerRow | undefined;
+    return row ? workerRowToRecord(row) : undefined;
+  }
+
+  listWorkers(filter?: { type?: string; status?: WorkerStatusT }): WorkerRecord[] {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter?.type) {
+      where.push(`type = ?`);
+      params.push(filter.type);
+    }
+    if (filter?.status) {
+      where.push(`status = ?`);
+      params.push(filter.status);
+    }
+    const sql = `SELECT * FROM workers ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY started_at ASC`;
+    const rows = this.db.prepare(sql).all(...params) as WorkerRow[];
+    return rows.map(workerRowToRecord);
+  }
+
+  updateWorkerMetadata(id: string, patch: Record<string, unknown>): WorkerRecord | undefined {
+    const existing = this.getWorker(id);
+    if (!existing) return undefined;
+    const merged = { ...existing.metadata, ...patch };
+    const last = new Date().toISOString();
+    this.db
+      .prepare(
+        `UPDATE workers SET metadata_json = ?, last_activity_at = ? WHERE id = ?`,
+      )
+      .run(JSON.stringify(merged), last, id);
+    return { ...existing, metadata: merged, last_activity_at: last };
+  }
+
+  markWorkerTerminated(
+    id: string,
+    reason: 'completed' | 'crashed' | 'terminated_by_user',
+    exitCode?: number,
+  ): WorkerRecord | undefined {
+    const existing = this.getWorker(id);
+    if (!existing) return undefined;
+    const status: WorkerStatusT = reason === 'crashed' ? 'crashed' : 'terminated';
+    const ended = new Date().toISOString();
+    this.db
+      .prepare(
+        `UPDATE workers SET status = ?, ended_at = ?, termination_reason = ?, exit_code = ?
+         WHERE id = ?`,
+      )
+      .run(status, ended, reason, exitCode ?? null, id);
+    return {
+      ...existing,
+      status,
+      ended_at: ended,
+      termination_reason: reason,
+      exit_code: exitCode,
+    };
+  }
+
+  updateWorkerStatus(id: string, status: WorkerStatusT, pid?: number): WorkerRecord | undefined {
+    const existing = this.getWorker(id);
+    if (!existing) return undefined;
+    const last = new Date().toISOString();
+    this.db
+      .prepare(`UPDATE workers SET status = ?, pid = COALESCE(?, pid), last_activity_at = ? WHERE id = ?`)
+      .run(status, pid ?? null, last, id);
+    return { ...existing, status, pid: pid ?? existing.pid, last_activity_at: last };
+  }
+
+  nameIsAvailable(name: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM workers WHERE name = ? AND status NOT IN ('terminated', 'crashed') LIMIT 1`,
+      )
+      .get(name);
+    return !row;
+  }
+
   listRecentDecisions(limit = 20): DecisionRecord[] {
     const rows = this.db
       .prepare(`SELECT correlation_id FROM decisions ORDER BY requested_at DESC LIMIT ?`)
       .all(limit) as Array<{ correlation_id: string }>;
     return rows.map((r) => this.getDecision(r.correlation_id)!).filter(Boolean);
   }
+}
+
+interface WorkerRow {
+  id: string;
+  name: string;
+  type: string;
+  cwd: string;
+  pid: number | null;
+  status: string;
+  started_at: string;
+  ended_at: string | null;
+  last_activity_at: string | null;
+  metadata_json: string;
+  spawn_params_hash: string;
+  termination_reason: string | null;
+  exit_code: number | null;
+}
+
+function workerRowToRecord(row: WorkerRow): WorkerRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    cwd: row.cwd,
+    pid: row.pid ?? undefined,
+    status: row.status as WorkerStatusT,
+    started_at: row.started_at,
+    ended_at: row.ended_at ?? undefined,
+    last_activity_at: row.last_activity_at ?? undefined,
+    metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
+    spawn_params_hash: row.spawn_params_hash,
+    termination_reason: (row.termination_reason as WorkerRecord['termination_reason']) ?? undefined,
+    exit_code: row.exit_code ?? undefined,
+  };
 }

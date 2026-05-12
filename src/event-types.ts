@@ -16,6 +16,14 @@ export const EventKind = z.enum([
   'error',
   'checkpoint',
   'session_ended',
+  // Worker orchestration (spec 42)
+  'worker_spawned',
+  'worker_progress',
+  'worker_metadata_changed',
+  'worker_activity',
+  'worker_dispatch_request',
+  'worker_terminated',
+  'worker_error',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -124,6 +132,51 @@ export const SessionEndedPayload = z.object({
   pr_urls: z.array(z.string()),
 });
 
+// Worker orchestration payloads (spec 42)
+
+export const WorkerSpawnedPayload = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.string(),
+  cwd: z.string(),
+  pid: z.number().int().optional(),
+  metadata: z.record(z.unknown()).default({}),
+});
+
+export const WorkerProgressPayload = z.object({
+  id: z.string(),
+  message: z.string(),
+  detail: z.string().optional(),
+});
+
+export const WorkerMetadataChangedPayload = z.object({
+  id: z.string(),
+  patch: z.record(z.unknown()),
+});
+
+export const WorkerActivityPayload = z.object({
+  id: z.string(),
+  detail: z.string().optional(),
+});
+
+export const WorkerDispatchRequestPayload = z.object({
+  target_worker_id: z.string(),
+  message_id: z.string(),
+  body: z.unknown(),
+});
+
+export const WorkerTerminatedPayload = z.object({
+  id: z.string(),
+  reason: z.enum(['completed', 'crashed', 'terminated_by_user']),
+  exit_code: z.number().int().optional(),
+});
+
+export const WorkerErrorPayload = z.object({
+  id: z.string(),
+  message: z.string(),
+  recoverable: z.boolean(),
+});
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -153,6 +206,13 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     error: ErrorPayload,
     checkpoint: CheckpointPayload,
     session_ended: SessionEndedPayload,
+    worker_spawned: WorkerSpawnedPayload,
+    worker_progress: WorkerProgressPayload,
+    worker_metadata_changed: WorkerMetadataChangedPayload,
+    worker_activity: WorkerActivityPayload,
+    worker_dispatch_request: WorkerDispatchRequestPayload,
+    worker_terminated: WorkerTerminatedPayload,
+    worker_error: WorkerErrorPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);
