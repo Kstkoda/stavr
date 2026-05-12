@@ -37,13 +37,30 @@ function registerWorkerSpawn(server: McpServer, orch: WorkerOrchestrator): void 
     },
     async (args) => {
       try {
-        const result = await orch.spawn(args.type, args.name, args.params);
+        const params = normalizeUnknownArg(args.params, 'params');
+        const result = await orch.spawn(args.type, args.name, params);
         return toolJson({ worker: serializeWorker(result.worker), gated: result.gated });
       } catch (err) {
         return orchError(err);
       }
     },
   );
+}
+
+/**
+ * Some MCP clients (notably Cowork's current build) serialize z.unknown() schema fields
+ * as JSON strings when sending over the wire. We accept both forms: if the caller sent
+ * a JSON-encoded string, decode it back into an object before passing to the spawner.
+ *
+ * SIDE-EFFECT: none. CONTRACT: returns the parsed value, or throws Error if a string was sent that doesn't parse.
+ */
+function normalizeUnknownArg(value: unknown, fieldName: string): unknown {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error(`${fieldName}: expected object or JSON-encoded string, got unparseable string`);
+  }
 }
 
 function registerWorkerList(server: McpServer, orch: WorkerOrchestrator): void {
@@ -92,7 +109,8 @@ function registerWorkerDispatch(server: McpServer, orch: WorkerOrchestrator): vo
     },
     async (args) => {
       try {
-        const result = await orch.dispatch(args.id_or_name, args.body);
+        const body = normalizeUnknownArg(args.body, 'body');
+        const result = await orch.dispatch(args.id_or_name, body);
         return toolJson(result);
       } catch (err) {
         return orchError(err);
