@@ -72,6 +72,14 @@ POST http://localhost:7777/mcp/messages   # send messages back
 | `await_decision` | Block until response (Pattern A). 30-min cap. |
 | `respond_to_decision` | Resolve a pending decision. |
 
+## GitHub adapter (read-only)
+
+Switch exposes 14 read-only GitHub tools backed by the `gh` CLI on the host machine. Requires `gh auth login` to have been run; the tools inherit the authenticated user's permissions.
+
+Available tools: `github.read_pr`, `github.list_prs`, `github.read_issue`, `github.list_issues`, `github.read_commit`, `github.list_commits`, `github.read_file`, `github.list_workflow_runs`, `github.read_workflow_run`, `github.read_pr_diff`, `github.list_pr_files`, `github.read_pr_review_comments`, `github.list_labels`, `github.list_branches`.
+
+Write actions (comment, create issue, etc.) are not yet exposed. See spec 39 Phase B.
+
 ## Event taxonomy
 
 See `src/event-types.ts`. Mirrors spec 37 §"Event taxonomy".
