@@ -314,8 +314,18 @@ function launchClaude(spawnFn: Spawner, opts: LaunchOpts): ChildProcess {
   // stdio model, same JSONL parser — the only platform-specific bit is the
   // executable invocation.
   const isWindows = process.platform === 'win32';
+  // Strip ANTHROPIC_API_KEY from the worker's env so Claude Code falls back to
+  // the next credential source - typically the User's logged-in Claude Max
+  // OAuth session. API key beats OAuth in CC's precedence, so without this the
+  // worker bills the API key even when Max is available. Opt back into API
+  // billing by setting COWIRE_FORCE_API_KEY=1 in the daemon's env.
+  const env = { ...process.env };
+  if (!process.env.COWIRE_FORCE_API_KEY) {
+    delete env.ANTHROPIC_API_KEY;
+  }
   const spawnOpts: SpawnOptions = {
     cwd: opts.worktreePath,
+    env,
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: false,
     windowsHide: true,

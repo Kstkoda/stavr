@@ -1,7 +1,7 @@
 {
   "name": "cowire",
   "version": "0.1.0",
-  "description": "Cowire — MCP-native broker (Switch) between Co, CC, and user channels.",
+  "description": "Cowire \u2014 MCP-native broker (Switch) between Co, CC, and user channels.",
   "type": "module",
   "bin": {
     "cowire": "./dist/cli.js"
@@ -40,5 +40,26 @@
   "files": [
     "dist",
     "README.md"
+  ],
+  "license": "Apache-2.0",
+  "author": "Kenneth Stenlund <stenlund@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kstkoda/cowire.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Kstkoda/cowire/issues"
+  },
+  "homepage": "https://github.com/Kstkoda/cowire#readme",
+  "keywords": [
+    "mcp",
+    "claude",
+    "claude-code",
+    "agent",
+    "orchestrator",
+    "audit",
+    "trust",
+    "local-first",
+    "sandbox"
   ]
 }
