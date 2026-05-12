@@ -2,10 +2,12 @@ import express, { type Request, type Response } from 'express';
 import type { Server as HttpServer } from 'node:http';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import { createSwitchServer } from './server.js';
+import { createSwitchServer, getOrCreateTrustStore } from './server.js';
 import type { Broker } from './broker.js';
 import { startupDecisionSweep } from './tools/decisions.js';
 import { getLogger } from './log.js';
+import { DASHBOARD_HTML } from './dashboard-html.js';
+import type { StoredEvent } from './persistence.js';
 
 /**
  * Transport modes:
@@ -130,6 +132,13 @@ export async function mountTransports(
       await transport.handlePostMessage(req, res, req.body);
     });
 
+    mountDashboardRoutes(app, broker, {
+      port: opts.port,
+      startedAt: daemonStartedAt,
+      version,
+      sseSessions,
+    });
+
     httpServer = await new Promise<HttpServer | undefined>((resolve, reject) => {
       const s = app.listen(opts.port!, '127.0.0.1', () => {
         log(`HTTP/SSE listening on 127.0.0.1:${opts.port}`);
@@ -163,4 +172,240 @@ export async function mountTransports(
   };
 
   return { httpServer, shutdown, sseSessionCount: () => sseSessions.size };
+}
+
+interface DashboardCtx {
+  port: number;
+  startedAt: Date;
+  version: string;
+  sseSessions: Map<string, SSEServerTransport>;
+}
+
+/**
+ * Spec 40 Phase 3 — audit dashboard. Mounts a local-only set of read endpoints
+ * plus one decision-respond write and one live SSE stream. All routes live
+ * under `/dashboard*` so the MCP transport above is untouched.
+ *
+ * Security model: bind is already `127.0.0.1` only (no CORS, no auth) — the
+ * dashboard is an oversight surface for the human running the daemon, not a
+ * multi-tenant service. See ADR-006.
+ */
+export function mountDashboardRoutes(
+  app: ReturnType<typeof express>,
+  broker: Broker,
+  ctx: DashboardCtx,
+): void {
+  const trustStore = getOrCreateTrustStore(broker);
+
+  app.get('/dashboard', (_req, res) => {
+    res.setHeader('content-type', 'text/html; charset=utf-8');
+    res.setHeader('cache-control', 'no-store');
+    res.send(DASHBOARD_HTML);
+  });
+
+  app.get('/dashboard/status', (_req, res) => {
+    const active = trustStore.list({ status: 'active' });
+    res.json({
+      ok: true,
+      version: ctx.version,
+      port: ctx.port,
+      started_at: ctx.startedAt.toISOString(),
+      uptime_sec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
+      connected_clients: ctx.sseSessions.size,
+      event_count: broker.store.eventCount(),
+      pending_decisions: broker.store.pendingDecisionCount(),
+      active_scopes: active.length,
+      scopes: active.map((s) => ({
+        id: s.id,
+        title: s.title,
+        expires_at: s.expires_at,
+        actions_executed: s.actions_executed,
+        expires_after_actions: s.expires_after_actions,
+      })),
+    });
+  });
+
+  app.get('/dashboard/workers', (_req, res) => {
+    res.json({ workers: broker.store.listWorkers() });
+  });
+
+  app.get('/dashboard/workers/:id', (req, res) => {
+    const worker = broker.store.getWorker(req.params.id);
+    if (!worker) {
+      res.status(404).json({ error: 'not_found' });
+      return;
+    }
+    // Last 50 events with this worker's id either in correlation_id or in payload.id.
+    const recent = broker.store.getEvents({ limit: 500 }).events;
+    const matchesWorker = (ev: StoredEvent) => {
+      if (ev.correlation_id === worker.id) return true;
+      const p = ev.payload as { id?: string } | null | undefined;
+      return !!(p && typeof p === 'object' && p.id === worker.id);
+    };
+    const filtered = recent.filter(matchesWorker);
+    const events = filtered.slice(-50).reverse();
+    const tool_calls = filtered
+      .filter((e) => e.kind === 'command_run')
+      .slice(-50)
+      .reverse();
+    res.json({ worker, events, tool_calls });
+  });
+
+  app.get('/dashboard/decisions', (req, res) => {
+    const requested = (req.query.status as string | undefined) ?? 'open';
+    const all = broker.store.listRecentDecisions(100);
+    const filtered = requested === 'all' ? all : all.filter((d) => d.status === requested);
+    res.json({ decisions: filtered });
+  });
+
+  app.post('/dashboard/decisions/:correlationId/respond', async (req, res) => {
+    const corr = req.params.correlationId;
+    const body = (req.body ?? {}) as {
+      chosen_option_id?: string;
+      reason?: string;
+      responder?: string;
+    };
+    if (!body.chosen_option_id) {
+      res.status(400).json({ error: 'chosen_option_id required' });
+      return;
+    }
+    const existing = broker.store.getDecision(corr);
+    if (!existing) {
+      res.status(404).json({ error: 'not_found' });
+      return;
+    }
+    const responder = body.responder || 'dashboard-user';
+    const result = broker.store.respondToDecision(
+      corr,
+      body.chosen_option_id,
+      body.reason ?? '',
+      responder,
+    );
+    if (!result.ok) {
+      if (result.error === 'already_responded') {
+        await broker.publish({
+          kind: 'decision_late_response',
+          at: new Date().toISOString(),
+          correlation_id: corr,
+          source_agent: responder,
+          payload: {
+            chosen_option_id: body.chosen_option_id,
+            reason: body.reason,
+            responder,
+            fallback_was: existing.chosen_option_id,
+          },
+        });
+      }
+      res.status(409).json({ ok: false, error: result.error });
+      return;
+    }
+    await broker.publish({
+      kind: 'decision_response',
+      at: result.result.responded_at,
+      correlation_id: corr,
+      source_agent: responder,
+      payload: {
+        chosen_option_id: body.chosen_option_id,
+        reason: body.reason,
+        responder,
+      },
+    });
+    res.json({ ok: true, responded_at: result.result.responded_at });
+  });
+
+  app.get('/dashboard/events', (req, res) => {
+    const limit = Math.min(Number(req.query.limit ?? 200) || 200, 5000);
+    const since = req.query.since as string | undefined;
+    const kindParam = req.query.kind as string | undefined;
+    const kinds = kindParam ? kindParam.split(',').filter(Boolean) : undefined;
+    const sourceAgent = req.query.source_agent as string | undefined;
+    const correlationId = req.query.correlation_id as string | undefined;
+
+    const filter: Parameters<typeof broker.store.getEvents>[0] = { limit };
+    if (since) filter.sinceEventId = since;
+    if (kinds && kinds.length) filter.kinds = kinds;
+    if (sourceAgent) filter.sourceAgent = sourceAgent;
+
+    let { events, has_more } = broker.store.getEvents(filter);
+    if (correlationId) {
+      events = events.filter((e) => e.correlation_id === correlationId);
+    }
+    res.json({ events, has_more });
+  });
+
+  app.get('/dashboard/export', (req, res) => {
+    const format = (req.query.format as string | undefined) === 'csv' ? 'csv' : 'json';
+    const since = req.query.since as string | undefined;
+    const filter: Parameters<typeof broker.store.getEvents>[0] = { limit: 5000 };
+    if (since) filter.sinceEventId = since;
+    const { events } = broker.store.getEvents(filter);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    if (format === 'csv') {
+      res.setHeader('content-type', 'text/csv; charset=utf-8');
+      res.setHeader('content-disposition', `attachment; filename="cowire-audit-${ts}.csv"`);
+      const cols = ['id', 'at', 'persisted_at', 'kind', 'source_agent', 'correlation_id', 'tenant_id', 'payload'];
+      const csvEscape = (v: unknown) => {
+        const s = v == null ? '' : typeof v === 'string' ? v : JSON.stringify(v);
+        if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+        return s;
+      };
+      res.write(cols.join(',') + '\n');
+      for (const e of events) {
+        res.write(
+          [
+            e.id,
+            e.at,
+            e.persisted_at,
+            e.kind,
+            e.source_agent,
+            e.correlation_id ?? '',
+            e.tenant_id ?? '',
+            e.payload,
+          ]
+            .map(csvEscape)
+            .join(',') + '\n',
+        );
+      }
+      res.end();
+      return;
+    }
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.setHeader('content-disposition', `attachment; filename="cowire-audit-${ts}.json"`);
+    res.json({
+      exported_at: new Date().toISOString(),
+      count: events.length,
+      events,
+    });
+  });
+
+  // Live SSE tail for the browser. Distinct from /mcp/sse: this is plain
+  // text/event-stream with raw event JSON; no MCP handshake required. Lives
+  // and dies entirely on the broker's onEvent tap.
+  app.get('/dashboard/stream', (_req: Request, res: Response) => {
+    res.setHeader('content-type', 'text/event-stream');
+    res.setHeader('cache-control', 'no-cache, no-transform');
+    res.setHeader('connection', 'keep-alive');
+    res.setHeader('x-accel-buffering', 'no');
+    res.flushHeaders?.();
+
+    const write = (kind: string, data: unknown) => {
+      try {
+        res.write(`event: ${kind}\ndata: ${JSON.stringify(data)}\n\n`);
+      } catch {
+        // Socket may be closed mid-write — the unsub below will land momentarily.
+      }
+    };
+
+    write('ping', { at: new Date().toISOString() });
+    const keepalive = setInterval(() => write('ping', { at: new Date().toISOString() }), 25_000);
+
+    const dispose = broker.onEvent((ev) => write('event', ev));
+
+    const onClose = () => {
+      clearInterval(keepalive);
+      dispose();
+      try { res.end(); } catch { /* already gone */ }
+    };
+    res.on('close', onClose);
+  });
 }

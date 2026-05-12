@@ -12,10 +12,26 @@ interface Subscription {
 
 export const EVENT_NOTIFICATION_METHOD = 'notifications/event/published';
 
+export type EventTap = (event: StoredEvent) => void;
+
 export class Broker {
   private subscribers = new Map<string, Subscription>();
+  private taps = new Set<EventTap>();
 
   constructor(public readonly store: EventStore) {}
+
+  /**
+   * Register a non-MCP listener that receives every fanned-out event. Used by
+   * the dashboard SSE endpoint (spec 40 Phase 3) so the browser can tail the
+   * live event log without going through the MCP handshake. Returns a
+   * dispose fn that removes the listener.
+   */
+  onEvent(tap: EventTap): () => void {
+    this.taps.add(tap);
+    return () => {
+      this.taps.delete(tap);
+    };
+  }
 
   registerSession(sessionId: string, server: McpServer): void {
     if (!this.subscribers.has(sessionId)) {
@@ -91,6 +107,13 @@ export class Broker {
 
   async fanout(stored: StoredEvent): Promise<void> {
     const payload = { ...stored };
+    for (const tap of this.taps) {
+      try {
+        tap(stored);
+      } catch {
+        // Dashboard listener errors must never break MCP fanout.
+      }
+    }
     for (const sub of this.subscribers.values()) {
       if (sub.kinds.has(stored.kind) || sub.kinds.has('*')) {
         try {
