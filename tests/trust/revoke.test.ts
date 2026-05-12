@@ -21,7 +21,7 @@ describe('trust scope — revoke', () => {
     const scopeId = await proposeAndGrant(h, {
       title: 'will be revoked',
       description: 'x',
-      allowed_actions: [{ tool: 'github.create_issue' }],
+      allowed_actions: [{ tool: 'github_create_issue' }],
       expires_after_actions: 99,
     });
 

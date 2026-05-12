@@ -127,7 +127,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
-        scopeCheck: { tool: 'github.create_pr', args: { repo, head, base, title, body, draft }, trustStore },
+        scopeCheck: { tool: 'github_create_pr', args: { repo, head, base, title, body, draft }, trustStore },
         performAction: async () => {
           const args = [
             'pr',
@@ -180,7 +180,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
-        scopeCheck: { tool: 'github.merge_pr', args: { repo, number }, trustStore },
+        scopeCheck: { tool: 'github_merge_pr', args: { repo, number }, trustStore },
         performAction: async () => {
           await gh([
             'pr',
@@ -242,7 +242,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
-        scopeCheck: { tool: 'github.create_issue', args: { repo, title, body, labels }, trustStore },
+        scopeCheck: { tool: 'github_create_issue', args: { repo, title, body, labels }, trustStore },
         performAction: async () => {
           const args = [
             'issue',
@@ -293,7 +293,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
-        scopeCheck: { tool: 'github.create_issue_comment', args: { repo, number, body }, trustStore },
+        scopeCheck: { tool: 'github_create_issue_comment', args: { repo, number, body }, trustStore },
         performAction: async () => {
           const stdout = await gh(
             [
@@ -342,7 +342,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
-        scopeCheck: { tool: 'github.create_pr_comment', args: { repo, number, body }, trustStore },
+        scopeCheck: { tool: 'github_create_pr_comment', args: { repo, number, body }, trustStore },
         performAction: async () => {
           const stdout = await gh(
             [
@@ -390,7 +390,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
-        scopeCheck: { tool: 'github.close_issue', args: { repo, number, comment }, trustStore },
+        scopeCheck: { tool: 'github_close_issue', args: { repo, number, comment }, trustStore },
         performAction: async () => {
           const args = ['issue', 'close', String(number), '--repo', repo];
           if (comment) args.push('--comment', comment);
@@ -425,7 +425,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
-        scopeCheck: { tool: 'github.reopen_issue', args: { repo, number, comment }, trustStore },
+        scopeCheck: { tool: 'github_reopen_issue', args: { repo, number, comment }, trustStore },
         performAction: async () => {
           const args = ['issue', 'reopen', String(number), '--repo', repo];
           if (comment) args.push('--comment', comment);
@@ -460,7 +460,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
-        scopeCheck: { tool: 'github.add_labels', args: { repo, number, labels }, trustStore },
+        scopeCheck: { tool: 'github_add_labels', args: { repo, number, labels }, trustStore },
         performAction: async () => {
           const args = ['issue', 'edit', String(number), '--repo', repo];
           for (const l of labels) args.push('--add-label', l);
@@ -515,7 +515,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
-        scopeCheck: { tool: 'github.remove_labels', args: { repo, number, labels }, trustStore },
+        scopeCheck: { tool: 'github_remove_labels', args: { repo, number, labels }, trustStore },
         performAction: async () => {
           const args = ['issue', 'edit', String(number), '--repo', repo];
           for (const l of labels) args.push('--remove-label', l);
@@ -570,7 +570,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
-        scopeCheck: { tool: 'github.request_pr_review', args: { repo, number, reviewers }, trustStore },
+        scopeCheck: { tool: 'github_request_pr_review', args: { repo, number, reviewers }, trustStore },
         performAction: async () => {
           const args = ['pr', 'edit', String(number), '--repo', repo];
           for (const r of reviewers) args.push('--add-reviewer', r);

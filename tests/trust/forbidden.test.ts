@@ -28,11 +28,11 @@ describe('trust scope — forbidden override', () => {
       description: 'd',
       // Allow any github.* style is not in the matcher language; just allow specific tools:
       allowed_actions: [
-        { tool: 'github.create_issue' },
-        { tool: 'github.merge_pr' },
+        { tool: 'github_create_issue' },
+        { tool: 'github_merge_pr' },
       ],
       forbidden_actions: [
-        { tool: 'github.merge_pr', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
+        { tool: 'github_merge_pr', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
       ],
       expires_after_actions: 5,
     });

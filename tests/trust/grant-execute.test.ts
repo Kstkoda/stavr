@@ -20,7 +20,7 @@ describe('trust scope — grant + execute happy path', () => {
       title: 'BUGS migration',
       description: 'Create issues from BUGS.md',
       allowed_actions: [
-        { tool: 'github.create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
+        { tool: 'github_create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
       ],
       expires_after_actions: 5,
     });
@@ -41,12 +41,12 @@ describe('trust scope — grant + execute happy path', () => {
     const authEvents = eventsOfKind(h, 'trust_scope_action_authorized');
     expect(authEvents.length).toBe(1);
     expect((authEvents[0].payload as any).scope_id).toBe(scopeId);
-    expect((authEvents[0].payload as any).tool).toBe('github.create_issue');
+    expect((authEvents[0].payload as any).tool).toBe('github_create_issue');
 
     const status = await callTool(h.client, 'trust_scope_status', { id: scopeId });
     expect(status.parsed.scope.actions_executed).toBe(1);
     expect(status.parsed.actions.length).toBe(1);
-    expect(status.parsed.actions[0].tool_name).toBe('github.create_issue');
+    expect(status.parsed.actions[0].tool_name).toBe('github_create_issue');
   });
 
   it('rejecting the grant decision leaves the scope proposed and uncovered', async () => {
@@ -55,7 +55,7 @@ describe('trust scope — grant + execute happy path', () => {
     const prop = await callTool(h.client, 'trust_scope_propose', {
       title: 'never granted',
       description: 'foo',
-      allowed_actions: [{ tool: 'github.create_issue' }],
+      allowed_actions: [{ tool: 'github_create_issue' }],
     });
     const id = prop.parsed.scope_id as string;
 

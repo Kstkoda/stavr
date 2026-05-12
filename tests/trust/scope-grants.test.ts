@@ -18,7 +18,7 @@ describe('trust scope — grant itself gates on await_decision', () => {
     const prop = await callTool(h.client, 'trust_scope_propose', {
       title: 'demo',
       description: 'd',
-      allowed_actions: [{ tool: 'github.create_issue' }],
+      allowed_actions: [{ tool: 'github_create_issue' }],
     });
     expect(prop.parsed.scope_id).toBeTruthy();
 
@@ -48,7 +48,7 @@ describe('trust scope — grant itself gates on await_decision', () => {
       title: 'pt only',
       description: 'd',
       allowed_actions: [
-        { tool: 'github.create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
+        { tool: 'github_create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
       ],
       expires_after_actions: 10,
     });

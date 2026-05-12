@@ -20,7 +20,7 @@ describe('trust scope — reporter cadences', () => {
       title: 'cadence-5',
       description: '12 actions, cap 12',
       allowed_actions: [
-        { tool: 'github.create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
+        { tool: 'github_create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
       ],
       expires_after_actions: 12,
       reporting: { cadence: 'every-5-actions', channels: ['event-log'] },
@@ -56,7 +56,7 @@ describe('trust scope — reporter cadences', () => {
       title: 'cadence-each',
       description: 'one progress per action',
       allowed_actions: [
-        { tool: 'github.create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
+        { tool: 'github_create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
       ],
       expires_after_actions: 100,
       reporting: { cadence: 'every-action', channels: ['event-log'] },

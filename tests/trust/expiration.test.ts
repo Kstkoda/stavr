@@ -20,7 +20,7 @@ describe('trust scope — expiration', () => {
     const scopeId = await proposeAndGrant(h, {
       title: 'short-lived',
       description: 'time-based',
-      allowed_actions: [{ tool: 'github.create_issue' }],
+      allowed_actions: [{ tool: 'github_create_issue' }],
       expires_after_actions: 99,
     });
 
@@ -30,7 +30,7 @@ describe('trust scope — expiration', () => {
       .run(new Date(Date.now() - 60_000).toISOString(), scopeId);
 
     // findActiveScopeFor should mark it expired and return undefined.
-    const found = h.trustStore.findActiveScopeFor({ tool: 'github.create_issue', args: { repo: 'a/b' } });
+    const found = h.trustStore.findActiveScopeFor({ tool: 'github_create_issue', args: { repo: 'a/b' } });
     expect(found).toBeUndefined();
 
     const after = h.trustStore.get(scopeId)!;
@@ -46,7 +46,7 @@ describe('trust scope — expiration', () => {
       title: 'tiny cap',
       description: 'cap=3',
       allowed_actions: [
-        { tool: 'github.create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
+        { tool: 'github_create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
       ],
       expires_after_actions: 3,
       reporting: { cadence: 'on-completion-only', channels: ['event-log'] },

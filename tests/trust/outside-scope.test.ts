@@ -33,7 +33,7 @@ describe('trust scope — outside-scope action still gates', () => {
       title: 'issues only',
       description: 'create issues in privacy-tracker',
       allowed_actions: [
-        { tool: 'github.create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
+        { tool: 'github_create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } },
       ],
       expires_after_actions: 10,
     });

@@ -13,8 +13,10 @@ action it shouldn't have.
 
 ## Decision
 
-Tool names match by exact string equality. `param_constraints` is a flat
-record of `string → unknown`. For each entry:
+Tool names match by exact string equality — use the MCP-exposed names
+(underscore-separated; see `worker_list_types` / `list_tool_cards`). Dotted
+names from earlier specs are historical and not accepted by the matcher.
+`param_constraints` is a flat record of `string → unknown`. For each entry:
 
 - A string value starting with `^` is treated as a JavaScript `RegExp` and
   tested against `String(actualValue)`. Example: `{ repo: '^Kstkoda/.*' }`
