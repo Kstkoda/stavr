@@ -34,4 +34,5 @@ Copy [`000-template.md`](./000-template.md) and rename to `NNN-short-kebab-title
 - [ADR-007 — EADDRINUSE graceful fallback](./007-eaddrinuse-graceful-fallback.md)
 - [ADR-008 — gh CLI write actions through `await_decision`](./008-write-actions-await-decision.md)
 - [ADR-009 — Stdio→SSE shim for clients that don't recognize remote MCP](./009-stdio-sse-shim.md)
-- [ADR-017 — A2A protocol compatibility decision](./017-a2a-protocol-decision.md)
+- [ADR-017](./017-a2a-protocol-decision.md) — A2A protocol compatibility decision)
+- [ADR-018](./018-destructive-operations-stay-manual.md) — Destructive operations stay manual)

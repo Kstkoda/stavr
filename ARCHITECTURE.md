@@ -92,7 +92,14 @@ On startup, transports also run `startupDecisionSweep(broker)` to expire any dec
 
 ### Adapters — `src/adapters/`
 
-Adapters expose external systems as MCP tools. The current adapter is **GitHub** (`src/adapters/github.ts`): 14 read-only tools (`github.read_pr`, `github.list_prs`, `github.read_issue`, ...) backed by the locally-installed `gh` CLI. Auth is inherited from the host's `gh auth login` — Switch never sees a token. See [ADR-003](./adr/003-gh-cli-not-octokit.md) and the [adapter-authoring guide](./docs/writing-an-adapter.md).
+Adapters expose external systems as MCP tools. The current adapter is **GitHub**, split across two files:
+
+- **Read-only** (`src/adapters/github.ts`): 14 tools (`github.read_pr`, `github.list_prs`, `github.read_issue`, ...) backed by the locally-installed `gh` CLI.
+- **Write actions** (`src/adapters/github-writes.ts`): 10 tools (`github.create_pr`, `github.merge_pr`, `github.create_issue`, `github.create_issue_comment`, `github.create_pr_comment`, `github.close_issue`, `github.reopen_issue`, `github.add_labels`, `github.remove_labels`, `github.request_pr_review`). Each is gated by `await_decision` — see paragraph below.
+
+Auth is inherited from the host's `gh auth login` — Switch never sees a token. See [ADR-003](./adr/003-gh-cli-not-octokit.md) and the [adapter-authoring guide](./docs/writing-an-adapter.md).
+
+Write actions are gated at the spawner level by `await_decision`. Co (or any other MCP client) invokes them, the broker emits a `decision_request`, a human approves via Cowork or the dashboard, then the underlying `gh` invocation happens. Rejection (or 30-min timeout via the fail-safe `default_option_id='reject'`) results in a no-op with `{ ok: false, reason: 'rejected_by_user' }`. The pattern is encapsulated in `src/tools/gated-action.ts` so future write adapters (Azure, Linear, etc.) reuse the same rendezvous machinery. See [ADR-008](./adr/008-write-actions-await-decision.md) and [ADR-018](./adr/018-destructive-operations-stay-manual.md) for what stays manual forever.
 
 Adapters register with the MCP server via `registerXxxTools(server, opts?)` and are wired into the boot sequence in `src/server.ts`. Each adapter is responsible for input validation (Zod), external-command wrapping (`execFile`/`fetch`), and a stable error shape.
 
@@ -218,7 +225,7 @@ The canonical adapter is `src/adapters/github.ts`. It demonstrates the patterns 
 - One typed error class (`GhExecError`) and one tool-error shape (`ghErrorToTool`) so failures look the same across all 14 tools.
 - A test-friendly seam (`opts.exec`) for stubbing the subprocess in unit tests.
 
-Write actions (e.g. `gh pr comment`, `gh issue create`) are NOT exposed in the current GitHub adapter. The plan is to route them through `await_decision` so a human approves each write — see spec 39 §"Tiered authorization" and [ADR-008](./adr/008-write-actions-await-decision.md).
+Write actions (`gh pr comment`, `gh issue create`, `gh pr merge`, ...) are now exposed in `src/adapters/github-writes.ts`. Every write call goes through `gatedAction` in `src/tools/gated-action.ts`, which opens an `await_decision` rendezvous before invoking `gh`. See spec 39 §"Tiered authorization", [ADR-008](./adr/008-write-actions-await-decision.md), and [ADR-018](./adr/018-destructive-operations-stay-manual.md) (which lists what we will *never* expose: force-push, branch delete, repo-settings changes).
 
 To add a new adapter, see [`docs/writing-an-adapter.md`](./docs/writing-an-adapter.md) which walks through a fully-runnable weather example in `examples/weather/`.
 

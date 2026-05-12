@@ -10,6 +10,7 @@ import {
 import type { EventStore } from './persistence.js';
 import { registerDecisionTools } from './tools/decisions.js';
 import { registerGithubTools } from './adapters/github.js';
+import { registerGithubWriteTools } from './adapters/github-writes.js';
 
 export interface SwitchServerHandle {
   server: McpServer;
@@ -27,6 +28,7 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   registerGetEvents(server, broker.store);
   registerDecisionTools(server, broker);
   registerGithubTools(server);
+  registerGithubWriteTools(server, broker);
 
   return { server, sessionId };
 }

@@ -172,13 +172,32 @@ GET  http://127.0.0.1:7777/status         # live counts (sse_sessions, events, p
 | `await_decision` | Block until response (Pattern A). 30-min cap. |
 | `respond_to_decision` | Resolve a pending decision. |
 
-## GitHub adapter (read-only)
+## GitHub adapter
 
-Switch exposes 14 read-only GitHub tools backed by the `gh` CLI on the host machine. Requires `gh auth login` to have been run; the tools inherit the authenticated user's permissions.
+Switch exposes **14 read-only tools + 10 write tools** backed by the `gh` CLI on the host machine. Requires `gh auth login` to have been run; the tools inherit the authenticated user's permissions.
 
-Available tools: `github.read_pr`, `github.list_prs`, `github.read_issue`, `github.list_issues`, `github.read_commit`, `github.list_commits`, `github.read_file`, `github.list_workflow_runs`, `github.read_workflow_run`, `github.read_pr_diff`, `github.list_pr_files`, `github.read_pr_review_comments`, `github.list_labels`, `github.list_branches`.
+### Read-only (always safe)
 
-Write actions (comment, create issue, etc.) are not yet exposed. See spec 39 Phase B.
+`github.read_pr`, `github.list_prs`, `github.read_issue`, `github.list_issues`, `github.read_commit`, `github.list_commits`, `github.read_file`, `github.list_workflow_runs`, `github.read_workflow_run`, `github.read_pr_diff`, `github.list_pr_files`, `github.read_pr_review_comments`, `github.list_labels`, `github.list_branches`.
+
+### Write actions (gated by `await_decision`)
+
+Every write call opens a `decision_request` first. A human approves via Cowork (or any other MCP client that calls `respond_to_decision`); the underlying `gh` invocation only runs on approve. On reject or timeout the tool returns `{ ok: false, reason: 'rejected_by_user' }` and emits no success event. See [ADR-008](./adr/008-write-actions-await-decision.md).
+
+| Tool | Tier | What it does |
+|---|---|---|
+| `github.create_pr` | confirm | Open a PR (`--head` → `--base`, body via stdin, optional `--draft`). |
+| `github.merge_pr` | confirm | Squash-merge + delete branch. |
+| `github.create_issue` | confirm | Open an issue with optional labels. |
+| `github.create_issue_comment` | confirm | Post a comment on an issue. |
+| `github.create_pr_comment` | confirm | Post a comment on a PR. |
+| `github.close_issue` | confirm | Close an issue (optional closing comment). |
+| `github.reopen_issue` | confirm | Reopen a closed issue. |
+| `github.add_labels` | confirm | Add labels to an issue or PR. |
+| `github.remove_labels` | confirm | Remove labels from an issue or PR. |
+| `github.request_pr_review` | confirm | Request review from one or more reviewers. |
+
+What is **NEVER tier** and stays manual: force-push, branch delete, `merge_pr --force`, repo-settings changes. See [ADR-018](./adr/018-destructive-operations-stay-manual.md).
 
 ## Event taxonomy
 
