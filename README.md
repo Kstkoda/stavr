@@ -341,7 +341,41 @@ What is **NEVER tier** and stays manual: force-push, branch delete, `merge_pr --
 
 ## Event taxonomy
 
-See `src/event-types.ts`. Mirrors spec 37 §"Event taxonomy".
+See [`docs/event-taxonomy.md`](./docs/event-taxonomy.md) for the full
+human-readable contract (envelope, every `EventKind`, payload shape, typical
+subscribers, the stream-json sub-taxonomy for CC workers, and the reserved
+`worker_stuck` kind from spec 47). The Zod source of truth lives in
+[`src/event-types.ts`](./src/event-types.ts).
+
+## Machine-readable contracts
+
+Every Cowire MCP tool is self-describing:
+
+- [`docs/tool-catalogue.json`](./docs/tool-catalogue.json) — machine-readable
+  index of every registered tool with tier, category, since, stability,
+  JSON Schema for input + output, side effects, error modes, and `see_also`
+  links. Generated; do not hand-edit.
+- [`docs/tool-cards/`](./docs/tool-cards/) — one markdown card per tool
+  (e.g. [`await_decision.md`](./docs/tool-cards/await_decision.md),
+  [`github_create_pr.md`](./docs/tool-cards/github_create_pr.md),
+  [`worker_spawn.md`](./docs/tool-cards/worker_spawn.md)). Generated; do not
+  hand-edit.
+- [`docs/event-taxonomy.md`](./docs/event-taxonomy.md) — the event contract
+  Switch emits and Co/CC subscribe to.
+
+Source of truth: [`src/tools/catalogue-data.ts`](./src/tools/catalogue-data.ts).
+Regenerate everything with:
+
+```bash
+npm run docs:tools
+```
+
+**Sync invariant:** `npm run docs:tools` must produce no git diff against a
+clean checkout. CI enforces it via
+[`tests/tool-catalogue.test.ts`](./tests/tool-catalogue.test.ts), which asserts
+the catalogue parses, references real registered tools, and is reproducible
+from the script. When adding or modifying a tool, edit `catalogue-data.ts`
+and re-run the generator — never hand-edit the generated files.
 
 ## Documentation
 

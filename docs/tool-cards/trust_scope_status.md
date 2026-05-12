@@ -1,0 +1,231 @@
+---
+name: trust_scope_status
+tier: auto
+category: trust-scope
+since: 0.1.0
+stability: beta
+---
+
+# trust_scope_status
+
+Full state of one trust scope including action history. Auto-tier.
+
+## Tier behaviour
+
+AUTO — runs without confirmation. Read-only or has built-in escape hatches; the caller is responsible for using it intentionally.
+
+## Input schema
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "additionalProperties": false
+}
+```
+
+## Output schema
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "scope": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "proposed",
+                "active",
+                "expired",
+                "revoked",
+                "completed"
+              ]
+            },
+            "allowed_actions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "tool": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "param_constraints": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "tool"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "forbidden_actions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "tool": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "param_constraints": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "tool"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "reporting": {
+              "type": "object",
+              "properties": {
+                "cadence": {
+                  "type": "string",
+                  "enum": [
+                    "every-action",
+                    "every-5-actions",
+                    "every-15-min",
+                    "on-completion-only"
+                  ]
+                },
+                "channels": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "chat",
+                      "event-log",
+                      "dashboard",
+                      "slack",
+                      "email"
+                    ]
+                  },
+                  "minItems": 1
+                }
+              },
+              "required": [
+                "cadence",
+                "channels"
+              ],
+              "additionalProperties": false
+            },
+            "proposed_at": {
+              "type": "string"
+            },
+            "expires_at": {
+              "type": "string"
+            },
+            "expires_after_actions": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "actions_executed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "granted_at": {
+              "type": "string"
+            },
+            "granted_by": {
+              "type": "string"
+            },
+            "spec_url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "description",
+            "status",
+            "allowed_actions",
+            "reporting",
+            "proposed_at",
+            "expires_at",
+            "actions_executed"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "time_remaining_ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "actions_remaining": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": {}
+      }
+    }
+  },
+  "required": [
+    "scope"
+  ],
+  "additionalProperties": false
+}
+```
+
+## Side effects
+
+- sweeps wall-clock expiries before returning
+
+
+## Error modes
+
+- none — unknown id returns `{ scope: null }`
+
+## See also
+
+- `trust_scope_list`
+
+---
+
+_This file is generated by `scripts/generate-tool-catalogue.ts`. Edit `src/tools/catalogue-data.ts` and re-run `npm run docs:tools`._
