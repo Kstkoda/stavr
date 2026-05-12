@@ -8,6 +8,7 @@ import {
   type EventKindT,
 } from './event-types.js';
 import type { EventStore } from './persistence.js';
+import { registerDecisionTools } from './tools/decisions.js';
 
 export interface SwitchServerHandle {
   server: McpServer;
@@ -23,6 +24,7 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   registerSubscribe(server, broker, sessionId);
   registerUnsubscribe(server, broker, sessionId);
   registerGetEvents(server, broker.store);
+  registerDecisionTools(server, broker);
 
   return { server, sessionId };
 }

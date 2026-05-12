@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { createSwitchServer } from './server.js';
 import type { Broker } from './broker.js';
+import { startupDecisionSweep } from './tools/decisions.js';
 
 export interface TransportOpts {
   port?: number;
@@ -23,6 +24,9 @@ export async function mountTransports(
   const log = (m: string) => {
     if (!opts.silent) console.error(`[cowire] ${m}`);
   };
+
+  const sweptCount = await startupDecisionSweep(broker);
+  if (sweptCount > 0) log(`startup sweep expired ${sweptCount} stale decision(s)`);
 
   const stdioHandle = createSwitchServer(broker);
   await stdioHandle.server.connect(new StdioServerTransport());
