@@ -161,6 +161,13 @@ Write actions (comment, create issue, etc.) are not yet exposed. See spec 39 Pha
 
 See `src/event-types.ts`. Mirrors spec 37 §"Event taxonomy".
 
+## Documentation
+
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — components (broker, event store, transports, adapters, decisions), the decision-flow walkthrough, and how the pieces fit together.
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — repo layout, dev setup, testing philosophy, code style, commit conventions.
+- [`adr/README.md`](./adr/README.md) — index of architecture decision records (the "why" behind structural choices).
+- [`docs/writing-an-adapter.md`](./docs/writing-an-adapter.md) — end-to-end guide for adding a new adapter, with a runnable [`examples/weather/`](./examples/weather/) reference adapter.
+
 ## Tests
 
 ```bash
