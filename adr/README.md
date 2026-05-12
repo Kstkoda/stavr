@@ -33,3 +33,4 @@ Copy [`000-template.md`](./000-template.md) and rename to `NNN-short-kebab-title
 - [ADR-006 — Daemon binds 127.0.0.1 only](./006-daemon-binds-127001-only.md)
 - [ADR-007 — EADDRINUSE graceful fallback](./007-eaddrinuse-graceful-fallback.md)
 - [ADR-008 — gh CLI write actions through `await_decision`](./008-write-actions-await-decision.md)
+- [ADR-009 — Stdio→SSE shim for clients that don't recognize remote MCP](./009-stdio-sse-shim.md)

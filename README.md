@@ -67,7 +67,29 @@ In Cowork's `claude_desktop_config.json`, replace the spawn entry with a remote 
 }
 ```
 
-If a given MCP client does not yet accept `type: "sse"` entries, run Cowire in stdio mode (`cowire start --stdio-only`) per session as a fallback while a stdio→SSE shim is developed.
+### If your MCP client doesn't support `type: "sse"`
+
+Some MCP clients (e.g. current Cowork builds) silently ignore `type: "sse"` entries in their MCP config. For those, point the client at the **shim** instead — a small stdio↔SSE proxy that speaks stdio to the client and SSE to the daemon:
+
+```json
+{
+  "mcpServers": {
+    "switch": {
+      "command": "node",
+      "args": ["C:\\Users\\you\\path\\to\\cowire\\dist\\shim.js"],
+      "env": { "COWIRE_DAEMON_URL": "http://127.0.0.1:7777/mcp/sse" }
+    }
+  }
+}
+```
+
+The shim (`src/shim.ts` → `dist/shim.js`) is a byte-level forwarder: it does not parse messages, it just relays JSON-RPC between the two transports. From the client's perspective it's a normal stdio MCP server; from the daemon's perspective it's a normal SSE client. Cowork ends up talking to the same daemon as future CC sessions — shared event log, shared decision queue.
+
+You can also run it interactively for ad-hoc testing:
+
+```powershell
+npx cowire shim --url http://127.0.0.1:7777/mcp/sse
+```
 
 ### Smoke test
 
@@ -110,6 +132,7 @@ CLI:
 | `cowire daemon status` | Print running state, port, uptime, client/event counts. |
 | `cowire daemon restart` | Restart with previous port/db. |
 | `cowire connect-test [--url URL]` | Smoke test: connect via SSE, emit one event, print what came back. |
+| `cowire shim [--url URL]` | Stdio↔SSE proxy — for MCP clients that don't accept `type: "sse"`. |
 | `cowire start [--port=7777] [--stdio-only]` | Per-spawn stdio (+optional HTTP) — legacy / dev-only. |
 | `cowire status` | DB stats and recent decisions. |
 | `cowire events [--kind=K] [--since=ISO] [--limit=N]` | Query the event log. |

@@ -148,6 +148,19 @@ daemon
   });
 
 program
+  .command('shim')
+  .description('Stdio↔SSE proxy: speak stdio to an MCP client, SSE to the Switch daemon.')
+  .option(
+    '-u, --url <url>',
+    'Daemon SSE URL',
+    process.env.COWIRE_DAEMON_URL ?? 'http://127.0.0.1:7777/mcp/sse',
+  )
+  .action(async (opts: { url: string }) => {
+    const { runShim } = await import('./shim.js');
+    await runShim({ url: opts.url, exitOnClose: true });
+  });
+
+program
   .command('connect-test')
   .description('Smoke-test the daemon: connect via SSE, emit a test event, subscribe, print received notifications.')
   .option('-u, --url <url>', 'Daemon SSE URL', 'http://127.0.0.1:7777/mcp/sse')
