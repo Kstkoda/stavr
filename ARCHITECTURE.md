@@ -189,6 +189,108 @@ Cap: `timeout_sec` is hard-capped at 1800 (30 minutes) by the Zod schema in `eve
 
 ---
 
+## Trust scopes — `src/trust/`
+
+A **trust scope** is a plan-level approval (spec 46). It lets Kenneth approve
+once and have all matching CONFIRM-tier actions auto-execute until the scope
+expires by time or hits its action cap. The model is OAuth-scope-shaped:
+typed allow-list, optional deny-list, expiration, audit trail per action.
+
+### Gate hierarchy
+
+Every gated action passes through this ordering, top to bottom:
+
+1. **NEVER tier** (ADR-018) — destructive flags (`--force`, `--admin`, branch
+   delete). Always manual. Trust scopes cannot override.
+2. **`forbidden_actions` matchers** of any active scope — explicit deny.
+   Falls through to per-action gating regardless of allow.
+3. **`allowed_actions` matchers** of an active scope — auto-approve, record
+   the action in `scope_actions`, emit `trust_scope_action_authorized`.
+4. **CONFIRM tier** with no covering scope — opens `await_decision` as before.
+5. **AUTO tier** — never gated. Unchanged.
+
+```
+                           gated action call
+                                  │
+                                  ▼
+                       ┌──────────────────────┐
+                       │  NEVER-tier list?    │──► reject (ADR-018)
+                       └──────────┬───────────┘
+                                  │ no
+                                  ▼
+                       ┌──────────────────────┐
+                       │  forbidden matcher   │──► fall through
+                       │  in active scope?    │   to await_decision
+                       └──────────┬───────────┘
+                                  │ no
+                                  ▼
+                       ┌──────────────────────┐
+                       │  allowed matcher in  │──► run action,
+                       │  active scope?       │   record under scope,
+                       │  (expiry ok, cap ok) │   emit *_authorized
+                       └──────────┬───────────┘
+                                  │ no
+                                  ▼
+                       ┌──────────────────────┐
+                       │  CONFIRM tier?       │──► await_decision
+                       └──────────┬───────────┘
+                                  │ no
+                                  ▼
+                              run action
+```
+
+### Storage
+
+Two tables in `persistence.ts`:
+
+- `trust_scopes` — scope row with status (`proposed` / `active` / `expired` /
+  `revoked` / `completed`), allowed/forbidden matcher JSON, reporting JSON,
+  expiry deadline, action cap, action count.
+- `scope_actions` — append-only log of (scope_id, tool_name, args, result,
+  executed_at). The audit trail.
+
+The `TrustStore` class (`src/trust/store.ts`) wraps the same SQLite handle as
+`EventStore` to keep transactions atomic. `findActiveScopeFor({ tool, args })`
+is the hot path called from inside `gatedAction`; it lazily transitions
+time-expired and cap-exhausted scopes as a side effect.
+
+### Reporter
+
+`src/trust/reporter.ts` taps `broker.publish` once per broker and dispatches:
+
+- On `trust_scope_granted` — register the scope; arm a 15-min one-shot timer
+  if `cadence === 'every-15-min'`.
+- On `trust_scope_action_authorized` — increment action count for that scope;
+  emit `trust_scope_progress` at the configured cadence; emit
+  `trust_scope_completed` if the cap was just hit.
+- On `trust_scope_revoked` — emit terminal `trust_scope_completed` with
+  `reason: 'revoked'`.
+
+The 15-min timer is the one ADR-012 exception — bounded one-shot, not a poll.
+
+### MCP tools
+
+| Tool | Tier | Purpose |
+|---|---|---|
+| `trust_scope_propose` | AUTO | Insert proposal; emit `trust_scope_proposed`. |
+| `trust_scope_grant` | CONFIRM | Opens `await_decision` ("Grant scope ...?"); on approve, flips status to active and emits `trust_scope_granted`. |
+| `trust_scope_revoke` | AUTO | Flip to revoked; emit `trust_scope_revoked`. Escape hatch. |
+| `trust_scope_list` | AUTO | List with status + time/action remaining. |
+| `trust_scope_status` | AUTO | One scope + its action history. |
+| `trust_scope_extend` | CONFIRM | Bump deadline or cap; gates on `await_decision`. |
+
+### What changed in `gated-action.ts`
+
+`GatedActionOpts<T>` gained an optional `scopeCheck: { tool, args, trustStore }`
+field. When present and a covering active scope is found, the action runs
+immediately and emits `trust_scope_action_authorized`. When absent (or no
+covering scope), the original `await_decision` path runs unchanged. Call sites
+in `src/adapters/github-writes.ts` and `src/workers/orchestrator.ts` pass the
+structured (tool, args) — adding a new gated tool means passing the same shape
+through, no other plumbing.
+
+---
+
 ## Transports — when each is used
 
 | Transport | Used by | Code path |

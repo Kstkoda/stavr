@@ -3,6 +3,7 @@ import type { Broker } from '../broker.js';
 import type { EventStore, WorkerRecord } from '../persistence.js';
 import { DecisionTimeoutError } from '../persistence.js';
 import type { EventKindT } from '../event-types.js';
+import type { TrustStore } from '../trust/store.js';
 import {
   DispatchNotSupportedError,
   type WorkerInstance,
@@ -26,6 +27,10 @@ export interface OrchestratorOptions {
    * Override the idle timer. Tests can pass `null` to disable. Default is 5min.
    */
   idleAfterMs?: number | null;
+  /** Optional trust-scope store. When present, confirm-tier requests check for a
+   * covering active scope and auto-approve in-scope calls without opening a
+   * decision_request. See spec 46. */
+  trustStore?: TrustStore;
 }
 
 export interface TierGateRequest {
@@ -59,12 +64,14 @@ export class WorkerOrchestrator {
   private readonly store: EventStore;
   private readonly tierGate?: OrchestratorOptions['tierGate'];
   private readonly idleAfterMs: number | null;
+  private readonly trustStore?: TrustStore;
 
   constructor(opts: OrchestratorOptions) {
     this.broker = opts.broker;
     this.store = opts.store;
     this.tierGate = opts.tierGate;
     this.idleAfterMs = opts.idleAfterMs === undefined ? IDLE_AFTER_MS : opts.idleAfterMs;
+    this.trustStore = opts.trustStore;
   }
 
   register(spawner: WorkerSpawner): void {
@@ -116,12 +123,13 @@ export class WorkerOrchestrator {
     }
     const validated = parsed.data;
 
-    const gate = await this.gate({
+    const spawnReq: TierGateRequest = {
       tool: 'worker_spawn',
       type,
       workerName: name,
       params: validated,
-    }, spawner.tier);
+    };
+    const gate = await this.gate(spawnReq, spawner.tier);
     if (gate.decision === 'reject') {
       throw new OrchestratorError('rejected_by_user', 'spawn was rejected via await_decision');
     }
@@ -233,6 +241,7 @@ export class WorkerOrchestrator {
       `worker:${type}:${name}`,
     );
 
+    this.recordUnderScope(gate.scope_id, spawnReq, { worker_id: id });
     return { worker: record, gated: { tier: spawner.tier, decision: gate.decision } };
   }
 
@@ -245,13 +254,14 @@ export class WorkerOrchestrator {
     const spawner = this.spawners.get(rec.type);
     if (!spawner) throw new OrchestratorError('unknown_type', `unknown worker type: ${rec.type}`);
 
-    const gate = await this.gate({
+    const dispatchReq: TierGateRequest = {
       tool: 'worker_dispatch',
       type: rec.type,
       workerId: rec.id,
       workerName: rec.name,
       params: body,
-    }, spawner.tier);
+    };
+    const gate = await this.gate(dispatchReq, spawner.tier);
     if (gate.decision === 'reject') {
       throw new OrchestratorError('rejected_by_user', 'dispatch was rejected via await_decision');
     }
@@ -288,6 +298,7 @@ export class WorkerOrchestrator {
       undefined,
       `worker:${rec.type}:${rec.name}`,
     );
+    this.recordUnderScope(gate.scope_id, dispatchReq, { message_id: messageId });
     return { message_id: messageId };
   }
 
@@ -300,10 +311,13 @@ export class WorkerOrchestrator {
 
     // Terminate is always tier `confirm` regardless of spawner tier — terminating
     // an arbitrary process is a destructive action that deserves explicit OK.
-    const gate = await this.gate(
-      { tool: 'worker_terminate', type: rec.type, workerId: rec.id, workerName: rec.name },
-      'confirm',
-    );
+    const terminateReq: TierGateRequest = {
+      tool: 'worker_terminate',
+      type: rec.type,
+      workerId: rec.id,
+      workerName: rec.name,
+    };
+    const gate = await this.gate(terminateReq, 'confirm');
     if (gate.decision === 'reject') {
       throw new OrchestratorError('rejected_by_user', 'terminate was rejected via await_decision');
     }
@@ -319,6 +333,7 @@ export class WorkerOrchestrator {
     if (!this.store.getWorker(rec.id)?.ended_at) {
       this.store.markWorkerTerminated(rec.id, 'terminated_by_user', result.exitCode);
     }
+    this.recordUnderScope(gate.scope_id, terminateReq, { exit_code: result.exitCode });
     return result;
   }
 
@@ -342,16 +357,44 @@ export class WorkerOrchestrator {
   private async gate(
     req: TierGateRequest,
     tier: 'auto' | 'confirm' | 'never',
-  ): Promise<{ decision: 'approve' | 'reject' | 'skipped' }> {
+  ): Promise<{ decision: 'approve' | 'reject' | 'skipped'; scope_id?: string }> {
     if (tier === 'never') {
       throw new OrchestratorError('tier_blocked', `tier "never" blocks ${req.tool}`);
     }
     if (tier === 'auto') return { decision: 'skipped' };
+    // Trust-scope short-circuit: confirm-tier requests covered by an active scope
+    // auto-approve. The action is recorded against the scope after it succeeds
+    // (see post-spawn/dispatch hooks below).
+    if (this.trustStore) {
+      const scope = this.trustStore.findActiveScopeFor({
+        tool: req.tool,
+        args: scopeArgsFor(req),
+      });
+      if (scope) {
+        await this.broker.publish({
+          kind: 'trust_scope_action_authorized',
+          at: new Date().toISOString(),
+          source_agent: 'cowire-workers',
+          payload: {
+            scope_id: scope.id,
+            tool: req.tool,
+            args: scopeArgsFor(req),
+          },
+        });
+        return { decision: 'approve', scope_id: scope.id };
+      }
+    }
     if (this.tierGate) {
       const decision = await this.tierGate(req);
       return { decision };
     }
     return this.askViaDecision(req);
+  }
+
+  /** After a successful gated worker action, record it under the covering scope. */
+  private recordUnderScope(scopeId: string | undefined, req: TierGateRequest, result: unknown): void {
+    if (!scopeId || !this.trustStore) return;
+    this.trustStore.recordScopeAction(scopeId, req.tool, scopeArgsFor(req), result);
   }
 
   private async askViaDecision(
@@ -448,6 +491,17 @@ export class OrchestratorError extends Error {
   constructor(public readonly code: string, message: string) {
     super(message);
   }
+}
+
+/** Build the args object that the trust matcher sees for a worker request. */
+function scopeArgsFor(req: TierGateRequest): Record<string, unknown> {
+  if (req.tool === 'worker_spawn') {
+    return { type: req.type, name: req.workerName, params: req.params };
+  }
+  if (req.tool === 'worker_dispatch') {
+    return { type: req.type, id_or_name: req.workerName ?? req.workerId, body: req.params };
+  }
+  return { type: req.type, id_or_name: req.workerName ?? req.workerId };
 }
 
 function describeTierQuestion(req: TierGateRequest): string {

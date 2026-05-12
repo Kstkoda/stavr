@@ -24,6 +24,14 @@ export const EventKind = z.enum([
   'worker_dispatch_request',
   'worker_terminated',
   'worker_error',
+  // Trust scopes (spec 46)
+  'trust_scope_proposed',
+  'trust_scope_granted',
+  'trust_scope_revoked',
+  'trust_scope_extended',
+  'trust_scope_progress',
+  'trust_scope_completed',
+  'trust_scope_action_authorized',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -177,6 +185,75 @@ export const WorkerErrorPayload = z.object({
   recoverable: z.boolean(),
 });
 
+// Trust-scope payloads (spec 46)
+
+export const ActionMatcherSchema = z.object({
+  tool: z.string().min(1),
+  param_constraints: z.record(z.unknown()).optional(),
+  reason: z.string().optional(),
+});
+
+export const ScopeReportingSchema = z.object({
+  cadence: z.enum(['every-action', 'every-5-actions', 'every-15-min', 'on-completion-only']),
+  channels: z.array(z.enum(['chat', 'event-log', 'dashboard', 'slack', 'email'])).min(1),
+});
+
+export const TrustScopeProposedPayload = z.object({
+  scope_id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  allowed_actions: z.array(ActionMatcherSchema),
+  forbidden_actions: z.array(ActionMatcherSchema).optional(),
+  expires_at: z.string(),
+  expires_after_actions: z.number().int().positive().optional(),
+  reporting: ScopeReportingSchema,
+  spec_url: z.string().optional(),
+});
+
+export const TrustScopeGrantedPayload = z.object({
+  scope_id: z.string(),
+  title: z.string(),
+  granted_by: z.string(),
+  granted_at: z.string(),
+  expires_at: z.string(),
+  expires_after_actions: z.number().int().positive().optional(),
+});
+
+export const TrustScopeRevokedPayload = z.object({
+  scope_id: z.string(),
+  revoked_by: z.string(),
+  reason: z.string().optional(),
+});
+
+export const TrustScopeExtendedPayload = z.object({
+  scope_id: z.string(),
+  new_expires_at: z.string().optional(),
+  new_expires_after_actions: z.number().int().positive().optional(),
+  extended_by: z.string(),
+});
+
+export const TrustScopeProgressPayload = z.object({
+  scope_id: z.string(),
+  actions_executed: z.number().int().nonnegative(),
+  expires_after_actions: z.number().int().positive().optional(),
+  expires_at: z.string(),
+  cadence: z.enum(['every-action', 'every-5-actions', 'every-15-min', 'on-completion-only']),
+  message: z.string().optional(),
+});
+
+export const TrustScopeCompletedPayload = z.object({
+  scope_id: z.string(),
+  reason: z.enum(['action_cap_reached', 'expired', 'revoked']),
+  actions_executed: z.number().int().nonnegative(),
+  completed_at: z.string(),
+});
+
+export const TrustScopeActionAuthorizedPayload = z.object({
+  scope_id: z.string(),
+  tool: z.string(),
+  args: z.unknown(),
+});
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -213,6 +290,13 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     worker_dispatch_request: WorkerDispatchRequestPayload,
     worker_terminated: WorkerTerminatedPayload,
     worker_error: WorkerErrorPayload,
+    trust_scope_proposed: TrustScopeProposedPayload,
+    trust_scope_granted: TrustScopeGrantedPayload,
+    trust_scope_revoked: TrustScopeRevokedPayload,
+    trust_scope_extended: TrustScopeExtendedPayload,
+    trust_scope_progress: TrustScopeProgressPayload,
+    trust_scope_completed: TrustScopeCompletedPayload,
+    trust_scope_action_authorized: TrustScopeActionAuthorizedPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);

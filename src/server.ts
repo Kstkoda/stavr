@@ -14,6 +14,9 @@ import { registerGithubWriteTools } from './adapters/github-writes.js';
 import { WorkerOrchestrator } from './workers/orchestrator.js';
 import { allSpawners } from './workers/spawners-registry.js';
 import { registerWorkerTools } from './workers/tools.js';
+import { TrustStore } from './trust/store.js';
+import { registerTrustScopeTools } from './trust/tools.js';
+import { initTrustReporter } from './trust/reporter.js';
 
 export interface SwitchServerHandle {
   server: McpServer;
@@ -28,14 +31,24 @@ export interface SwitchServerHandle {
  * the other never sees).
  */
 const orchestratorsByBroker = new WeakMap<Broker, WorkerOrchestrator>();
+const trustStoresByBroker = new WeakMap<Broker, TrustStore>();
 
-function getOrCreateOrchestrator(broker: Broker): WorkerOrchestrator {
+function getOrCreateOrchestrator(broker: Broker, trustStore: TrustStore): WorkerOrchestrator {
   const existing = orchestratorsByBroker.get(broker);
   if (existing) return existing;
-  const orch = new WorkerOrchestrator({ broker, store: broker.store });
+  const orch = new WorkerOrchestrator({ broker, store: broker.store, trustStore });
   for (const s of allSpawners) orch.register(s);
   orchestratorsByBroker.set(broker, orch);
   return orch;
+}
+
+export function getOrCreateTrustStore(broker: Broker): TrustStore {
+  const existing = trustStoresByBroker.get(broker);
+  if (existing) return existing;
+  const ts = new TrustStore(broker.store);
+  trustStoresByBroker.set(broker, ts);
+  initTrustReporter(broker, ts);
+  return ts;
 }
 
 export function createSwitchServer(broker: Broker): SwitchServerHandle {
@@ -43,7 +56,8 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   const server = new McpServer({ name: 'cowire-switch', version: '0.1.0' });
   broker.registerSession(sessionId, server);
 
-  const orchestrator = getOrCreateOrchestrator(broker);
+  const trustStore = getOrCreateTrustStore(broker);
+  const orchestrator = getOrCreateOrchestrator(broker, trustStore);
 
   registerEmitEvent(server, broker);
   registerSubscribe(server, broker, sessionId);
@@ -51,8 +65,9 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   registerGetEvents(server, broker.store);
   registerDecisionTools(server, broker);
   registerGithubTools(server);
-  registerGithubWriteTools(server, broker);
+  registerGithubWriteTools(server, broker, { trustStore });
   registerWorkerTools(server, orchestrator);
+  registerTrustScopeTools(server, broker, trustStore);
   return { server, sessionId, orchestrator };
 }
 

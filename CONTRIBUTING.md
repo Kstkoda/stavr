@@ -168,6 +168,21 @@ For multi-commit PRs, commit per logical artifact (ARCHITECTURE.md is one commit
 
 ---
 
+## Adding a new gated tool — don't bypass the scope check
+
+If you're adding a CONFIRM-tier tool (gated by `await_decision`), call
+`gatedAction` from `src/tools/gated-action.ts` and pass `scopeCheck: { tool,
+args, trustStore }`. That's the only thing you need to wire up — the trust
+scope short-circuit runs automatically, and the existing `await_decision`
+path runs when no scope covers the call. Do **not** roll your own decision
+flow; the scope check is centralised on purpose so that future improvements
+to scoping (matcher language, channels, multi-user) land in one place.
+
+The same rule holds for the `WorkerOrchestrator.gate` helper — gating goes
+through it, and the trust-scope path is already inside.
+
+---
+
 ## When you're stuck
 
 Three places to look:

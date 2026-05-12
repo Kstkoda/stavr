@@ -44,3 +44,6 @@ Copy [`000-template.md`](./000-template.md) and rename to `NNN-short-kebab-title
 - [ADR-019](./019-exponential-backoff-reconnect-in-shim.md) — Exponential-backoff reconnect in the shim (supersedes ADR-009's 3-error rule)
 - [ADR-020](./020-daemon-watchdog.md) — Standalone daemon watchdog via OS scheduler
 - [ADR-021](./021-graceful-degradation-vs-crash.md) — Graceful degradation, not crash
+- [ADR-022](./022-trust-scopes-supersede-per-action-confirm.md) — Trust scopes supersede per-action CONFIRM for the common case
+- [ADR-023](./023-param-constraint-matching-syntax.md) — Param-constraint matching syntax (exact + `^`-prefix regex)
+- [ADR-024](./024-reporting-cadences-and-channels.md) — Reporting cadences and channels for trust scopes

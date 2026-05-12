@@ -184,7 +184,42 @@ export class EventStore {
       CREATE INDEX IF NOT EXISTS idx_workers_type ON workers(type);
       CREATE INDEX IF NOT EXISTS idx_workers_name_active
         ON workers(name) WHERE status NOT IN ('terminated', 'crashed');
+
+      CREATE TABLE IF NOT EXISTS trust_scopes (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        granted_by TEXT NOT NULL,
+        granted_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        expires_after_actions INTEGER,
+        allowed_actions_json TEXT NOT NULL,
+        forbidden_actions_json TEXT,
+        reporting_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        spec_url TEXT,
+        proposed_at TEXT,
+        actions_executed INTEGER NOT NULL DEFAULT 0,
+        completed_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_trust_scopes_status ON trust_scopes(status);
+
+      CREATE TABLE IF NOT EXISTS scope_actions (
+        id TEXT PRIMARY KEY,
+        scope_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        args_json TEXT NOT NULL,
+        result_json TEXT,
+        executed_at TEXT NOT NULL,
+        FOREIGN KEY (scope_id) REFERENCES trust_scopes(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_scope_actions_scope ON scope_actions(scope_id);
     `);
+  }
+
+  /** Raw DB handle for the TrustStore sibling. Avoids reopening the SQLite file. */
+  get rawDb(): Database.Database {
+    return this.db;
   }
 
   close(): void {

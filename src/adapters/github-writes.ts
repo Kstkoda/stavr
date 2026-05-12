@@ -4,6 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Broker } from '../broker.js';
 import { toolJson } from '../server.js';
 import { gatedAction } from '../tools/gated-action.js';
+import type { TrustStore } from '../trust/store.js';
 
 const GH_MAX_BUFFER = 16 * 1024 * 1024;
 const GH_TIMEOUT_MS = 30_000;
@@ -23,6 +24,7 @@ export type WriteExecRunner = (
 export interface RegisterGithubWriteToolsOptions {
   exec?: WriteExecRunner;
   decisionTimeoutSec?: number;
+  trustStore?: TrustStore;
 }
 
 class GhWriteError extends Error {
@@ -99,6 +101,7 @@ export function registerGithubWriteTools(
   const runner: WriteExecRunner = opts.exec ?? defaultExec;
   const gh = makeGhWriteExec(runner);
   const timeoutSec = opts.decisionTimeoutSec;
+  const trustStore = opts.trustStore;
 
   // Helper to format a structured success/failure as a tool response.
   const respond = (value: unknown) => toolJson(value as Record<string, unknown>);
@@ -124,6 +127,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
+        scopeCheck: { tool: 'github.create_pr', args: { repo, head, base, title, body, draft }, trustStore },
         performAction: async () => {
           const args = [
             'pr',
@@ -176,6 +180,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
+        scopeCheck: { tool: 'github.merge_pr', args: { repo, number }, trustStore },
         performAction: async () => {
           await gh([
             'pr',
@@ -237,6 +242,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
+        scopeCheck: { tool: 'github.create_issue', args: { repo, title, body, labels }, trustStore },
         performAction: async () => {
           const args = [
             'issue',
@@ -287,6 +293,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
+        scopeCheck: { tool: 'github.create_issue_comment', args: { repo, number, body }, trustStore },
         performAction: async () => {
           const stdout = await gh(
             [
@@ -335,6 +342,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
+        scopeCheck: { tool: 'github.create_pr_comment', args: { repo, number, body }, trustStore },
         performAction: async () => {
           const stdout = await gh(
             [
@@ -382,6 +390,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
+        scopeCheck: { tool: 'github.close_issue', args: { repo, number, comment }, trustStore },
         performAction: async () => {
           const args = ['issue', 'close', String(number), '--repo', repo];
           if (comment) args.push('--comment', comment);
@@ -416,6 +425,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
+        scopeCheck: { tool: 'github.reopen_issue', args: { repo, number, comment }, trustStore },
         performAction: async () => {
           const args = ['issue', 'reopen', String(number), '--repo', repo];
           if (comment) args.push('--comment', comment);
@@ -450,6 +460,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
+        scopeCheck: { tool: 'github.add_labels', args: { repo, number, labels }, trustStore },
         performAction: async () => {
           const args = ['issue', 'edit', String(number), '--repo', repo];
           for (const l of labels) args.push('--add-label', l);
@@ -504,6 +515,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
+        scopeCheck: { tool: 'github.remove_labels', args: { repo, number, labels }, trustStore },
         performAction: async () => {
           const args = ['issue', 'edit', String(number), '--repo', repo];
           for (const l of labels) args.push('--remove-label', l);
@@ -558,6 +570,7 @@ export function registerGithubWriteTools(
         broker,
         question,
         timeoutSec,
+        scopeCheck: { tool: 'github.request_pr_review', args: { repo, number, reviewers }, trustStore },
         performAction: async () => {
           const args = ['pr', 'edit', String(number), '--repo', repo];
           for (const r of reviewers) args.push('--add-reviewer', r);

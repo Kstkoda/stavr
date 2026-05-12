@@ -246,6 +246,46 @@ GET  http://127.0.0.1:7777/status         # live counts (sse_sessions, events, p
 | `worker_status` | One worker's state. |
 | `worker_dispatch` | Send an instruction to a worker. |
 | `worker_terminate` | Stop a worker. |
+| `trust_scope_propose` | Propose a trust scope (auto-tier). |
+| `trust_scope_grant` | Activate a proposed scope (gates on `await_decision`). |
+| `trust_scope_revoke` | Revoke an active scope (auto-tier escape hatch). |
+| `trust_scope_list` | List scopes with time/action remaining. |
+| `trust_scope_status` | One scope's full state + action history. |
+| `trust_scope_extend` | Extend a scope's deadline or cap (gates on `await_decision`). |
+
+## Trust scopes (spec 46)
+
+A **trust scope** is a typed, time-bounded, action-bounded permission grant.
+While a scope is active, CONFIRM-tier actions matching its `allowed_actions`
+auto-execute without per-call `await_decision`. Out-of-scope actions still
+gate normally. NEVER-tier (ADR-018) is never overridable.
+
+The lifecycle is: `trust_scope_propose` → `trust_scope_grant` (the ONE
+approval) → covered tool calls auto-execute → reports stream at the configured
+cadence → completion when the action cap is hit, time expires, or `trust_scope_revoke` fires.
+
+Example scope:
+
+```json
+{
+  "title": "Migrate BUGS.md to GitHub Issues",
+  "description": "Create 10 issues from BUGS.md (B-001..B-010).",
+  "allowed_actions": [
+    { "tool": "github.create_issue", "param_constraints": { "repo": "Kstkoda/privacy-tracker" } },
+    { "tool": "github.add_labels",   "param_constraints": { "repo": "Kstkoda/privacy-tracker" } }
+  ],
+  "expires_after_actions": 20,
+  "reporting": { "cadence": "every-5-actions", "channels": ["chat", "event-log"] }
+}
+```
+
+Param matching: exact value by default, regex if the value starts with `^`
+(ADR-023). Multiple matchers OR together; `forbidden_actions` always veto.
+
+See [`docs/writing-a-spec-with-trust-scope.md`](./docs/writing-a-spec-with-trust-scope.md)
+for a worked example, and [ADR-022](./adr/022-trust-scopes-supersede-per-action-confirm.md),
+[ADR-023](./adr/023-param-constraint-matching-syntax.md),
+[ADR-024](./adr/024-reporting-cadences-and-channels.md) for the design.
 
 ## Workers (Spec 42 — event-driven orchestration)
 
