@@ -4,11 +4,42 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCcSpawner } from '../../src/workers/cc.js';
-import type { WorkerExitInfo, WorkerMetadataInfo } from '../../src/workers/types.js';
+import type { WorkerExitInfo, WorkerMetadataInfo, WorkerProgressInfo } from '../../src/workers/types.js';
+
+/**
+ * Minimal stand-in for a piped child process. The post-spec-47 cc spawner
+ * pipes stdin/stdout/stderr — we need fake streams that emit data when the
+ * test pushes lines onto them, plus a stdin sink we can inspect.
+ */
+class FakeStream extends EventEmitter {
+  setEncoding(_enc: string): void {
+    /* no-op */
+  }
+  push(chunk: string): void {
+    this.emit('data', chunk);
+  }
+  endStream(): void {
+    this.emit('end');
+  }
+}
+
+class FakeStdin {
+  written: string[] = [];
+  ended = false;
+  write(s: string): void {
+    this.written.push(s);
+  }
+  end(): void {
+    this.ended = true;
+  }
+}
 
 class FakeChild extends EventEmitter {
   pid = 9999;
   exitCode: number | null = null;
+  stdin = new FakeStdin();
+  stdout = new FakeStream();
+  stderr = new FakeStream();
   kill(_sig?: string | number): boolean {
     return true;
   }
@@ -39,7 +70,7 @@ describe('cc spawner', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  it('runs git, writes mcp config, and launches claude in a cmd window', async () => {
+  it('runs git, writes mcp config, and spawns claude directly with stream-json', async () => {
     const gitCalls: string[][] = [];
     const git = async (args: string[]): Promise<{ stdout: string; stderr: string }> => {
       gitCalls.push(args);
@@ -90,11 +121,85 @@ describe('cc spawner', () => {
     const parsed = JSON.parse(readFileSync(mcp, 'utf8'));
     expect(parsed.mcpServers.cowire.type).toBe('sse');
 
-    expect(spawnArgs?.file).toBe('cmd.exe');
-    expect(spawnArgs?.args[0]).toBe('/c');
-    expect(spawnArgs?.args[1]).toBe('start');
-    expect(spawnArgs?.args.join(' ')).toContain('cc:cc-w');
-    expect(spawnArgs?.args.join(' ')).toContain('claude');
+    // Post-spec-47: direct spawn of `claude`, no cmd.exe wrapper. Args
+    // include the headless stream-json flags so the daemon receives
+    // structured events on stdout. Prompt is fed via stdin, not argv.
+    expect(spawnArgs?.file).toBe('claude');
+    expect(spawnArgs?.args).toContain('--print');
+    expect(spawnArgs?.args).toContain('--output-format');
+    expect(spawnArgs?.args).toContain('stream-json');
+    expect(spawnArgs?.args).toContain('--mcp-config');
+    expect(spawnArgs?.args).toContain('.cowire-mcp.json');
+    expect(spawnArgs?.args.join(' ')).not.toContain('cmd.exe');
+
+    // The prompt is delivered as a stream-json user message on stdin, then
+    // stdin is closed so claude knows input is finished.
+    const stdinWrites = (child.stdin as FakeStdin).written.join('');
+    expect(stdinWrites).toContain('"role":"user"');
+    expect(stdinWrites).toContain('"content":"hello"');
+    expect((child.stdin as FakeStdin).ended).toBe(true);
+  });
+
+  it('parses stream-json stdout lines into structured progress events', async () => {
+    const git = async () => ({ stdout: '', stderr: '' });
+    const child = new FakeChild();
+    const watcher = new FakeWatcher();
+    const spawner = createCcSpawner({ git, spawn: (() => child) as never, watch: (() => watcher as never) });
+    const inst = await spawner.spawn(
+      { repo_path: tmp, branch: 'feat/test', base: 'main', prompt: 'hi', cleanup_on_terminate: false, approval_mode: 'normal' },
+      ctx,
+    );
+    const progress: WorkerProgressInfo[] = [];
+    inst.events.on('progress', (p) => progress.push(p));
+
+    // Single complete JSONL line — should round-trip as a structured event.
+    child.stdout.push('{"type":"assistant","message":{"role":"assistant","content":"hi"}}\n');
+    await Promise.resolve();
+    expect(progress).toHaveLength(1);
+    expect(progress[0].message).toBe('claude:assistant');
+    expect((progress[0].payload as { format: string }).format).toBe('stream-json');
+    expect(((progress[0].payload as { event: { type: string } }).event).type).toBe('assistant');
+
+    // Two lines arriving in three chunks with a partial split — buffering
+    // should reassemble both cleanly.
+    progress.length = 0;
+    child.stdout.push('{"type":"tool_use","na');
+    child.stdout.push('me":"Read"}\n{"type":"resu');
+    child.stdout.push('lt","cost_usd":0.01}\n');
+    await Promise.resolve();
+    expect(progress).toHaveLength(2);
+    expect(progress[0].message).toBe('claude:tool_use');
+    expect(progress[1].message).toBe('claude:result');
+
+    // Non-JSON garbage falls through as a raw progress line so we never
+    // silently lose output.
+    progress.length = 0;
+    child.stdout.push('not valid json\n');
+    await Promise.resolve();
+    expect(progress).toHaveLength(1);
+    expect(progress[0].message).toBe('not valid json');
+    expect((progress[0].payload as { format: string }).format).toBe('raw');
+  });
+
+  it('forwards stderr lines as stream=stderr progress events', async () => {
+    const git = async () => ({ stdout: '', stderr: '' });
+    const child = new FakeChild();
+    const watcher = new FakeWatcher();
+    const spawner = createCcSpawner({ git, spawn: (() => child) as never, watch: (() => watcher as never) });
+    const inst = await spawner.spawn(
+      { repo_path: tmp, branch: 'feat/test', base: 'main', prompt: 'hi', cleanup_on_terminate: false, approval_mode: 'normal' },
+      ctx,
+    );
+    const progress: WorkerProgressInfo[] = [];
+    inst.events.on('progress', (p) => progress.push(p));
+
+    child.stderr.push('warning: deprecated flag\n');
+    child.stderr.push('error: thing went wrong\n');
+    await Promise.resolve();
+    expect(progress).toHaveLength(2);
+    expect(progress[0].message).toBe('warning: deprecated flag');
+    expect((progress[0].payload as { stream: string }).stream).toBe('stderr');
+    expect(progress[1].message).toBe('error: thing went wrong');
   });
 
   it('chokidar change events emit metadata within 100ms', async () => {

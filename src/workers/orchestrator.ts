@@ -178,7 +178,15 @@ export class WorkerOrchestrator {
     offs.push(
       instance.events.on('progress', (info) => {
         this.touch(id);
-        void this.publish('worker_progress', { id, message: info.message }, undefined, `worker:${type}:${name}`);
+        // Pass payload through so spawners that emit structured events
+        // (cc.ts stream-json, etc.) survive the broker hop. Consumers that
+        // only care about message keep working — payload is optional.
+        const eventPayload: { id: string; message: string; payload?: unknown } = {
+          id,
+          message: info.message,
+        };
+        if (info.payload !== undefined) eventPayload.payload = info.payload;
+        void this.publish('worker_progress', eventPayload, undefined, `worker:${type}:${name}`);
       }),
     );
     offs.push(

@@ -13,3 +13,15 @@ dist/
 .DS_Store
 coverage/
 .cowire/
+
+# spec 47 workspace state (per-worker worktrees, never commit)
+.cowire-worktrees/
+
+# Claude Code per-project state
+.claude/
+
+# Vitest config compilation temp files
+vitest.config.ts.timestamp-*.mjs
+
+# Transient operator/steward task files (never commit)
+prompts/
