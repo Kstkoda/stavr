@@ -7,12 +7,14 @@ import { EventStore } from './persistence.js';
 import { Broker } from './broker.js';
 import { mountTransports, type MountedTransports } from './transports.js';
 import { defaultDbPath } from './paths.js';
+import { getLogger } from './log.js';
 
 export interface DaemonOptions {
   port: number;
   db: string;
   detach: boolean;
   force?: boolean;
+  logFormat?: 'text' | 'json';
 }
 
 export interface DaemonPidFile {
@@ -95,13 +97,33 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
         `Use --force to override or 'cowire daemon stop' first.`,
     );
   }
+  const logger = getLogger();
   if (existing && !isProcessAlive(existing.pid)) {
-    console.error(`[cowire] stale PID file for dead pid ${existing.pid}; overwriting`);
+    logger.warn('stale PID file overwritten', { dead_pid: existing.pid });
   }
 
   const store = new EventStore();
-  store.init(opts.db);
+  const initResult = store.init(opts.db);
   const broker = new Broker(store);
+
+  // If we just had to quarantine a corrupt DB, surface the event so subscribers
+  // (dashboard, oncall) see it. Best-effort; the daemon must come up either way.
+  if (initResult.recoveredFromCorruption) {
+    try {
+      await broker.publish({
+        kind: 'error',
+        at: new Date().toISOString(),
+        source_agent: 'cowire-daemon',
+        payload: {
+          message: 'db corrupted; quarantined and rebuilt from empty schema',
+          recoverable: true,
+          attempted_recovery: `renamed to ${initResult.recoveredFromCorruption}; started fresh`,
+        },
+      });
+    } catch (err) {
+      logger.error('failed to emit db-recovery event', { error: (err as Error).message });
+    }
+  }
 
   const transports = await mountTransports(broker, {
     mode: 'daemon',
@@ -114,13 +136,19 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     started_at: new Date().toISOString(),
     db: opts.db,
   });
-  console.error(`[cowire] daemon ready on 127.0.0.1:${opts.port}, db=${opts.db}, pid=${process.pid}`);
+  logger.info('daemon ready', {
+    address: `127.0.0.1:${opts.port}`,
+    db: opts.db,
+    pid: process.pid,
+  });
+
+  installCrashHandler(store);
 
   let shuttingDown = false;
   const shutdown = async (sig: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.error(`[cowire] received ${sig}; shutting down`);
+    logger.info('shutting down', { signal: sig });
     await transports.shutdown();
     removePidFile();
     process.exit(0);
@@ -154,6 +182,7 @@ function spawnDetachedDaemon(opts: DaemonOptions): { pid: number; detached: true
 
   const args = ['daemon', 'start', '--port', String(opts.port), '--db', opts.db];
   if (opts.force) args.push('--force');
+  if (opts.logFormat) args.push('--log-format', opts.logFormat);
 
   const child = spawn(process.execPath, [cliEntry, ...args], {
     detached: true,
@@ -281,4 +310,49 @@ export async function restartDaemon(): Promise<{ pid: number; port: number; db: 
 
 export function getDefaultDbPath(): string {
   return defaultDbPath();
+}
+
+/**
+ * Top-level uncaughtException / unhandledRejection trap. Writes a JSON crash
+ * dump under ~/.cowire/crash-<ts>.json and exits 1 so the watchdog (ADR-020)
+ * restarts. Pulls the last 100 events for postmortem; failures during dump
+ * generation are swallowed — we'd rather die than infinitely loop on errors.
+ */
+let crashHandlerInstalled = false;
+export function installCrashHandler(store: EventStore): void {
+  if (crashHandlerInstalled) return;
+  crashHandlerInstalled = true;
+
+  const dump = (label: 'uncaughtException' | 'unhandledRejection', err: unknown) => {
+    const e = err instanceof Error ? err : new Error(String(err));
+    let recent: unknown[] = [];
+    try {
+      recent = store.getEvents({ limit: 100 }).events;
+    } catch {
+      /* DB might be the thing that broke */
+    }
+    const payload = {
+      label,
+      timestamp: new Date().toISOString(),
+      error: { message: e.message, stack: e.stack },
+      pid: process.pid,
+      recent_events: recent,
+    };
+    try {
+      mkdirSync(PID_DIR, { recursive: true });
+      const path = join(PID_DIR, `crash-${Date.now()}.json`);
+      writeFileSync(path, JSON.stringify(payload, null, 2));
+      getLogger().error('crash dump written', { path, label, message: e.message });
+    } catch (dumpErr) {
+      getLogger().error('failed to write crash dump', {
+        label,
+        original: e.message,
+        dump_error: (dumpErr as Error).message,
+      });
+    }
+    process.exit(1);
+  };
+
+  process.on('uncaughtException', (err) => dump('uncaughtException', err));
+  process.on('unhandledRejection', (reason) => dump('unhandledRejection', reason));
 }

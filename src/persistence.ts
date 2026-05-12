@@ -1,9 +1,10 @@
 import Database from 'better-sqlite3';
 import { EventEmitter } from 'node:events';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { DecisionOption, Event, EventKindT } from './event-types.js';
+import { getLogger } from './log.js';
 
 export interface StoredEvent extends Event {
   id: string;
@@ -62,17 +63,60 @@ export class DecisionTimeoutError extends Error {
   }
 }
 
+export interface EventStoreInitResult {
+  /** Set when the DB had to be quarantined and rebuilt. Path is the corrupt file. */
+  recoveredFromCorruption?: string;
+}
+
 export class EventStore {
   private db!: Database.Database;
   private responses = new EventEmitter();
+  /** Set to the quarantined path if init() had to rebuild the DB from scratch. */
+  recoveredCorruptDbPath?: string;
 
-  init(dbPath: string): void {
+  init(dbPath: string): EventStoreInitResult {
+    const result: EventStoreInitResult = {};
     if (dbPath !== ':memory:') {
       mkdirSync(dirname(dbPath), { recursive: true });
     }
+    try {
+      this.openAndMigrate(dbPath);
+    } catch (err) {
+      // Treat any failure during initial open/schema migration as corruption
+      // for on-disk DBs. We quarantine the file and start fresh — losing
+      // history but keeping the daemon alive (spec 44 invariant 5: graceful
+      // degradation > crash). In-memory DBs never reach this path.
+      if (dbPath === ':memory:') throw err;
+      const corruptPath = `${dbPath}.corrupt.${Date.now()}`;
+      try {
+        renameSync(dbPath, corruptPath);
+        result.recoveredFromCorruption = corruptPath;
+        this.recoveredCorruptDbPath = corruptPath;
+        getLogger().error('db corrupted; quarantined and rebuilding', {
+          original: dbPath,
+          corrupt_path: corruptPath,
+          error: (err as Error).message,
+        });
+      } catch {
+        // If we can't even rename, surface the original error.
+        throw err;
+      }
+      this.openAndMigrate(dbPath);
+    }
+    return result;
+  }
+
+  private openAndMigrate(dbPath: string): void {
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
+    // Quick integrity check — better-sqlite3 doesn't always throw on open even
+    // when pages are corrupt. If this fails, openAndMigrate's caller (init)
+    // catches and quarantines.
+    const integrity = this.db.prepare(`PRAGMA integrity_check`).get() as { integrity_check: string };
+    if (integrity && integrity.integrity_check !== 'ok') {
+      throw new Error(`sqlite integrity_check failed: ${integrity.integrity_check}`);
+    }
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS events (
@@ -237,6 +281,43 @@ export class EventStore {
 
   eventCount(): number {
     return (this.db.prepare(`SELECT COUNT(*) AS c FROM events`).get() as { c: number }).c;
+  }
+
+  /** Cheap liveness check: a SELECT 1 that throws if the underlying DB handle is gone. */
+  isReachable(): boolean {
+    try {
+      this.db.prepare(`SELECT 1`).get();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Writability probe: writes/deletes a sentinel row in the `meta` table. We
+   * never want this to fail silently in /healthz, so the caller can flip the
+   * response to 503 on `false`.
+   */
+  isWritable(): boolean {
+    try {
+      const key = '__healthz_probe__';
+      this.db
+        .prepare(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)`)
+        .run(key, new Date().toISOString());
+      this.db.prepare(`DELETE FROM meta WHERE key = ?`).run(key);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Decisions responded to within the last hour (used by /healthz for at-a-glance load). */
+  decisionsRespondedSince(sinceIso: string): number {
+    return (
+      this.db
+        .prepare(`SELECT COUNT(*) AS c FROM decisions WHERE responded_at IS NOT NULL AND responded_at >= ?`)
+        .get(sinceIso) as { c: number }
+    ).c;
   }
 
   pendingDecisionCount(): number {

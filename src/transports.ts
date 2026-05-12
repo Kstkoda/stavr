@@ -5,6 +5,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { createSwitchServer } from './server.js';
 import type { Broker } from './broker.js';
 import { startupDecisionSweep } from './tools/decisions.js';
+import { getLogger } from './log.js';
 
 /**
  * Transport modes:
@@ -33,8 +34,9 @@ export async function mountTransports(
   broker: Broker,
   opts: TransportOpts,
 ): Promise<MountedTransports> {
-  const log = (m: string) => {
-    if (!opts.silent) console.error(`[cowire] ${m}`);
+  const logger = getLogger();
+  const log = (m: string, metadata?: Record<string, unknown>) => {
+    if (!opts.silent) logger.info(m, metadata);
   };
 
   // Resolve mode from explicit param or legacy `stdioOnly`.
@@ -59,13 +61,47 @@ export async function mountTransports(
     const app = express();
     app.use(express.json({ limit: '4mb' }));
 
+    const daemonStartedAt = new Date();
+    const version = process.env.COWIRE_VERSION ?? '0.1.0';
+
+    // Deep health endpoint (spec 44 §3). Anything that flips `ok` to false makes
+    // the response 503 so the watchdog (ADR-020) catches it and restarts us.
     app.get('/healthz', (_req, res) => {
-      res.json({ ok: true, events: broker.store.eventCount() });
+      const dbReachable = broker.store.isReachable();
+      const dbWritable = dbReachable && broker.store.isWritable();
+      const reasons: string[] = [];
+      if (!dbReachable) reasons.push('db_unreachable');
+      else if (!dbWritable) reasons.push('db_readonly');
+
+      const oneHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+      const ok = reasons.length === 0;
+      const body = {
+        ok,
+        version,
+        started_at: daemonStartedAt.toISOString(),
+        uptime_sec: Math.floor((Date.now() - daemonStartedAt.getTime()) / 1000),
+        db: {
+          reachable: dbReachable,
+          writable: dbWritable,
+        },
+        broker: {
+          connected_sessions: sseSessions.size,
+          active_subscriptions: broker.subscriptionCount(),
+        },
+        decisions: {
+          open_count: dbReachable ? broker.store.pendingDecisionCount() : 0,
+          responded_last_hour: dbReachable ? broker.store.decisionsRespondedSince(oneHourAgo) : 0,
+        },
+        ...(reasons.length ? { reasons } : {}),
+      };
+      res.status(ok ? 200 : 503).json(body);
     });
 
     app.get('/status', (_req, res) => {
       res.json({
         ok: true,
+        version,
+        started_at: daemonStartedAt.toISOString(),
         events: broker.store.eventCount(),
         sse_sessions: sseSessions.size,
         pending_decisions: broker.store.pendingDecisionCount(),

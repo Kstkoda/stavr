@@ -41,3 +41,6 @@ Copy [`000-template.md`](./000-template.md) and rename to `NNN-short-kebab-title
 - [ADR-016](./016-cc-worker-uses-git-worktree-isolation.md) — CC worker uses git worktree isolation
 - [ADR-017](./017-a2a-protocol-decision.md) — A2A protocol compatibility decision
 - [ADR-018](./018-destructive-operations-stay-manual.md) — Destructive operations stay manual
+- [ADR-019](./019-exponential-backoff-reconnect-in-shim.md) — Exponential-backoff reconnect in the shim (supersedes ADR-009's 3-error rule)
+- [ADR-020](./020-daemon-watchdog.md) — Standalone daemon watchdog via OS scheduler
+- [ADR-021](./021-graceful-degradation-vs-crash.md) — Graceful degradation, not crash

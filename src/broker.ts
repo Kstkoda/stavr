@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { EventStore, StoredEvent } from './persistence.js';
 import type { Event, EventKindT } from './event-types.js';
+import { getLogger } from './log.js';
 
 interface Subscription {
   sessionId: string;
@@ -20,6 +21,18 @@ export class Broker {
     if (!this.subscribers.has(sessionId)) {
       this.subscribers.set(sessionId, { sessionId, server, kinds: new Set() });
     }
+  }
+
+  /** Distinct sessions that have registered (regardless of whether they subscribed to anything). */
+  sessionCount(): number {
+    return this.subscribers.size;
+  }
+
+  /** Total kind-subscriptions across all sessions (counts each kind once per session). */
+  subscriptionCount(): number {
+    let n = 0;
+    for (const sub of this.subscribers.values()) n += sub.kinds.size;
+    return n;
   }
 
   removeSession(sessionId: string): void {
@@ -50,7 +63,28 @@ export class Broker {
   }
 
   async publish(event: Event): Promise<StoredEvent> {
-    const stored = this.store.appendEvent(event);
+    // Graceful degradation (spec 44 invariant 5): if persistence fails we
+    // surface an error event back to subscribers but never throw — a broken
+    // SQLite write must not kill an in-flight tool call. Callers that need to
+    // detect persistence failure can check whether the returned event has an
+    // `id` shaped like a UUID.
+    let stored: StoredEvent;
+    try {
+      stored = this.store.appendEvent(event);
+    } catch (err) {
+      getLogger().error('event store append failed', {
+        kind: event.kind,
+        source_agent: event.source_agent,
+        error: (err as Error).message,
+      });
+      // Synthesize an in-memory stored event so fanout still happens. Subscribers
+      // see the event live; it just won't be in the replay log on next subscribe.
+      stored = {
+        id: randomUUID(),
+        persisted_at: new Date().toISOString(),
+        ...event,
+      };
+    }
     await this.fanout(stored);
     return stored;
   }

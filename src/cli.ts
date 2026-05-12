@@ -11,6 +11,12 @@ import {
   stopDaemon,
 } from './daemon.js';
 import { runConnectTest } from './connect-test.js';
+import { configureLogger, parseLogFormat } from './log.js';
+import {
+  installWatchdog,
+  uninstallWatchdog,
+  watchdogStatus,
+} from './watchdog-install.js';
 
 const program = new Command();
 program
@@ -24,7 +30,9 @@ program
   .option('-p, --port <port>', 'HTTP/SSE port', (v) => Number(v), 7777)
   .option('--stdio-only', 'Disable HTTP/SSE transport.')
   .option('--db <path>', 'SQLite path', defaultDbPath())
-  .action(async (opts: { port: number; stdioOnly?: boolean; db: string }) => {
+  .option('--log-format <fmt>', 'Log format: text (default) or json (newline-delimited JSON to stderr).', 'text')
+  .action(async (opts: { port: number; stdioOnly?: boolean; db: string; logFormat: string }) => {
+    const logger = configureLogger({ format: parseLogFormat(opts.logFormat) });
     const store = new EventStore();
     store.init(opts.db);
     const broker = new Broker(store);
@@ -35,7 +43,7 @@ program
     });
 
     const shutdown = async (sig: string) => {
-      console.error(`[cowire] received ${sig}; shutting down`);
+      logger.info('shutting down', { signal: sig });
       await transports.shutdown();
       process.exit(0);
     };
@@ -90,13 +98,17 @@ daemon
   .option('--db <path>', 'SQLite path', defaultDbPath())
   .option('--detach', 'Fork into background and return; otherwise run in foreground.', false)
   .option('--force', 'Override a stale or running PID file.', false)
-  .action(async (opts: { port: number; db: string; detach: boolean; force: boolean }) => {
+  .option('--log-format <fmt>', 'Log format: text (default) or json (newline-delimited JSON to stderr).', 'text')
+  .action(async (opts: { port: number; db: string; detach: boolean; force: boolean; logFormat: string }) => {
+    const logFormat = parseLogFormat(opts.logFormat);
+    configureLogger({ format: logFormat });
     try {
       const result = await startDaemon({
         port: opts.port,
         db: opts.db,
         detach: opts.detach,
         force: opts.force,
+        logFormat,
       });
       if (result.detached) {
         console.log(JSON.stringify({ ok: true, detached: true, pid: result.pid, port: opts.port, db: opts.db }, null, 2));
@@ -132,6 +144,45 @@ daemon
     const status = await daemonStatus();
     console.log(JSON.stringify(status, null, 2));
     if (!status.running) process.exit(1);
+  });
+
+daemon
+  .command('install')
+  .description('Register the watchdog with the OS (schtasks on Windows, launchctl on macOS, systemd --user on Linux). Idempotent.')
+  .action(async () => {
+    try {
+      const result = await installWatchdog();
+      console.log(JSON.stringify(result, null, 2));
+    } catch (err) {
+      console.error(`[cowire] daemon install failed: ${(err as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+daemon
+  .command('uninstall')
+  .description('Remove the watchdog registration from the OS scheduler.')
+  .action(async () => {
+    try {
+      const result = await uninstallWatchdog();
+      console.log(JSON.stringify(result, null, 2));
+    } catch (err) {
+      console.error(`[cowire] daemon uninstall failed: ${(err as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+daemon
+  .command('watchdog-status')
+  .description('Show whether the watchdog is registered, whether it is currently running, last ping result and restart count.')
+  .action(async () => {
+    try {
+      const result = await watchdogStatus();
+      console.log(JSON.stringify(result, null, 2));
+    } catch (err) {
+      console.error(`[cowire] watchdog-status failed: ${(err as Error).message}`);
+      process.exit(1);
+    }
   });
 
 daemon

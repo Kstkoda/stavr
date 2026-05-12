@@ -113,6 +113,72 @@ npx cowire connect-test
 
 ---
 
+## Operations
+
+Spec 44 added a watchdog process and deepened health checks so the daemon is effectively self-healing. The default install is *not* enabled — opt in with `cowire daemon install` when you want auto-restart-on-host-boot behavior.
+
+### Install the watchdog
+
+```powershell
+# register the watchdog with the OS scheduler (idempotent)
+npx cowire daemon install
+
+# inspect — is it registered? running? how many restarts has it done?
+npx cowire daemon watchdog-status
+
+# remove
+npx cowire daemon uninstall
+```
+
+Per-platform under the hood:
+
+- **Windows**: two scheduled tasks — `CowireWatchdog` (`/SC ONSTART`) and `CowireWatchdogLogon` (`/SC ONLOGON`) — both running `node dist/watchdog.js` as the current user.
+- **macOS**: `~/Library/LaunchAgents/com.cowire.watchdog.plist` with `RunAtLoad=true` and `KeepAlive=true`, loaded via `launchctl load -w`.
+- **Linux**: `~/.config/systemd/user/cowire-watchdog.service`, enabled with `systemctl --user enable --now`. The watchdog stops on logout unless you `loginctl enable-linger $USER`.
+
+See [ADR-020](./adr/020-daemon-watchdog.md) for the design rationale.
+
+### Inspect logs and crash dumps
+
+```powershell
+# JSON-formatted daemon logs (only if --log-format=json)
+npx cowire daemon start --detach --log-format json
+Get-Content $env:USERPROFILE\.cowire\daemon.pid
+
+# watchdog log — newline-delimited JSON
+Get-Content $env:USERPROFILE\.cowire\watchdog.log -Tail 20
+
+# crash dumps (one per uncaught exception / unhandled rejection)
+Get-ChildItem $env:USERPROFILE\.cowire\crash-*.json
+```
+
+`/healthz` is deep — it now returns 503 if the SQLite DB becomes unreachable or read-only, which is the signal the watchdog uses to trigger a restart:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:7777/healthz | ConvertTo-Json -Depth 4
+```
+
+```json
+{
+  "ok": true,
+  "version": "0.1.0",
+  "started_at": "2026-05-12T...",
+  "uptime_sec": 1234,
+  "db": { "reachable": true, "writable": true },
+  "broker": { "connected_sessions": 2, "active_subscriptions": 3 },
+  "decisions": { "open_count": 0, "responded_last_hour": 4 }
+}
+```
+
+### Resilience troubleshooting
+
+- **Watchdog says "registered" but not "running"** — the OS scheduler hasn't fired the trigger yet. On Windows, `schtasks /Run /TN CowireWatchdog`. On macOS/Linux, the agent is loaded but possibly errored out — check `~/.cowire/watchdog.log`.
+- **Daemon restarts in a loop** — open `~/.cowire/crash-<latest>.json` and `~/.cowire/watchdog.log`. The crash dump includes the last 100 events; the watchdog log shows the restart cadence. The 60s cooldown means at most one restart per minute.
+- **DB was rebuilt unexpectedly** — look for `cowire.db.corrupt.<ts>` next to `cowire.db`. That's the original file, quarantined by `EventStore.init` after `PRAGMA integrity_check` failed. The daemon also emits an `error` event with `attempted_recovery` describing the rename. See [ADR-021](./adr/021-graceful-degradation-vs-crash.md).
+- **Shim reconnects "silently"** — every reconnect emits a `progress` event with body `shim_reconnected after Xms`. Query `cowire events --kind progress | findstr shim_reconnected` to inspect the history.
+
+---
+
 ## stdio mode (legacy / per-spawn)
 
 ```bash
@@ -127,10 +193,13 @@ CLI:
 
 | Command | Description |
 |---|---|
-| `cowire daemon start [--port=7777] [--db PATH] [--detach] [--force]` | Start the long-running daemon. |
+| `cowire daemon start [--port=7777] [--db PATH] [--detach] [--force] [--log-format=text\|json]` | Start the long-running daemon. |
 | `cowire daemon stop` | Send SIGTERM (fallback SIGKILL after 10s). |
 | `cowire daemon status` | Print running state, port, uptime, client/event counts. |
 | `cowire daemon restart` | Restart with previous port/db. |
+| `cowire daemon install` | Register the watchdog with the OS scheduler (idempotent). |
+| `cowire daemon uninstall` | Remove the watchdog from the OS scheduler. |
+| `cowire daemon watchdog-status` | Show whether the watchdog is registered, running, last log lines, restart count. |
 | `cowire connect-test [--url URL]` | Smoke test: connect via SSE, emit one event, print what came back. |
 | `cowire shim [--url URL]` | Stdio↔SSE proxy — for MCP clients that don't accept `type: "sse"`. |
 | `cowire start [--port=7777] [--stdio-only]` | Per-spawn stdio (+optional HTTP) — legacy / dev-only. |

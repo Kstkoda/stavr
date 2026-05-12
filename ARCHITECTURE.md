@@ -214,6 +214,32 @@ Append-only invariant: `appendEvent` is the only writer for the `events` table. 
 
 ---
 
+## Resilience
+
+Spec 44 defines six resilience invariants. The implementation is spread across the daemon, the shim, the watchdog and the logger.
+
+1. **No silent disconnects.** Every SSE close path is observable: the daemon's `/mcp/sse` handler removes the session from the broker on `res.on('close')`; the shim logs every SSE error and reconnect attempt; the watchdog logs every ping result. The deepened `/healthz` exposes `broker.connected_sessions` so a dashboard can graph the count.
+2. **Auto-reconnect within 30 seconds.** The shim's reconnect loop (`src/shim.ts`) uses exponential backoff starting at 1s, doubling to a 5-min ceiling, with a 30s clean-operation reset and a 1h give-up cutoff. See [ADR-019](./adr/019-exponential-backoff-reconnect-in-shim.md). The first attempt fires within the first second of failure, so the 30s target is comfortable.
+3. **Daemon supervision.** `src/watchdog.ts` is a standalone Node process registered with the per-platform scheduler via `cowire daemon install` (Task Scheduler / launchd / systemd --user). It pings `/healthz` every 30s and runs `cowire daemon start --detach` after 3 consecutive failures. The 60s restart cooldown protects against tight crash loops. See [ADR-020](./adr/020-daemon-watchdog.md).
+4. **Decisions never get lost.** Decisions are written to SQLite (WAL mode) before any reply is awaited. On daemon startup, `startupDecisionSweep` (in `src/tools/decisions.ts`) walks every `status='open'` row, marks expired ones, and emits `decision_late_response` so subscribers can re-converge. Covered by the chaos test in `tests/chaos.test.ts`.
+5. **Graceful degradation, not crash.** `Broker.publish` catches `appendEvent` failures, logs, and synthesizes an in-memory event so fanout still happens. `EventStore.init` detects corruption (via `PRAGMA integrity_check`) and quarantines the file as `cowire.db.corrupt.<ts>` before rebuilding. `installCrashHandler` (in `src/daemon.ts`) traps `uncaughtException` / `unhandledRejection` and writes `~/.cowire/crash-<ts>.json` before exit, so the watchdog has enough to restart and a human has enough to debug. See [ADR-021](./adr/021-graceful-degradation-vs-crash.md).
+6. **Structured logs.** `src/log.ts` exports a `Logger` interface with `info / warn / error` methods. The default is the legacy `[cowire] ...` text format; `--log-format=json` (on `cowire start` and `cowire daemon start`) emits newline-delimited JSON to stderr for log shippers.
+
+### Failure-recovery walkthrough
+
+When the daemon crashes:
+
+1. The OS reaps the process. The shim sees its SSE connection drop.
+2. The shim begins exponential-backoff reconnect attempts (1s, 2s, 4s, ...).
+3. The watchdog's next ping (within 30s of the death) fails. After 3 consecutive failed pings (~90s worst-case), the watchdog runs `cowire daemon start --detach`.
+4. The daemon comes back up. Its `/healthz` returns 200 and the watchdog resumes idle pinging.
+5. The shim's next reconnect attempt succeeds. It fetches `/status`, sees a new `started_at`, logs `daemon restart detected`, and emits a `progress` event with body `shim_reconnected after Xms` so subscribers (dashboards, Cowork) know there was a gap.
+6. Any decision that was open at the moment of the crash is picked up by `startupDecisionSweep` on the new daemon and replied to with `decision_late_response`. Cowork can either re-issue or accept the late status.
+
+The wall-clock budget for this flow is around 60-90s in the worst case (3 missed pings + restart). In the common case (transient blip, daemon still alive), the shim alone recovers within 1-2s.
+
+---
+
 ## Adapters
 
 An *adapter* is a file in `src/adapters/<name>.ts` that exports a `registerXxxTools(server, opts?)` function. The function calls `server.registerTool(...)` for each MCP tool the adapter contributes, and the function is invoked once from `createSwitchServer` in `src/server.ts`.

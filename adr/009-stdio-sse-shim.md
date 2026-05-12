@@ -1,6 +1,6 @@
 # ADR 009 — Stdio→SSE shim for clients that don't recognize remote MCP
 
-**Status**: Accepted
+**Status**: Superseded by [ADR-019](./019-exponential-backoff-reconnect-in-shim.md) (reconnect policy section). The shim itself remains; only the "3 consecutive errors → exit" rule from the Consequences section is replaced by exponential backoff.
 **Date**: 2026-05-12
 
 ## Context
