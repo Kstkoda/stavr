@@ -13,7 +13,8 @@
     "start": "node dist/cli.js start",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check": "tsc --noEmit && vitest run && npm run build"
   },
   "engines": {
     "node": ">=20"

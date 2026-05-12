@@ -197,6 +197,18 @@ See `src/event-types.ts`. Mirrors spec 37 §"Event taxonomy".
 npm test
 ```
 
+Run the full local gate (the same checks CI runs):
+
+```bash
+npm run check
+```
+
+## CI
+
+GitHub Actions runs `tsc --noEmit` + `vitest run` + `npm run build` on every push to `main` and every PR. See [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
+
+Recommended branch protection: require the **Build and test** check on `main`. Configure via Settings → Branches → Add rule (require status checks to pass, require branches to be up to date before merging, disallow force-push and deletion).
+
 ## License
 
 TBD — keeping mainstream-deps so this could be opened later.
