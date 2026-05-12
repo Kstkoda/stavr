@@ -65,10 +65,22 @@ export async function mountTransports(
       await transport.handlePostMessage(req, res, req.body);
     });
 
-    httpServer = await new Promise<HttpServer>((resolve) => {
+    httpServer = await new Promise<HttpServer | undefined>((resolve) => {
       const s = app.listen(opts.port!, () => {
         log(`HTTP/SSE listening on :${opts.port}`);
         resolve(s);
+      });
+      s.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE') {
+          log(
+            `port ${opts.port} already in use; continuing with stdio-only ` +
+              `(another Switch instance is probably holding it — this is expected when ` +
+              `Cowork spawns multiple MCP sessions)`,
+          );
+        } else {
+          log(`HTTP/SSE failed to start: ${err.message}; continuing with stdio-only`);
+        }
+        resolve(undefined);
       });
     });
   }
