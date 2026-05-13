@@ -1,6 +1,7 @@
 import { spawn as nodeSpawn, execFile, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync } from 'node:fs';
+import { safeWrite } from '../util/atomic.js';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import chokidar, { type FSWatcher } from 'chokidar';
@@ -90,7 +91,7 @@ export function createCcSpawner(opts: CcSpawnerOptions = {}): WorkerSpawner<CcSp
       const daemonUrl = params.daemon_url ?? opts.defaultDaemonUrl ?? process.env.COWIRE_DAEMON_URL ?? 'http://127.0.0.1:7777/mcp/sse';
       mkdirSync(worktreePath, { recursive: true });
       const mcpConfigPath = join(worktreePath, '.cowire-mcp.json');
-      writeFileSync(mcpConfigPath, buildMcpConfig(daemonUrl), 'utf8');
+      safeWrite(mcpConfigPath, buildMcpConfig(daemonUrl));
 
       // 5. Spawn claude directly as a child process — no shell wrapper, no
       // visible cmd window. Works identically on Windows, macOS, and Linux

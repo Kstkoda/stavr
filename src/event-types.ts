@@ -32,6 +32,8 @@ export const EventKind = z.enum([
   'trust_scope_progress',
   'trust_scope_completed',
   'trust_scope_action_authorized',
+  // Spec 51 resilience principles
+  'stale_pid_cleaned',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -254,6 +256,13 @@ export const TrustScopeActionAuthorizedPayload = z.object({
   args: z.unknown(),
 });
 
+// Spec 51 resilience principles — stale PID file recovery.
+export const StalePidCleanedPayload = z.object({
+  dead_pid: z.number().int(),
+  port: z.number().int().optional(),
+  pid_file_path: z.string(),
+});
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -297,6 +306,7 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     trust_scope_progress: TrustScopeProgressPayload,
     trust_scope_completed: TrustScopeCompletedPayload,
     trust_scope_action_authorized: TrustScopeActionAuthorizedPayload,
+    stale_pid_cleaned: StalePidCleanedPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);

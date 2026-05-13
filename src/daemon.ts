@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { safeWrite } from './util/atomic.js';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,10 +55,7 @@ export function readPidFile(): DaemonPidFile | undefined {
 }
 
 function writePidFileAtomic(record: DaemonPidFile): void {
-  mkdirSync(PID_DIR, { recursive: true });
-  const tmp = PID_FILE + '.tmp';
-  writeFileSync(tmp, JSON.stringify(record, null, 2));
-  renameSync(tmp, PID_FILE);
+  safeWrite(PID_FILE, JSON.stringify(record, null, 2));
 }
 
 function removePidFile(): void {
@@ -91,6 +89,7 @@ async function sleep(ms: number): Promise<void> {
  */
 export async function startDaemonForeground(opts: DaemonOptions): Promise<MountedTransports> {
   const existing = readPidFile();
+  const stalePid = existing && !isProcessAlive(existing.pid) ? existing : undefined;
   if (existing && isProcessAlive(existing.pid) && !opts.force) {
     throw new Error(
       `daemon already running (pid ${existing.pid} on port ${existing.port}). ` +
@@ -98,13 +97,33 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     );
   }
   const logger = getLogger();
-  if (existing && !isProcessAlive(existing.pid)) {
-    logger.warn('stale PID file overwritten', { dead_pid: existing.pid });
+  if (stalePid) {
+    logger.warn('stale PID file detected; daemon will overwrite it', {
+      dead_pid: stalePid.pid,
+    });
   }
 
   const store = new EventStore();
   const initResult = store.init(opts.db);
   const broker = new Broker(store);
+
+  // Spec 51: emit a structured event so dashboards / oncall see the recovery.
+  if (stalePid) {
+    try {
+      await broker.publish({
+        kind: 'stale_pid_cleaned',
+        at: new Date().toISOString(),
+        source_agent: 'cowire-daemon',
+        payload: {
+          dead_pid: stalePid.pid,
+          port: stalePid.port,
+          pid_file_path: PID_FILE,
+        },
+      });
+    } catch (err) {
+      logger.error('failed to emit stale_pid_cleaned', { error: (err as Error).message });
+    }
+  }
 
   // If we just had to quarantine a corrupt DB, surface the event so subscribers
   // (dashboard, oncall) see it. Best-effort; the daemon must come up either way.
@@ -341,7 +360,7 @@ export function installCrashHandler(store: EventStore): void {
     try {
       mkdirSync(PID_DIR, { recursive: true });
       const path = join(PID_DIR, `crash-${Date.now()}.json`);
-      writeFileSync(path, JSON.stringify(payload, null, 2));
+      safeWrite(path, JSON.stringify(payload, null, 2));
       getLogger().error('crash dump written', { path, label, message: e.message });
     } catch (dumpErr) {
       getLogger().error('failed to write crash dump', {
