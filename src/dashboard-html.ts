@@ -126,6 +126,86 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
       70% { box-shadow: 0 0 0 6px rgba(74,222,128,0); }
       100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
     }
+
+    /* ----- Workers panel (NOW-first redesign) ----- */
+    .w-filter {
+      position: sticky; top: 0; z-index: 2;
+      background: var(--bg-1); border-bottom: 1px solid var(--border);
+      padding: 6px 8px; display: flex; flex-wrap: wrap; gap: 4px;
+    }
+    .w-filter input[type="search"] { width: 100%; }
+    .w-filter .row { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; width: 100%; }
+    .w-section { border-bottom: 1px solid var(--border); }
+    .w-section-h {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 10px; background: var(--bg-2);
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--fg-1); user-select: none;
+    }
+    .w-section-h .count { color: var(--fg-2); font-weight: 400; }
+    .w-section-h .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+    .w-dot-active { background: var(--green); box-shadow: 0 0 4px rgba(74,222,128,0.5); }
+    .w-dot-idle { background: var(--amber); }
+    .w-dot-recent { background: var(--fg-2); }
+    .w-empty { padding: 6px 12px; font-size: 10.5px; color: var(--fg-2); font-style: italic; }
+    details.worker-row {
+      border-bottom: 1px solid rgba(35,42,57,0.4);
+      background: transparent;
+    }
+    details.worker-row > summary {
+      list-style: none; cursor: pointer; padding: 5px 10px;
+      outline: none;
+    }
+    details.worker-row > summary::-webkit-details-marker { display: none; }
+    details.worker-row > summary:hover { background: var(--bg-2); }
+    details.worker-row[open] > summary { background: var(--bg-2); }
+    .wr-line1 { display: flex; align-items: center; gap: 6px; }
+    .wr-name { font-weight: 600; color: var(--fg-0); flex: 1; min-width: 0;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wr-age { color: var(--fg-2); font-size: 10.5px; flex-shrink: 0; }
+    .wr-line2 { display: flex; gap: 8px; font-size: 10.5px; margin-top: 1px; color: var(--fg-2); }
+    .wr-type { color: var(--cyan); }
+    .wr-cwd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+    .wr-preview { font-size: 10.5px; color: var(--fg-1); margin-top: 2px;
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wr-branch { font-size: 10.5px; color: var(--violet); overflow: hidden;
+                 text-overflow: ellipsis; white-space: nowrap; }
+    .wr-detail { padding: 6px 10px 8px 10px; background: var(--bg-2);
+                 border-top: 1px solid var(--border); }
+    .wr-detail .ev-mini { font-size: 10.5px; color: var(--fg-1); padding: 2px 0;
+                          border-bottom: 1px solid rgba(35,42,57,0.4); }
+    .wr-detail .ev-mini:last-child { border-bottom: none; }
+    .wr-detail .ev-mini code { color: var(--fg-0); }
+    .wr-detail .ev-mini .ts { color: var(--fg-2); margin-right: 4px; }
+    .wr-detail .ev-mini .k { color: var(--accent); margin-right: 4px; }
+    .reason-completed { background: rgba(74,222,128,0.15); color: var(--green);
+                        border: 1px solid rgba(74,222,128,0.35); }
+    .reason-crashed { background: rgba(248,113,113,0.15); color: var(--red);
+                      border: 1px solid rgba(248,113,113,0.35); }
+    .reason-terminated_by_user { background: rgba(167,139,250,0.15); color: var(--violet);
+                                  border: 1px solid rgba(167,139,250,0.35); }
+    .reason-badge { padding: 0 5px; border-radius: 3px; font-size: 9.5px;
+                    font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
+    details.w-history { border-bottom: 1px solid var(--border); }
+    details.w-history > summary {
+      cursor: pointer; padding: 6px 10px; background: var(--bg-2);
+      color: var(--fg-1); font-size: 10.5px;
+      display: flex; align-items: center; gap: 6px; list-style: none;
+    }
+    details.w-history > summary::-webkit-details-marker { display: none; }
+    details.w-history > summary:hover { background: var(--bg-3); }
+    details.w-history > summary::before { content: '▸'; color: var(--fg-2); }
+    details.w-history[open] > summary::before { content: '▾'; }
+    .chip-pill {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 1px 6px; border-radius: 10px; font-size: 10px;
+      border: 1px solid var(--border); background: var(--bg-2);
+      color: var(--fg-1); cursor: pointer; user-select: none;
+    }
+    .chip-pill:hover { border-color: var(--accent-dim); }
+    .chip-pill.on { background: rgba(124,158,255,0.15); border-color: var(--accent-dim); color: var(--fg-0); }
+    .chip-pill .pdot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+    select.w-type { font-size: 11px; padding: 2px 4px; }
   </style>
 </head>
 <body>
@@ -150,13 +230,50 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
       </div>
     </header>
 
-    <!-- Left: workers -->
+    <!-- Left: workers (NOW-first redesign) -->
     <aside class="area-left flex flex-col" aria-label="Workers">
       <div class="panel-h flex items-center justify-between">
         <span>Workers</span>
         <span style="color:var(--fg-2)" id="workers-count">0</span>
       </div>
-      <div class="scroll-y flex-1" id="workers-list" role="list"></div>
+      <div class="scroll-y flex-1" id="workers-scroll">
+        <div class="w-filter" id="w-filter">
+          <div class="row" id="w-status-pills" aria-label="Status filter">
+            <button type="button" class="chip-pill" data-w-status="active"><span class="pdot w-dot-active"></span>active</button>
+            <button type="button" class="chip-pill" data-w-status="idle"><span class="pdot w-dot-idle"></span>idle</button>
+            <button type="button" class="chip-pill" data-w-status="completed"><span class="pdot" style="background:var(--green)"></span>completed</button>
+            <button type="button" class="chip-pill" data-w-status="crashed"><span class="pdot" style="background:var(--red)"></span>crashed</button>
+          </div>
+          <div class="row">
+            <select id="w-filter-type" class="w-type" aria-label="Worker type filter">
+              <option value="">all types</option>
+            </select>
+          </div>
+          <div class="row">
+            <input id="w-filter-text" type="search" placeholder="search name / cwd / branch" aria-label="Search workers" />
+          </div>
+        </div>
+
+        <section class="w-section" data-bucket="active">
+          <div class="w-section-h"><span class="dot w-dot-active"></span><span>Active</span><span style="color:var(--fg-2);font-weight:400">· last 60s</span><span class="flex-1" style="flex:1"></span><span class="count" id="w-count-active">0</span></div>
+          <div id="w-list-active"></div>
+        </section>
+
+        <section class="w-section" data-bucket="idle">
+          <div class="w-section-h"><span class="dot w-dot-idle"></span><span>Idle</span><span style="color:var(--fg-2);font-weight:400">· 1–5m</span><span class="flex-1" style="flex:1"></span><span class="count" id="w-count-idle">0</span></div>
+          <div id="w-list-idle"></div>
+        </section>
+
+        <section class="w-section" data-bucket="recent">
+          <div class="w-section-h"><span class="dot w-dot-recent"></span><span>Recently ended</span><span style="color:var(--fg-2);font-weight:400">· last 30m</span><span class="flex-1" style="flex:1"></span><span class="count" id="w-count-recent">0</span></div>
+          <div id="w-list-recent"></div>
+        </section>
+
+        <details class="w-history" id="w-history">
+          <summary><span>Show older history</span><span class="flex-1" style="flex:1"></span><span class="count" id="w-count-older" style="color:var(--fg-2)">0</span></summary>
+          <div id="w-list-older"></div>
+        </details>
+      </div>
     </aside>
 
     <!-- Center: live event tail -->
@@ -218,6 +335,14 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     if (sec < 86400) return Math.floor(sec / 3600) + "h";
     return Math.floor(sec / 86400) + "d";
   };
+  const ageAgo = (iso) => {
+    if (!iso) return null;
+    return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  };
+  const fmtAgo = (iso) => {
+    const s = ageAgo(iso);
+    return s == null ? "—" : fmtAge(s) + " ago";
+  };
   const esc = (s) => String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -235,6 +360,14 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     filterTimeSec: 0,
     knownKinds: new Set(),
     seenIds: new Set(),
+    // Workers panel
+    workerFilterStatus: new Set(),   // 'active' | 'idle' | 'completed' | 'crashed' — empty = all
+    workerFilterType: "",
+    workerFilterText: "",
+    workerTypes: new Set(),          // observed type strings
+    workerEventCache: new Map(),     // worker.id -> { events: [], fetched_at: number, inflight: bool }
+    // Track latest worker_progress / worker_activity per worker for "last event preview"
+    workerLastPreview: new Map(),    // worker.id -> { kind, text, at }
   };
 
   // Categorize kinds into rendering "families" for richer chrome.
@@ -288,51 +421,291 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     }
   }
 
-  // ----- Workers -----
+  // ----- Workers (NOW-first redesign) -----
   async function refreshWorkers() {
     try {
       const r = await fetch("/dashboard/workers", { cache: "no-store" });
       const j = await r.json();
       state.workers = j.workers || [];
+      for (const w of state.workers) {
+        if (w && w.type) state.workerTypes.add(w.type);
+      }
+      renderWorkerTypeOptions();
       renderWorkers();
     } catch {}
   }
+
+  function renderWorkerTypeOptions() {
+    const sel = $("w-filter-type");
+    if (!sel) return;
+    const current = sel.value;
+    const types = Array.from(state.workerTypes).sort();
+    sel.innerHTML = '<option value="">all types</option>' +
+      types.map((t) => '<option value="' + esc(t) + '"' + (t === current ? " selected" : "") + '>' + esc(t) + '</option>').join("");
+  }
+
+  function workerMatchesFilters(w, bucket) {
+    if (state.workerFilterStatus.size) {
+      // Pills map 'active'/'idle' to bucket, 'completed'/'crashed' to termination reason
+      const tr = w.termination_reason;
+      const matched =
+        (state.workerFilterStatus.has("active") && bucket === "active") ||
+        (state.workerFilterStatus.has("idle") && bucket === "idle") ||
+        (state.workerFilterStatus.has("completed") && tr === "completed") ||
+        (state.workerFilterStatus.has("crashed") && (tr === "crashed" || w.status === "crashed"));
+      if (!matched) return false;
+    }
+    if (state.workerFilterType && w.type !== state.workerFilterType) return false;
+    if (state.workerFilterText) {
+      const t = state.workerFilterText.toLowerCase();
+      const branch = (w.metadata && typeof w.metadata.branch === "string") ? w.metadata.branch : "";
+      const hay = (String(w.name || "") + " " + String(w.id || "") + " " + String(w.cwd || "") + " " + branch).toLowerCase();
+      if (!hay.includes(t)) return false;
+    }
+    return true;
+  }
+
+  function bucketOf(w, now) {
+    const ended = w.status === "terminated" || w.status === "crashed";
+    if (ended) {
+      const ts = w.ended_at || w.last_activity_at || w.started_at;
+      const ageSec = ts ? (now - new Date(ts).getTime()) / 1000 : Infinity;
+      return ageSec < 30 * 60 ? "recent" : "older";
+    }
+    const ts = w.last_activity_at || w.started_at;
+    const ageSec = ts ? (now - new Date(ts).getTime()) / 1000 : Infinity;
+    return ageSec < 60 ? "active" : "idle";
+  }
+
   function renderWorkers() {
-    const root = $("workers-list");
+    const now = Date.now();
+    const buckets = { active: [], idle: [], recent: [], older: [] };
+    for (const w of state.workers) {
+      const b = bucketOf(w, now);
+      if (!workerMatchesFilters(w, b)) continue;
+      buckets[b].push(w);
+    }
+    // Sort by recency: active/idle by last_activity desc, recent/older by ended_at desc.
+    const tActivity = (w) => new Date(w.last_activity_at || w.started_at || 0).getTime();
+    const tEnded = (w) => new Date(w.ended_at || w.last_activity_at || w.started_at || 0).getTime();
+    buckets.active.sort((a, b) => tActivity(b) - tActivity(a));
+    buckets.idle.sort((a, b) => tActivity(b) - tActivity(a));
+    buckets.recent.sort((a, b) => tEnded(b) - tEnded(a));
+    buckets.older.sort((a, b) => tEnded(b) - tEnded(a));
+
     $("workers-count").textContent = state.workers.length;
-    if (!state.workers.length) {
-      root.innerHTML = '<div class="px-3 py-4 text-xs" style="color:var(--fg-2)">no workers spawned</div>';
+    $("w-count-active").textContent = buckets.active.length;
+    $("w-count-idle").textContent = buckets.idle.length;
+    $("w-count-recent").textContent = buckets.recent.length;
+    $("w-count-older").textContent = buckets.older.length;
+
+    diffRenderBucket("w-list-active", buckets.active, "active");
+    diffRenderBucket("w-list-idle", buckets.idle, "idle");
+    diffRenderBucket("w-list-recent", buckets.recent, "recent");
+    // Cap older bucket at 100 to avoid runaway DOM.
+    diffRenderBucket("w-list-older", buckets.older.slice(0, 100), "older");
+  }
+
+  function diffRenderBucket(containerId, workers, mode) {
+    const container = $(containerId);
+    if (!container) return;
+    const existing = new Map();
+    for (const el of Array.from(container.children)) {
+      const wid = el.dataset && el.dataset.workerId;
+      if (wid) existing.set(wid, el);
+    }
+    const seen = new Set();
+    let prev = null;
+    for (const w of workers) {
+      seen.add(w.id);
+      let el = existing.get(w.id);
+      if (!el) {
+        el = buildWorkerRow(w, mode);
+      } else {
+        updateWorkerRow(el, w, mode);
+      }
+      // Place el after prev (or at start)
+      const target = prev ? prev.nextSibling : container.firstChild;
+      if (el !== target) {
+        if (prev) prev.after(el);
+        else container.prepend(el);
+      }
+      prev = el;
+    }
+    // Remove rows no longer in this bucket
+    for (const [id, el] of existing) {
+      if (!seen.has(id)) el.remove();
+    }
+    // Empty placeholder
+    let empty = container.querySelector(".w-empty");
+    if (workers.length === 0) {
+      if (!empty) {
+        empty = document.createElement("div");
+        empty.className = "w-empty";
+        empty.textContent = mode === "active" ? "none active" :
+                            mode === "idle" ? "none idle" :
+                            mode === "recent" ? "no recent terminations" :
+                            "no older workers";
+        container.appendChild(empty);
+      }
+    } else if (empty) {
+      empty.remove();
+    }
+  }
+
+  function buildWorkerRow(w, mode) {
+    const el = document.createElement("details");
+    el.className = "worker-row";
+    el.dataset.workerId = w.id;
+    el.addEventListener("toggle", () => {
+      if (el.open) loadWorkerDetail(w.id, el);
+    });
+    updateWorkerRow(el, w, mode);
+    return el;
+  }
+
+  function reasonBadge(w) {
+    const tr = w.termination_reason;
+    if (!tr) return "";
+    const cls = "reason-" + esc(tr);
+    return '<span class="reason-badge ' + cls + '">' + esc(tr.replace(/_/g, " ")) + '</span>';
+  }
+
+  function workerLastPreviewText(w) {
+    const p = state.workerLastPreview.get(w.id);
+    if (!p) return "";
+    const k = p.kind === "worker_progress" ? "▸" : p.kind === "worker_activity" ? "·" : "•";
+    return k + " " + p.text;
+  }
+
+  function updateWorkerRow(el, w, mode) {
+    const lastAct = w.last_activity_at || w.started_at;
+    const endedAt = w.ended_at;
+    const ageIso = mode === "recent" || mode === "older" ? endedAt : lastAct;
+    const ageTitle = esc(ageIso || "");
+    const ageHtml = '<span class="wr-age" title="' + ageTitle + '">' + esc(fmtAgo(ageIso)) + '</span>';
+    const branch = (w.metadata && typeof w.metadata.branch === "string") ? w.metadata.branch : "";
+
+    let summaryHtml = "";
+    if (mode === "active") {
+      const preview = workerLastPreviewText(w);
+      summaryHtml =
+        '<div class="wr-line1">' +
+          '<span class="dot w-dot-active" style="width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0"></span>' +
+          '<span class="wr-name" title="' + esc(w.name) + '">' + esc(w.name) + '</span>' +
+          ageHtml +
+        '</div>' +
+        '<div class="wr-line2">' +
+          '<span class="wr-type">' + esc(w.type) + '</span>' +
+          (w.pid ? '<span>pid ' + w.pid + '</span>' : '') +
+          '<span class="wr-cwd" title="' + esc(w.cwd || "") + '">' + esc(w.cwd || "") + '</span>' +
+        '</div>' +
+        (branch ? '<div class="wr-branch" title="' + esc(branch) + '">' + esc(branch) + '</div>' : '') +
+        (preview ? '<div class="wr-preview" title="' + esc(preview) + '">' + esc(preview) + '</div>' : '');
+    } else if (mode === "idle") {
+      summaryHtml =
+        '<div class="wr-line1">' +
+          '<span class="dot w-dot-idle" style="width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0"></span>' +
+          '<span class="wr-name" title="' + esc(w.name) + '">' + esc(w.name) + '</span>' +
+          ageHtml +
+        '</div>' +
+        '<div class="wr-line2">' +
+          '<span class="wr-type">' + esc(w.type) + '</span>' +
+          (branch ? '<span class="wr-cwd" style="color:var(--violet)" title="' + esc(branch) + '">' + esc(branch) + '</span>' : '') +
+        '</div>';
+    } else { // recent / older
+      summaryHtml =
+        '<div class="wr-line1">' +
+          '<span class="dot w-dot-recent" style="width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0"></span>' +
+          '<span class="wr-name" title="' + esc(w.name) + '">' + esc(w.name) + '</span>' +
+          reasonBadge(w) +
+          ageHtml +
+        '</div>' +
+        '<div class="wr-line2">' +
+          '<span class="wr-type">' + esc(w.type) + '</span>' +
+          (w.exit_code != null ? '<span>exit ' + w.exit_code + '</span>' : '') +
+        '</div>';
+    }
+
+    // Set/replace <summary> content (preserves <details>.open and any existing detail body).
+    let summary = el.querySelector(":scope > summary");
+    if (!summary) {
+      summary = document.createElement("summary");
+      el.appendChild(summary);
+    }
+    if (summary.dataset.html !== summaryHtml) {
+      summary.innerHTML = summaryHtml;
+      summary.dataset.html = summaryHtml;
+    }
+    el.dataset.mode = mode;
+
+    // Refresh detail panel if already open (re-render cached events).
+    if (el.open) {
+      renderWorkerDetailBody(w.id, el);
+    }
+  }
+
+  async function loadWorkerDetail(workerId, rowEl) {
+    let cache = state.workerEventCache.get(workerId);
+    if (!cache) {
+      cache = { events: [], fetched_at: 0, inflight: false };
+      state.workerEventCache.set(workerId, cache);
+    }
+    // Always show what we have immediately; refetch if stale (>3s) or never fetched.
+    renderWorkerDetailBody(workerId, rowEl);
+    if (cache.inflight) return;
+    const stale = Date.now() - cache.fetched_at > 3000;
+    if (!stale && cache.events.length) return;
+    cache.inflight = true;
+    try {
+      const r = await fetch("/dashboard/workers/" + encodeURIComponent(workerId), { cache: "no-store" });
+      if (r.ok) {
+        const j = await r.json();
+        cache.events = (j.events || []);
+        cache.fetched_at = Date.now();
+      }
+    } catch {}
+    cache.inflight = false;
+    renderWorkerDetailBody(workerId, rowEl);
+  }
+
+  function renderWorkerDetailBody(workerId, rowEl) {
+    const cache = state.workerEventCache.get(workerId);
+    let body = rowEl.querySelector(":scope > .wr-detail");
+    if (!body) {
+      body = document.createElement("div");
+      body.className = "wr-detail";
+      rowEl.appendChild(body);
+    }
+    if (!cache || cache.events.length === 0) {
+      body.innerHTML = cache && cache.inflight ? '<div style="color:var(--fg-2)">loading…</div>' : '<div style="color:var(--fg-2)">no events recorded</div>';
       return;
     }
-    root.innerHTML = state.workers.map((w) => {
-      const active = w.id === state.activeWorkerId ? " row-active" : "";
-      const branch = w.metadata && w.metadata.branch ? '<div style="color:var(--violet);font-size:10.5px" class="truncate">' + esc(w.metadata.branch) + '</div>' : "";
-      const age = w.last_activity_at ? Math.max(0, Math.floor((Date.now() - new Date(w.last_activity_at).getTime()) / 1000)) : null;
-      return (
-        '<div class="row-hover' + active + ' px-3 py-2" role="listitem" tabindex="0" data-worker-id="' + esc(w.id) + '">' +
-          '<div class="flex items-center gap-2">' +
-            '<span class="pill status-' + esc(w.status) + '">' + esc(w.status) + '</span>' +
-            '<span class="truncate" style="font-weight:600">' + esc(w.name) + '</span>' +
-            '<span class="flex-1"></span>' +
-            '<span style="color:var(--fg-2);font-size:10.5px">' + fmtAge(age) + '</span>' +
-          '</div>' +
-          '<div class="flex gap-2 text-xs mt-0.5">' +
-            '<span style="color:var(--cyan)">' + esc(w.type) + '</span>' +
-            (w.pid ? '<span style="color:var(--fg-2)">pid ' + w.pid + '</span>' : '') +
-          '</div>' +
-          branch +
-        '</div>'
-      );
+    // Show last 10 worker_log / worker_progress / worker_activity events (or fall back to any).
+    const isWorkerKind = (k) => k === "worker_progress" || k === "worker_activity" || k === "worker_spawned" || k === "worker_terminated" || k === "worker_error" || k === "worker_metadata_changed";
+    let evs = cache.events.filter((e) => isWorkerKind(e.kind));
+    if (evs.length === 0) evs = cache.events;
+    evs = evs.slice(0, 10);
+    body.innerHTML = evs.map((ev) => {
+      const p = ev.payload || {};
+      let payload = "";
+      if (ev.kind === "worker_progress") {
+        payload = (p.message || "") + (p.detail ? " — " + p.detail : "");
+      } else if (ev.kind === "worker_activity") {
+        payload = p.status || p.message || "";
+      } else if (ev.kind === "worker_terminated") {
+        payload = (p.reason || "") + (p.exit_code != null ? " (exit " + p.exit_code + ")" : "");
+      } else if (ev.kind === "worker_error") {
+        payload = p.message || "";
+      } else {
+        try { payload = JSON.stringify(p).slice(0, 140); } catch { payload = String(p); }
+      }
+      return '<div class="ev-mini">' +
+        '<span class="ts" title="' + esc(ev.at) + '">' + esc(fmtAgo(ev.at)) + '</span>' +
+        '<span class="k">' + esc(ev.kind) + '</span>' +
+        '<code>' + esc(payload) + '</code>' +
+      '</div>';
     }).join("");
-    root.querySelectorAll("[data-worker-id]").forEach((el) => {
-      el.addEventListener("click", () => openWorker(el.getAttribute("data-worker-id")));
-      el.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          openWorker(el.getAttribute("data-worker-id"));
-        }
-      });
-    });
   }
 
   // ----- Decisions -----
@@ -406,7 +779,59 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
       state.knownKinds.add(ev.kind);
       renderKindOptions();
     }
+    // Surface worker-scoped events into the workers panel without waiting for the next poll.
+    handleWorkerEvent(ev);
     if (!state.paused) renderStream();
+  }
+
+  function handleWorkerEvent(ev) {
+    if (!ev || typeof ev.kind !== "string" || !ev.kind.startsWith("worker_")) return;
+    const p = (ev.payload && typeof ev.payload === "object") ? ev.payload : {};
+    const wid = (typeof p.id === "string" && p.id) || (typeof ev.correlation_id === "string" ? ev.correlation_id : "");
+    if (!wid) return;
+    // Update "last event preview" used by Active rows.
+    if (ev.kind === "worker_progress") {
+      const text = (p.message || "") + (p.detail ? " — " + p.detail : "");
+      if (text) state.workerLastPreview.set(wid, { kind: ev.kind, text, at: ev.at });
+    } else if (ev.kind === "worker_activity") {
+      const text = p.status || p.message || "";
+      if (text) state.workerLastPreview.set(wid, { kind: ev.kind, text, at: ev.at });
+    } else if (ev.kind === "worker_error") {
+      const text = p.message || "error";
+      state.workerLastPreview.set(wid, { kind: ev.kind, text, at: ev.at });
+    }
+    // Invalidate detail cache so an open <details> reloads on next render tick.
+    const cache = state.workerEventCache.get(wid);
+    if (cache) cache.fetched_at = 0;
+    // Spawns / terminations / metadata changes need a server refetch
+    // (the workers list status fields aren't in the event payload).
+    // Progress / activity / error just update local preview state.
+    if (
+      ev.kind === "worker_spawned" ||
+      ev.kind === "worker_terminated" ||
+      ev.kind === "worker_metadata_changed"
+    ) {
+      scheduleWorkerRefetch();
+    } else {
+      scheduleWorkerRerender();
+    }
+  }
+
+  let workerRefetchTimer = null;
+  function scheduleWorkerRefetch() {
+    if (workerRefetchTimer) return;
+    workerRefetchTimer = setTimeout(() => {
+      workerRefetchTimer = null;
+      refreshWorkers();
+    }, 250);
+  }
+  let workerRerenderTimer = null;
+  function scheduleWorkerRerender() {
+    if (workerRerenderTimer) return;
+    workerRerenderTimer = setTimeout(() => {
+      workerRerenderTimer = null;
+      renderWorkers();
+    }, 250);
   }
 
   function matchesFilters(ev) {
@@ -579,6 +1004,19 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
   $("filter-kind").addEventListener("change", (e) => { state.filterKind = e.target.value; renderKindOptions(); renderStream(); });
   $("filter-time").addEventListener("change", (e) => { state.filterTimeSec = Number(e.target.value); renderStream(); });
 
+  // Workers panel filters
+  document.querySelectorAll("#w-status-pills [data-w-status]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const k = btn.getAttribute("data-w-status");
+      if (state.workerFilterStatus.has(k)) state.workerFilterStatus.delete(k);
+      else state.workerFilterStatus.add(k);
+      btn.classList.toggle("on", state.workerFilterStatus.has(k));
+      renderWorkers();
+    });
+  });
+  $("w-filter-type").addEventListener("change", (e) => { state.workerFilterType = e.target.value; renderWorkers(); });
+  $("w-filter-text").addEventListener("input", (e) => { state.workerFilterText = e.target.value; renderWorkers(); });
+
   // ----- Top bar buttons -----
   $("btn-pause").addEventListener("click", togglePause);
   $("btn-clear").addEventListener("click", () => { state.events = []; state.seenIds.clear(); renderStream(); });
@@ -631,8 +1069,10 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
   }
   bootstrap();
   setInterval(refreshStatus, 5000);
-  setInterval(refreshWorkers, 3000);
+  setInterval(refreshWorkers, 5000);
   setInterval(refreshDecisions, 2000);
+  // Cheap re-render every 5s so relative ages tick forward without re-fetching workers.
+  setInterval(() => { if (state.workers.length) renderWorkers(); }, 5000);
 })();
 </script>
 
