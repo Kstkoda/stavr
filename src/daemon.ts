@@ -18,6 +18,12 @@ import { makeAnthropicProvider } from './steward/providers/anthropic.js';
 import { makeClaudeCodeProvider } from './steward/providers/claude-code.js';
 import { startStewardLoop, type RunningLoop } from './steward/loop.js';
 import type { StewardProvider } from './steward/providers/types.js';
+import {
+  mergeUserAdditions,
+  setLiveNoGoList,
+  STARTER_NO_GO_LIST,
+  type NoGoEntry,
+} from './trust/no-go-list.js';
 
 export interface DaemonOptions {
   port: number;
@@ -168,6 +174,9 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
+  // Spec 48 Layer 3: load optional User additions from ~/.cowire/no-go-additions.ts.
+  // Users can ADD entries; mergeUserAdditions() refuses to override built-ins.
+  await loadNoGoAdditions();
 
   // If we just had to quarantine a corrupt DB, surface the event so subscribers
   // (dashboard, oncall) see it. Best-effort; the daemon must come up either way.
@@ -423,6 +432,43 @@ function makeProviderFromConfig(config: {
     return makeAnthropicProvider({ apiKey, model: config.steward.model });
   }
   return makeClaudeCodeProvider({ model: config.steward.model });
+}
+
+/**
+ * Load `~/.cowire/no-go-additions.ts` (or .js) if it exists and `export default
+ * NoGoEntry[]`. Best-effort: parse / type errors are logged and the daemon
+ * boots with just the built-in list. Built-in entries can never be overridden
+ * — mergeUserAdditions strips duplicate ids before installing the live list.
+ */
+async function loadNoGoAdditions(): Promise<void> {
+  const candidates = [
+    join(homedir(), '.cowire', 'no-go-additions.ts'),
+    join(homedir(), '.cowire', 'no-go-additions.js'),
+    join(homedir(), '.cowire', 'no-go-additions.mjs'),
+  ];
+  for (const path of candidates) {
+    if (!existsSync(path)) continue;
+    try {
+      const url = `file://${path.replace(/\\/g, '/')}`;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mod = (await import(/* @vite-ignore */ url)) as { default?: NoGoEntry[] };
+      const extras = mod.default ?? [];
+      if (!Array.isArray(extras)) {
+        getLogger().warn('no-go-additions: default export is not an array; ignoring', { path });
+        return;
+      }
+      setLiveNoGoList(mergeUserAdditions(extras));
+      getLogger().info('no-go-additions loaded', { path, added: extras.length });
+      return;
+    } catch (err) {
+      getLogger().error('failed to load no-go-additions; sticking to built-ins', {
+        path,
+        error: (err as Error).message,
+      });
+      setLiveNoGoList(STARTER_NO_GO_LIST);
+      return;
+    }
+  }
 }
 
 /**

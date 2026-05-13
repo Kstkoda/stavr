@@ -46,6 +46,10 @@ export const EventKind = z.enum([
   'credential_grant_added',
   'credential_grant_revoked',
   'credential_unsafe_storage',
+  // Spec 48 Layer 3 — no-go list
+  'no_go_match',
+  'no_go_authorized',
+  'no_go_blocked',
   // Spec 49 Layer 1 — daemon-hosted Steward
   'steward_started',
   'steward_stopped',
@@ -367,6 +371,31 @@ export const CredentialUnsafeStoragePayload = z.object({
   fallback_path: z.string(),
 });
 
+// Spec 48 Layer 3 — no-go payloads.
+
+export const NoGoMatchPayload = z.object({
+  entry_id: z.string(),
+  tool: z.string(),
+  args: z.unknown(),
+  severity: z.enum(['high', 'critical']),
+  active_scope_id: z.string().optional(),
+  reason: z.string(),
+});
+
+export const NoGoAuthorizedPayload = z.object({
+  entry_id: z.string(),
+  tool: z.string(),
+  responder: z.string(),
+  responded_at: z.string(),
+});
+
+export const NoGoBlockedPayload = z.object({
+  entry_id: z.string(),
+  tool: z.string(),
+  blocked_reason: z.enum(['rejected_by_user', 'timeout']),
+  responder: z.string().optional(),
+});
+
 // Spec 49 Layer 1 — daemon-hosted Steward payloads.
 
 export const StewardStartedPayload = z.object({
@@ -475,6 +504,9 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     credential_grant_added: CredentialGrantAddedPayload,
     credential_grant_revoked: CredentialGrantRevokedPayload,
     credential_unsafe_storage: CredentialUnsafeStoragePayload,
+    no_go_match: NoGoMatchPayload,
+    no_go_authorized: NoGoAuthorizedPayload,
+    no_go_blocked: NoGoBlockedPayload,
     steward_started: StewardStartedPayload,
     steward_stopped: StewardStoppedPayload,
     steward_prompt: StewardPromptPayload,
