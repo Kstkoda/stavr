@@ -34,6 +34,11 @@ export const EventKind = z.enum([
   'trust_scope_action_authorized',
   // Spec 51 resilience principles
   'stale_pid_cleaned',
+  // Spec 48 Layer 1 — Steward role + claim lifecycle
+  'steward_claimed',
+  'steward_released',
+  'steward_handoff',
+  'steward_pulse',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -263,6 +268,41 @@ export const StalePidCleanedPayload = z.object({
   pid_file_path: z.string(),
 });
 
+// Spec 48 Layer 1 — Steward role payloads.
+
+export const StewardClaimedPayload = z.object({
+  steward_id: z.string(),
+  client_id: z.string(),
+  user_id: z.string(),
+  display_name: z.string().optional(),
+  model: z.string().optional(),
+  provider: z.string().optional(),
+  claimed_at: z.string(),
+  memory_path: z.string().optional(),
+});
+
+export const StewardReleasedPayload = z.object({
+  steward_id: z.string(),
+  client_id: z.string(),
+  released_at: z.string(),
+  released_by: z.enum(['steward', 'user-force', 'handoff']),
+  reason: z.string().optional(),
+});
+
+export const StewardHandoffPayload = z.object({
+  from_steward_id: z.string(),
+  to_steward_id: z.string(),
+  from_client_id: z.string(),
+  to_client_id: z.string(),
+  at: z.string(),
+});
+
+export const StewardPulsePayload = z.object({
+  steward_id: z.string(),
+  at: z.string(),
+  detail: z.string().optional(),
+});
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -307,6 +347,10 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     trust_scope_completed: TrustScopeCompletedPayload,
     trust_scope_action_authorized: TrustScopeActionAuthorizedPayload,
     stale_pid_cleaned: StalePidCleanedPayload,
+    steward_claimed: StewardClaimedPayload,
+    steward_released: StewardReleasedPayload,
+    steward_handoff: StewardHandoffPayload,
+    steward_pulse: StewardPulsePayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);

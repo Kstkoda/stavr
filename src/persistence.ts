@@ -214,6 +214,33 @@ export class EventStore {
         FOREIGN KEY (scope_id) REFERENCES trust_scopes(id)
       );
       CREATE INDEX IF NOT EXISTS idx_scope_actions_scope ON scope_actions(scope_id);
+
+      -- Spec 48 Layer 1: Steward role + single-Steward invariant.
+      CREATE TABLE IF NOT EXISTS stewards (
+        id              TEXT PRIMARY KEY,
+        client_id       TEXT NOT NULL,
+        user_id         TEXT NOT NULL,
+        display_name    TEXT,
+        model           TEXT,
+        provider        TEXT,
+        claimed_at      TEXT NOT NULL,
+        released_at     TEXT,
+        last_pulse_at   TEXT,
+        memory_path     TEXT,
+        metadata_json   TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_stewards_active
+        ON stewards(claimed_at) WHERE released_at IS NULL;
+
+      -- One-shot tokens minted by 'cowire steward mint-token' (or cowire init).
+      -- 30-minute default TTL; redeemed exactly once by mcp__cowire__steward_claim.
+      CREATE TABLE IF NOT EXISTS steward_claim_tokens (
+        token         TEXT PRIMARY KEY,
+        created_at    TEXT NOT NULL,
+        expires_at    TEXT NOT NULL,
+        redeemed_at   TEXT,
+        redeemed_by   TEXT
+      );
     `);
   }
 

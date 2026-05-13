@@ -9,6 +9,7 @@ import { Broker } from './broker.js';
 import { mountTransports, type MountedTransports } from './transports.js';
 import { defaultDbPath } from './paths.js';
 import { getLogger } from './log.js';
+import { STEWARD_MEMORY_ROOT } from './steward/tools.js';
 
 export interface DaemonOptions {
   port: number;
@@ -124,6 +125,11 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
       logger.error('failed to emit stale_pid_cleaned', { error: (err as Error).message });
     }
   }
+
+  // Spec 48 Layer 1: ensure the Steward memory root exists so per-steward
+  // subdirs created at claim time have a stable parent. Contents are opaque
+  // to the daemon — Stewards own their working memory format.
+  mkdirSync(STEWARD_MEMORY_ROOT, { recursive: true });
 
   // If we just had to quarantine a corrupt DB, surface the event so subscribers
   // (dashboard, oncall) see it. Best-effort; the daemon must come up either way.

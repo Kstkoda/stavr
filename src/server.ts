@@ -17,6 +17,8 @@ import { registerWorkerTools } from './workers/tools.js';
 import { TrustStore } from './trust/store.js';
 import { registerTrustScopeTools } from './trust/tools.js';
 import { initTrustReporter } from './trust/reporter.js';
+import { StewardStore } from './steward/store.js';
+import { registerStewardTools } from './steward/tools.js';
 
 export interface SwitchServerHandle {
   server: McpServer;
@@ -32,6 +34,7 @@ export interface SwitchServerHandle {
  */
 const orchestratorsByBroker = new WeakMap<Broker, WorkerOrchestrator>();
 const trustStoresByBroker = new WeakMap<Broker, TrustStore>();
+const stewardStoresByBroker = new WeakMap<Broker, StewardStore>();
 
 function getOrCreateOrchestrator(broker: Broker, trustStore: TrustStore): WorkerOrchestrator {
   const existing = orchestratorsByBroker.get(broker);
@@ -51,12 +54,21 @@ export function getOrCreateTrustStore(broker: Broker): TrustStore {
   return ts;
 }
 
+export function getOrCreateStewardStore(broker: Broker): StewardStore {
+  const existing = stewardStoresByBroker.get(broker);
+  if (existing) return existing;
+  const s = new StewardStore(broker.store);
+  stewardStoresByBroker.set(broker, s);
+  return s;
+}
+
 export function createSwitchServer(broker: Broker): SwitchServerHandle {
   const sessionId = newSessionId();
   const server = new McpServer({ name: 'cowire-switch', version: '0.1.0' });
   broker.registerSession(sessionId, server);
 
   const trustStore = getOrCreateTrustStore(broker);
+  const stewardStore = getOrCreateStewardStore(broker);
   const orchestrator = getOrCreateOrchestrator(broker, trustStore);
 
   registerEmitEvent(server, broker);
@@ -68,6 +80,7 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   registerGithubWriteTools(server, broker, { trustStore });
   registerWorkerTools(server, orchestrator);
   registerTrustScopeTools(server, broker, trustStore);
+  registerStewardTools(server, broker, stewardStore, trustStore);
   return { server, sessionId, orchestrator };
 }
 
