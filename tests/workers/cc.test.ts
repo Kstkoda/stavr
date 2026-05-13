@@ -121,16 +121,23 @@ describe('cc spawner', () => {
     const parsed = JSON.parse(readFileSync(mcp, 'utf8'));
     expect(parsed.mcpServers.cowire.type).toBe('sse');
 
-    // Post-spec-47: direct spawn of `claude`, no cmd.exe wrapper. Args
-    // include the headless stream-json flags so the daemon receives
-    // structured events on stdout. Prompt is fed via stdin, not argv.
-    expect(spawnArgs?.file).toBe('claude');
+    // Post-spec-47: spawn the `claude` binary with headless stream-json flags
+    // so the daemon receives structured events on stdout. Prompt is fed via
+    // stdin, not argv. On Windows the cc spawner wraps the call in
+    // `cmd.exe /d /s /c claude ...` so npm's `claude.cmd` shim resolves; on
+    // POSIX it spawns `claude` directly. Either way the same flags appear in
+    // argv, so we assert on those.
+    if (process.platform === 'win32') {
+      expect(spawnArgs?.file).toBe('cmd.exe');
+      expect(spawnArgs?.args).toContain('claude');
+    } else {
+      expect(spawnArgs?.file).toBe('claude');
+    }
     expect(spawnArgs?.args).toContain('--print');
     expect(spawnArgs?.args).toContain('--output-format');
     expect(spawnArgs?.args).toContain('stream-json');
     expect(spawnArgs?.args).toContain('--mcp-config');
     expect(spawnArgs?.args).toContain('.cowire-mcp.json');
-    expect(spawnArgs?.args.join(' ')).not.toContain('cmd.exe');
 
     // The prompt is delivered as a stream-json user message on stdin, then
     // stdin is closed so claude knows input is finished.
