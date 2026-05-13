@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+  # Run on every PR regardless of base ref — chained PRs (e.g. [cc-mega] stacks
+  # whose base is another open PR's head, not main) still need CI to verify the
+  # production-ready bar against their actual base.
   pull_request:
-    branches: [main]
 
 # Cancel in-progress runs on new pushes to the same branch
 concurrency:
@@ -13,9 +15,13 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: Build and test
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - name: Checkout
@@ -40,6 +46,7 @@ jobs:
         run: npm run build
 
       - name: Verify dist/ output exists
+        shell: bash
         run: |
           test -f dist/cli.js
           test -f dist/server.js

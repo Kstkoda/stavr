@@ -1,5 +1,6 @@
-import express, { type Request, type Response } from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import type { Server as HttpServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { createSwitchServer, getOrCreateTrustStore } from './server.js';
@@ -9,6 +10,11 @@ import { startupDecisionSweep } from './tools/decisions.js';
 import { getLogger } from './log.js';
 import { DASHBOARD_HTML } from './dashboard-html.js';
 import { computeUsage, fetchAnthropicBalance, type ComputeUsageOpts } from './usage.js';
+import {
+  PendingPairingRegistry,
+  generateDeviceToken,
+  hashToken,
+} from './pairing.js';
 
 /**
  * Transport modes:
@@ -24,6 +30,33 @@ export interface TransportOpts {
   /** Deprecated: prefer `mode`. Kept for `cowire start --stdio-only`. */
   stdioOnly?: boolean;
   silent?: boolean;
+  /**
+   * Host the HTTP/SSE listener binds to (spec 52). Defaults to `127.0.0.1` — local-only,
+   * matching ADR-006. Non-loopback values must clear the auth gate.
+   */
+  bindHost?: string;
+  /**
+   * Refuse to start when `bindHost` is non-loopback and `authConfigured` is false.
+   * Defaults to `true`. Setting this to `false` is the documented escape hatch for
+   * known-trusted networks.
+   */
+  requireAuthWhenNonLocal?: boolean;
+  /**
+   * Whether the pairing-token subsystem is wired up. Computed by the caller as
+   * `broker.store.countActiveDevices() > 0` (spec 52 A2). When true and the bind
+   * is non-loopback, every non-public request must carry a valid Bearer token.
+   */
+  authConfigured?: boolean;
+  /**
+   * In-memory pending-pairing registry shared between `pair --bootstrap` and the
+   * remote `/pair/complete` endpoint. Spec 52 A2. Caller may pass their own (tests
+   * do); otherwise mountTransports creates a fresh registry per daemon process.
+   */
+  pairingRegistry?: PendingPairingRegistry;
+  /**
+   * Override `Date.now()` for the pairing TTL. Test seam.
+   */
+  now?: () => number;
 }
 
 export interface MountedTransports {
@@ -31,6 +64,12 @@ export interface MountedTransports {
   shutdown: () => Promise<void>;
   /** Live count of connected SSE sessions (daemon mode only). */
   sseSessionCount: () => number;
+  /**
+   * The pending-pairing registry the HTTP transport is using. Exposed so the
+   * `cowire pair --bootstrap` CLI (which runs in the same daemon process) can
+   * call `.open()` directly without an HTTP round-trip.
+   */
+  pairingRegistry: PendingPairingRegistry;
 }
 
 export async function mountTransports(
@@ -56,16 +95,31 @@ export async function mountTransports(
 
   let httpServer: HttpServer | undefined;
   const sseSessions = new Map<string, SSEServerTransport>();
+  // Always create the registry — `pair --bootstrap` may run in this same
+  // process even when HTTP isn't mounted (rare, but the shape is uniform).
+  const pairingRegistry = opts.pairingRegistry ?? new PendingPairingRegistry();
 
   const wantHttp = mode === 'daemon' || (mode === 'both' && opts.port !== undefined);
   if (wantHttp) {
     if (opts.port === undefined) throw new Error('port is required when mode includes HTTP/SSE');
+
+    const bindHost = opts.bindHost ?? '127.0.0.1';
+    const isLoopback = bindHost === '127.0.0.1' || bindHost === '::1' || bindHost === 'localhost';
+    const requireAuth = opts.requireAuthWhenNonLocal !== false;
+    if (!isLoopback && requireAuth && !opts.authConfigured) {
+      throw new Error(
+        'cowire daemon refusing to bind non-local without auth configured. ' +
+          'Run `cowire pair --bootstrap` first or set `network.require_auth_when_non_local: false` ' +
+          "if you know what you're doing.",
+      );
+    }
 
     const app = express();
     app.use(express.json({ limit: '4mb' }));
 
     const daemonStartedAt = new Date();
     const version = process.env.COWIRE_VERSION ?? '0.1.0';
+    const now = opts.now ?? Date.now;
 
     // Deep health endpoint (spec 44 §3). Anything that flips `ok` to false makes
     // the response 503 so the watchdog (ADR-020) catches it and restarts us.
@@ -99,6 +153,97 @@ export async function mountTransports(
       };
       res.status(ok ? 200 : 503).json(body);
     });
+
+    // ---- Spec 52 A2 — pairing endpoints (public for /pair/complete) ----
+
+    // Loopback-only: opens a pairing window and returns the 6-digit code. The
+    // bootstrap operator runs `cowire pair --bootstrap` on the daemon machine,
+    // which calls this. Non-loopback callers get 403 — the code goes back to
+    // the operator who is standing in front of the daemon, never to the wire.
+    app.post('/pair/initiate', (req: Request, res: Response) => {
+      if (!isLoopbackRequest(req)) {
+        res.status(403).json({ ok: false, error: 'loopback only' });
+        return;
+      }
+      const pairing = pairingRegistry.open(now());
+      res.json({
+        ok: true,
+        code: pairing.code,
+        expires_at: new Date(pairing.expires_at).toISOString(),
+      });
+    });
+
+    // Public: the new device exchanges the 6-digit code for a UUID-shaped
+    // token. The raw token is returned exactly once; the daemon stores only
+    // SHA256(token) in the devices table. Generic 'invalid_code' on every
+    // failure path so the response doesn't leak which slot exists.
+    app.post('/pair/complete', async (req: Request, res: Response) => {
+      const body = (req.body ?? {}) as { code?: string; device_name?: string };
+      const code = typeof body.code === 'string' ? body.code.trim() : '';
+      const deviceName = typeof body.device_name === 'string' ? body.device_name.trim() : '';
+      if (!code || !deviceName) {
+        res.status(400).json({ ok: false, error: 'code and device_name required' });
+        return;
+      }
+      const matched = pairingRegistry.consume(code, now());
+      if (!matched) {
+        res.status(401).json({ ok: false, error: 'invalid_code' });
+        return;
+      }
+      const token = generateDeviceToken();
+      const tokenHash = hashToken(token);
+      const deviceId = randomUUID();
+      const pairedAt = new Date().toISOString();
+      const pairedFromIp = (req.socket.remoteAddress ?? '').replace(/^::ffff:/, '') || 'unknown';
+      broker.store.insertDevice({
+        id: deviceId,
+        name: deviceName,
+        paired_at: pairedAt,
+        paired_from_ip: pairedFromIp,
+        token_hash: tokenHash,
+      });
+      await broker.publish({
+        kind: 'device_paired',
+        at: pairedAt,
+        source_agent: 'cowire-daemon',
+        payload: { device_id: deviceId, device_name: deviceName, paired_from_ip: pairedFromIp },
+      });
+      res.json({
+        ok: true,
+        device_id: deviceId,
+        device_name: deviceName,
+        paired_at: pairedAt,
+        token,
+      });
+    });
+
+    // ---- Auth middleware (spec 52 A2) ----
+    // Once at least one device is paired and the bind is non-loopback, every
+    // non-public request must carry a valid Bearer token. Loopback requests
+    // are exempt — the kernel enforces local-only access (ADR-006). The actual
+    // decision lives in the pure `checkBearerAuth()` (testable independently).
+    const requireBearer = !!opts.authConfigured && !isLoopback;
+    if (requireBearer) {
+      app.use((req: Request, res: Response, next: NextFunction) => {
+        const verdict = checkBearerAuth({
+          path: req.path,
+          isLoopbackReq: isLoopbackRequest(req),
+          authHeader: req.header('authorization'),
+          findActiveDevice: (h) => {
+            const r = broker.store.findActiveDeviceByTokenHash(h);
+            return r ? { id: r.id, name: r.name } : undefined;
+          },
+        });
+        if (!verdict.ok) {
+          res.status(verdict.status).json({ ok: false, error: verdict.error });
+          return;
+        }
+        if (verdict.device) {
+          (req as Request & { device?: { id: string; name: string } }).device = verdict.device;
+        }
+        next();
+      });
+    }
 
     app.get('/status', (_req, res) => {
       res.json({
@@ -204,8 +349,8 @@ export async function mountTransports(
     });
 
     httpServer = await new Promise<HttpServer | undefined>((resolve, reject) => {
-      const s = app.listen(opts.port!, '127.0.0.1', () => {
-        log(`HTTP/SSE listening on 127.0.0.1:${opts.port}`);
+      const s = app.listen(opts.port!, bindHost, () => {
+        log(`HTTP/SSE listening on ${bindHost}:${opts.port}`);
         resolve(s);
       });
       s.on('error', (err: NodeJS.ErrnoException) => {
@@ -235,7 +380,58 @@ export async function mountTransports(
     broker.store.close();
   };
 
-  return { httpServer, shutdown, sseSessionCount: () => sseSessions.size };
+  return {
+    httpServer,
+    shutdown,
+    sseSessionCount: () => sseSessions.size,
+    pairingRegistry,
+  };
+}
+
+/**
+ * Spec 52 A2 — true iff the request socket connected from a loopback address.
+ * Accounts for IPv6-mapped IPv4 (`::ffff:127.0.0.1`).
+ */
+export function isLoopbackRequest(req: Request): boolean {
+  const raw = req.socket.remoteAddress ?? '';
+  const ip = raw.replace(/^::ffff:/, '');
+  return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost' || ip === '';
+}
+
+/** Extract the bearer token from `Authorization: Bearer <token>`. Returns undefined if malformed. */
+export function parseBearerToken(header: string | undefined): string | undefined {
+  if (!header) return undefined;
+  const m = /^Bearer\s+(\S+)\s*$/i.exec(header);
+  return m ? m[1] : undefined;
+}
+
+/**
+ * Spec 52 A2 — pure auth-gate decision. Used by the HTTP middleware and unit
+ * tests. Allows when public path / loopback / valid token; refuses otherwise.
+ * `findActiveDevice` is the small shim the caller supplies — production code
+ * passes `(hash) => broker.store.findActiveDeviceByTokenHash(hash)`.
+ */
+export function checkBearerAuth(args: {
+  path: string;
+  isLoopbackReq: boolean;
+  authHeader: string | undefined;
+  findActiveDevice: (tokenHash: string) => { id: string; name: string } | undefined;
+}): { ok: true; device?: { id: string; name: string } } | { ok: false; status: number; error: string } {
+  // Public allow-list bypasses auth regardless.
+  if (args.path === '/healthz' || args.path === '/pair/complete' || args.path === '/pair/initiate') {
+    return { ok: true };
+  }
+  // Loopback callers always allowed — the kernel boundary already gates them.
+  if (args.isLoopbackReq) return { ok: true };
+
+  const presented = parseBearerToken(args.authHeader);
+  if (!presented) {
+    return { ok: false, status: 401, error: 'missing_or_invalid_authorization' };
+  }
+  const presentedHash = hashToken(presented);
+  const device = args.findActiveDevice(presentedHash);
+  if (!device) return { ok: false, status: 401, error: 'invalid_token' };
+  return { ok: true, device };
 }
 
 interface DashboardCtx {

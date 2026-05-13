@@ -88,7 +88,8 @@ describe('tool catalogue', () => {
     for (const entry of catalogue.tools) {
       const cardPath = join(ROOT, entry.card_path);
       expect(existsSync(cardPath), `missing card: ${entry.card_path}`).toBe(true);
-      const body = readFileSync(cardPath, 'utf8');
+      // Normalize CRLF → LF so Windows checkouts (autocrlf=true) match.
+      const body = readFileSync(cardPath, 'utf8').replace(/\r\n/g, '\n');
       // Frontmatter sanity.
       expect(body.startsWith('---\n')).toBe(true);
       expect(body).toContain(`name: ${entry.name}`);

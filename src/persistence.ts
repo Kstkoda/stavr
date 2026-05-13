@@ -277,6 +277,21 @@ export class EventStore {
       );
       CREATE INDEX IF NOT EXISTS idx_credential_grants_active
         ON credential_grants(credential_id) WHERE revoked_at IS NULL;
+
+      -- Spec 52 A2 — paired devices. The token_hash column stores SHA256(token);
+      -- the raw token is returned to the device once at pair time and never
+      -- persisted on the daemon. revoked_at is NULL for active pairings.
+      CREATE TABLE IF NOT EXISTS devices (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        paired_at TEXT NOT NULL,
+        paired_from_ip TEXT NOT NULL,
+        token_hash TEXT NOT NULL,
+        revoked_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_devices_token_hash ON devices(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_devices_active
+        ON devices(revoked_at) WHERE revoked_at IS NULL;
     `);
   }
 
@@ -721,6 +736,98 @@ export class EventStore {
       .all(limit) as Array<{ correlation_id: string }>;
     return rows.map((r) => this.getDecision(r.correlation_id)!).filter(Boolean);
   }
+
+  // ---- Spec 52 A2: paired devices ----
+
+  insertDevice(record: {
+    id: string;
+    name: string;
+    paired_at: string;
+    paired_from_ip: string;
+    token_hash: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO devices (id, name, paired_at, paired_from_ip, token_hash, revoked_at)
+         VALUES (?, ?, ?, ?, ?, NULL)`,
+      )
+      .run(record.id, record.name, record.paired_at, record.paired_from_ip, record.token_hash);
+  }
+
+  /** Returns the active device matching the given SHA256 token-hash, or undefined. */
+  findActiveDeviceByTokenHash(tokenHash: string): DeviceRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, name, paired_at, paired_from_ip, token_hash, revoked_at
+         FROM devices WHERE token_hash = ? AND revoked_at IS NULL`,
+      )
+      .get(tokenHash) as DeviceRow | undefined;
+    return row ? deviceRowToRecord(row) : undefined;
+  }
+
+  getDevice(id: string): DeviceRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, name, paired_at, paired_from_ip, token_hash, revoked_at
+         FROM devices WHERE id = ?`,
+      )
+      .get(id) as DeviceRow | undefined;
+    return row ? deviceRowToRecord(row) : undefined;
+  }
+
+  listDevices(opts?: { activeOnly?: boolean }): DeviceRecord[] {
+    const sql = opts?.activeOnly
+      ? `SELECT id, name, paired_at, paired_from_ip, token_hash, revoked_at
+         FROM devices WHERE revoked_at IS NULL ORDER BY paired_at DESC`
+      : `SELECT id, name, paired_at, paired_from_ip, token_hash, revoked_at
+         FROM devices ORDER BY paired_at DESC`;
+    const rows = this.db.prepare(sql).all() as DeviceRow[];
+    return rows.map(deviceRowToRecord);
+  }
+
+  /** Returns true if the device was active and is now revoked; false if already revoked or unknown. */
+  revokeDevice(id: string, revokedAt: string): boolean {
+    const r = this.db
+      .prepare(`UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`)
+      .run(revokedAt, id);
+    return r.changes > 0;
+  }
+
+  countActiveDevices(): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM devices WHERE revoked_at IS NULL`)
+      .get() as { n: number };
+    return row.n;
+  }
+}
+
+export interface DeviceRecord {
+  id: string;
+  name: string;
+  paired_at: string;
+  paired_from_ip: string;
+  token_hash: string;
+  revoked_at?: string;
+}
+
+interface DeviceRow {
+  id: string;
+  name: string;
+  paired_at: string;
+  paired_from_ip: string;
+  token_hash: string;
+  revoked_at: string | null;
+}
+
+function deviceRowToRecord(row: DeviceRow): DeviceRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    paired_at: row.paired_at,
+    paired_from_ip: row.paired_from_ip,
+    token_hash: row.token_hash,
+    revoked_at: row.revoked_at ?? undefined,
+  };
 }
 
 interface WorkerRow {

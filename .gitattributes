@@ -1,0 +1,31 @@
+# Normalize line endings across platforms so tests that string-match against
+# checked-in source content (e.g. tests/tool-catalogue.test.ts asserting that
+# tool-card markdown starts with `---\n`) pass identically on Windows and Linux.
+* text=auto eol=lf
+
+# Source and config files always LF — they're read by Node which treats `\r\n`
+# differently than `\n` for strict startsWith / split / regex assertions.
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+
+# PowerShell scripts keep CRLF so Windows-native tools (incl. Windows
+# PowerShell 5.1) parse them without surprises.
+*.ps1 text eol=crlf
+
+# Binary blobs.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.gz binary
+*.pdf binary
+*.docx binary

@@ -63,6 +63,9 @@ export const EventKind = z.enum([
   'steward_usage',
   'steward_paused_for_budget',
   'steward_resumed',
+  // Spec 52 A2 — pairing tokens
+  'device_paired',
+  'device_revoked',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 

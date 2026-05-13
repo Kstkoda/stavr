@@ -32,6 +32,12 @@ export interface DaemonOptions {
   detach: boolean;
   force?: boolean;
   logFormat?: 'text' | 'json';
+  /** Host to bind HTTP/SSE on. Defaults to `127.0.0.1` (spec 52). */
+  bindHost?: string;
+  /** Refuse non-loopback bind without auth. Defaults to true. */
+  requireAuthWhenNonLocal?: boolean;
+  /** Pairing/auth subsystem readiness. A1 always passes false; A2 wires it. */
+  authConfigured?: boolean;
 }
 
 export interface DaemonPidFile {
@@ -39,6 +45,7 @@ export interface DaemonPidFile {
   port: number;
   started_at: string;
   db: string;
+  bind_host?: string;
 }
 
 export interface DaemonStatusResult {
@@ -53,17 +60,27 @@ export interface DaemonStatusResult {
   pending_decisions?: number;
 }
 
-const PID_DIR = join(homedir(), '.cowire');
-const PID_FILE = join(PID_DIR, 'daemon.pid');
+function cowireHomeDir(): string {
+  return process.env.COWIRE_HOME?.trim() || join(homedir(), '.cowire');
+}
+
+function pidDir(): string {
+  return cowireHomeDir();
+}
+
+function pidFile(): string {
+  return join(pidDir(), 'daemon.pid');
+}
 
 export function pidFilePath(): string {
-  return PID_FILE;
+  return pidFile();
 }
 
 export function readPidFile(): DaemonPidFile | undefined {
-  if (!existsSync(PID_FILE)) return undefined;
+  const f = pidFile();
+  if (!existsSync(f)) return undefined;
   try {
-    const raw = readFileSync(PID_FILE, 'utf8');
+    const raw = readFileSync(f, 'utf8');
     return JSON.parse(raw) as DaemonPidFile;
   } catch {
     return undefined;
@@ -71,12 +88,12 @@ export function readPidFile(): DaemonPidFile | undefined {
 }
 
 function writePidFileAtomic(record: DaemonPidFile): void {
-  safeWrite(PID_FILE, JSON.stringify(record, null, 2));
+  safeWrite(pidFile(), JSON.stringify(record, null, 2));
 }
 
 function removePidFile(): void {
   try {
-    unlinkSync(PID_FILE);
+    unlinkSync(pidFile());
   } catch {
     /* ignore */
   }
@@ -133,7 +150,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
         payload: {
           dead_pid: stalePid.pid,
           port: stalePid.port,
-          pid_file_path: PID_FILE,
+          pid_file_path: pidFile(),
         },
       });
     } catch (err) {
@@ -198,9 +215,16 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     }
   }
 
+  const bindHost = opts.bindHost ?? '127.0.0.1';
+  // Re-compute authConfigured from the freshly-opened store so the detached
+  // child sees the same state the parent CLI did. Spec 52 A2.
+  const authConfigured = opts.authConfigured ?? store.countActiveDevices() > 0;
   const transports = await mountTransports(broker, {
     mode: 'daemon',
     port: opts.port,
+    bindHost,
+    requireAuthWhenNonLocal: opts.requireAuthWhenNonLocal,
+    authConfigured,
   });
 
   writePidFileAtomic({
@@ -208,9 +232,10 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     port: opts.port,
     started_at: new Date().toISOString(),
     db: opts.db,
+    bind_host: bindHost,
   });
   logger.info('daemon ready', {
-    address: `127.0.0.1:${opts.port}`,
+    address: `${bindHost}:${opts.port}`,
     db: opts.db,
     pid: process.pid,
   });
@@ -299,6 +324,8 @@ function spawnDetachedDaemon(opts: DaemonOptions): { pid: number; detached: true
   const args = ['daemon', 'start', '--port', String(opts.port), '--db', opts.db];
   if (opts.force) args.push('--force');
   if (opts.logFormat) args.push('--log-format', opts.logFormat);
+  if (opts.bindHost) args.push('--bind-host', opts.bindHost);
+  if (opts.requireAuthWhenNonLocal === false) args.push('--allow-non-local-without-auth');
 
   const child = spawn(process.execPath, [cliEntry, ...args], {
     detached: true,
@@ -502,8 +529,8 @@ export function installCrashHandler(store: EventStore): void {
       recent_events: recent,
     };
     try {
-      mkdirSync(PID_DIR, { recursive: true });
-      const path = join(PID_DIR, `crash-${Date.now()}.json`);
+      mkdirSync(pidDir(), { recursive: true });
+      const path = join(pidDir(), `crash-${Date.now()}.json`);
       safeWrite(path, JSON.stringify(payload, null, 2));
       getLogger().error('crash dump written', { path, label, message: e.message });
     } catch (dumpErr) {
