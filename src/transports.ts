@@ -4,10 +4,10 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { createSwitchServer, getOrCreateTrustStore } from './server.js';
 import type { Broker } from './broker.js';
+import type { StoredEvent } from './persistence.js';
 import { startupDecisionSweep } from './tools/decisions.js';
 import { getLogger } from './log.js';
 import { DASHBOARD_HTML } from './dashboard-html.js';
-import type { StoredEvent } from './persistence.js';
 import { computeUsage, fetchAnthropicBalance, type ComputeUsageOpts } from './usage.js';
 
 /**
@@ -143,6 +143,47 @@ export async function mountTransports(
       });
       await handle.server.connect(transport);
       log(`SSE session ${transport.sessionId} connected`);
+    });
+
+    // Raw SSE event stream for `cowire tail` and programmatic consumers.
+    // Supports ?since_id=<event-id>, ?since_at=<ISO>, ?kind=a,b,c, ?source_agent=<name>.
+    app.get('/events/sse', (req: Request, res: Response) => {
+      const sinceId = req.query.since_id ? String(req.query.since_id) : undefined;
+      const sinceAt = req.query.since_at ? String(req.query.since_at) : undefined;
+      const kinds = req.query.kind ? String(req.query.kind).split(',') : undefined;
+      const sourceAgent = req.query.source_agent ? String(req.query.source_agent) : undefined;
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+      res.write(':ok\n\n');
+
+      const kindSet = kinds && !kinds.includes('*') ? new Set(kinds) : null;
+      const shouldSend = (ev: StoredEvent): boolean => {
+        if (kindSet && !kindSet.has(ev.kind)) return false;
+        if (sourceAgent && ev.source_agent !== sourceAgent) return false;
+        return true;
+      };
+
+      const send = (ev: StoredEvent): void => {
+        if (!shouldSend(ev)) return;
+        res.write(`data: ${JSON.stringify(ev)}\n\n`);
+      };
+
+      // Replay historical events before subscribing to live ones
+      const filter: Parameters<typeof broker.store.getEvents>[0] = {};
+      if (sinceId) filter.sinceEventId = sinceId;
+      else if (sinceAt) filter.sinceAt = sinceAt;
+      if (kindSet) filter.kinds = [...kindSet];
+      if (sourceAgent) filter.sourceAgent = sourceAgent;
+      const { events: historical } = broker.store.getEvents(filter);
+      for (const ev of historical) send(ev);
+
+      // Subscribe to live events
+      const off = broker.onRawEvent(send);
+      req.on('close', () => { off(); });
     });
 
     app.post('/mcp/messages', async (req: Request, res: Response) => {

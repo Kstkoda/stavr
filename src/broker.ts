@@ -17,6 +17,7 @@ export type EventTap = (event: StoredEvent) => void;
 export class Broker {
   private subscribers = new Map<string, Subscription>();
   private taps = new Set<EventTap>();
+  private rawListeners = new Set<(ev: StoredEvent) => void>();
 
   constructor(public readonly store: EventStore) {}
 
@@ -31,6 +32,11 @@ export class Broker {
     return () => {
       this.taps.delete(tap);
     };
+  }
+
+  onRawEvent(cb: (ev: StoredEvent) => void): () => void {
+    this.rawListeners.add(cb);
+    return () => this.rawListeners.delete(cb);
   }
 
   registerSession(sessionId: string, server: McpServer): void {
@@ -102,6 +108,9 @@ export class Broker {
       };
     }
     await this.fanout(stored);
+    for (const cb of this.rawListeners) {
+      try { cb(stored); } catch { /* isolate raw listener failures */ }
+    }
     return stored;
   }
 

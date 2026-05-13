@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn, execFile, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 import { mkdirSync, rmSync, existsSync } from 'node:fs';
 import { safeWrite } from '../util/atomic.js';
@@ -114,6 +115,35 @@ export function createCcSpawner(opts: CcSpawnerOptions = {}): WorkerSpawner<CcSp
       });
 
       const bus = new WorkerEventBus();
+
+      if (child.stdout) {
+        const rl = createInterface({ input: child.stdout, terminal: false });
+        rl.on('line', (rawLine) => {
+          const truncated = rawLine.length > 4096;
+          const line = truncated ? rawLine.slice(0, 4096) : rawLine;
+          let format: 'stream-json' | 'raw' = 'raw';
+          let parsedEvent: unknown;
+          if (line.startsWith('{')) {
+            try { parsedEvent = JSON.parse(line); format = 'stream-json'; } catch { /* not JSON */ }
+          }
+          bus.emitLog({
+            stream: 'stdout',
+            line,
+            format,
+            ...(parsedEvent !== undefined && { event: parsedEvent }),
+            ...(truncated && { truncated }),
+          });
+        });
+      }
+      if (child.stderr) {
+        const rl = createInterface({ input: child.stderr, terminal: false });
+        rl.on('line', (rawLine) => {
+          const truncated = rawLine.length > 4096;
+          const line = truncated ? rawLine.slice(0, 4096) : rawLine;
+          bus.emitLog({ stream: 'stderr', line, format: 'raw', ...(truncated && { truncated }) });
+        });
+      }
+
       const metadata: Record<string, unknown> = {
         cwd: worktreePath,
         repo_path: repoPath,
@@ -128,51 +158,6 @@ export function createCcSpawner(opts: CcSpawnerOptions = {}): WorkerSpawner<CcSp
         // can use this for real liveness tracking and SIGTERM.
         claude_pid: child.pid,
       };
-
-      // Wire stdout: parse one JSON event per line (Claude's --output-format
-      // stream-json contract). Non-JSON lines fall through as plain progress
-      // messages so we never lose output. Buffered split — chunk boundaries
-      // can land mid-line.
-      let stdoutBuf = '';
-      child.stdout?.setEncoding('utf8');
-      child.stdout?.on('data', (chunk: string) => {
-        stdoutBuf += chunk;
-        let nl = stdoutBuf.indexOf('\n');
-        while (nl !== -1) {
-          const line = stdoutBuf.slice(0, nl).replace(/\r$/, '');
-          stdoutBuf = stdoutBuf.slice(nl + 1);
-          if (line.length > 0) emitStdoutLine(bus, line);
-          nl = stdoutBuf.indexOf('\n');
-        }
-      });
-      child.stdout?.on('end', () => {
-        if (stdoutBuf.length > 0) {
-          emitStdoutLine(bus, stdoutBuf.replace(/\r$/, ''));
-          stdoutBuf = '';
-        }
-      });
-
-      // Wire stderr: every non-empty line becomes a progress event tagged
-      // stream:'stderr'. Lines >4 KB are truncated to keep the broker honest
-      // about a pathological writer.
-      let stderrBuf = '';
-      child.stderr?.setEncoding('utf8');
-      child.stderr?.on('data', (chunk: string) => {
-        stderrBuf += chunk;
-        let nl = stderrBuf.indexOf('\n');
-        while (nl !== -1) {
-          const line = stderrBuf.slice(0, nl).replace(/\r$/, '');
-          stderrBuf = stderrBuf.slice(nl + 1);
-          if (line.length > 0) emitStderrLine(bus, line);
-          nl = stderrBuf.indexOf('\n');
-        }
-      });
-      child.stderr?.on('end', () => {
-        if (stderrBuf.length > 0) {
-          emitStderrLine(bus, stderrBuf.replace(/\r$/, ''));
-          stderrBuf = '';
-        }
-      });
 
       // 6. Watch git state in the worktree. Replaces the 10s poller.
       const watchTargets = [
@@ -349,40 +334,6 @@ function launchClaude(spawnFn: Spawner, opts: LaunchOpts): ChildProcess {
     child.stdin.end();
   }
   return child;
-}
-
-function emitStdoutLine(bus: WorkerEventBus, line: string): void {
-  // Try to parse Claude's stream-json event. On success, surface a structured
-  // progress event with the parsed event as payload; the orchestrator
-  // forwards it onto the broker as worker_progress and the dashboard /
-  // `cowire tail` can render it richly. On parse failure, treat as a plain
-  // log line so we never lose output.
-  const trimmed = line.length > 4096 ? line.slice(0, 4096) : line;
-  const truncated = line.length > 4096;
-  try {
-    const event = JSON.parse(trimmed);
-    const kind = typeof event === 'object' && event !== null && 'type' in event
-      ? String((event as { type: unknown }).type)
-      : 'unknown';
-    bus.emitProgress({
-      message: `claude:${kind}`,
-      payload: { stream: 'stdout', format: 'stream-json', event, truncated },
-    });
-  } catch {
-    bus.emitProgress({
-      message: trimmed,
-      payload: { stream: 'stdout', format: 'raw', truncated },
-    });
-  }
-}
-
-function emitStderrLine(bus: WorkerEventBus, line: string): void {
-  const trimmed = line.length > 4096 ? line.slice(0, 4096) : line;
-  const truncated = line.length > 4096;
-  bus.emitProgress({
-    message: trimmed,
-    payload: { stream: 'stderr', truncated },
-  });
 }
 
 function buildMcpConfig(daemonUrl: string): string {

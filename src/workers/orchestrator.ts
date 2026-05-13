@@ -214,6 +214,25 @@ export class WorkerOrchestrator {
       }),
     );
     offs.push(
+      instance.events.on('log', (info) => {
+        this.touch(id);
+        void this.publish(
+          'worker_log',
+          {
+            worker_id: id,
+            worker_name: name,
+            stream: info.stream,
+            format: info.format,
+            ...(info.event !== undefined && { event: info.event }),
+            ...(info.line !== undefined && { line: info.line }),
+            ...(info.truncated && { truncated: info.truncated }),
+          },
+          undefined,
+          `worker:${type}:${name}`,
+        );
+      }),
+    );
+    offs.push(
       instance.events.on('exit', (info) => {
         const reason: 'completed' | 'crashed' | 'terminated_by_user' =
           info.reason === 'terminated' ? 'terminated_by_user' : info.reason;

@@ -6,7 +6,7 @@ import type { EventKindT } from '../event-types.js';
 export type WorkerStatus = WorkerStatusT;
 export type { WorkerRecord } from '../persistence.js';
 
-export type WorkerEventName = 'activity' | 'progress' | 'metadata' | 'exit' | 'error';
+export type WorkerEventName = 'activity' | 'progress' | 'metadata' | 'exit' | 'error' | 'log';
 
 export interface WorkerActivityInfo {
   detail?: string;
@@ -27,12 +27,21 @@ export interface WorkerErrorInfo {
   recoverable: boolean;
 }
 
+export interface WorkerLogInfo {
+  stream: 'stdout' | 'stderr';
+  line: string;
+  format?: 'stream-json' | 'raw';
+  event?: unknown;
+  truncated?: boolean;
+}
+
 export interface WorkerEventEmitter {
   on(event: 'activity', cb: (info: WorkerActivityInfo) => void): () => void;
   on(event: 'progress', cb: (info: WorkerProgressInfo) => void): () => void;
   on(event: 'metadata', cb: (info: WorkerMetadataInfo) => void): () => void;
   on(event: 'exit', cb: (info: WorkerExitInfo) => void): () => void;
   on(event: 'error', cb: (info: WorkerErrorInfo) => void): () => void;
+  on(event: 'log', cb: (info: WorkerLogInfo) => void): () => void;
 }
 
 export interface WorkerSpawnerContext {

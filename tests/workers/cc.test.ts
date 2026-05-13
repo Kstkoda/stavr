@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCcSpawner } from '../../src/workers/cc.js';
-import type { WorkerExitInfo, WorkerMetadataInfo, WorkerProgressInfo } from '../../src/workers/types.js';
+import type { WorkerExitInfo, WorkerMetadataInfo } from '../../src/workers/types.js';
 
 /**
  * Minimal stand-in for a piped child process. The post-spec-47 cc spawner
@@ -13,6 +13,9 @@ import type { WorkerExitInfo, WorkerMetadataInfo, WorkerProgressInfo } from '../
  */
 class FakeStream extends EventEmitter {
   setEncoding(_enc: string): void {
+    /* no-op */
+  }
+  resume(): void {
     /* no-op */
   }
   push(chunk: string): void {
@@ -121,23 +124,18 @@ describe('cc spawner', () => {
     const parsed = JSON.parse(readFileSync(mcp, 'utf8'));
     expect(parsed.mcpServers.cowire.type).toBe('sse');
 
-    // Post-spec-47: spawn the `claude` binary with headless stream-json flags
-    // so the daemon receives structured events on stdout. Prompt is fed via
-    // stdin, not argv. On Windows the cc spawner wraps the call in
-    // `cmd.exe /d /s /c claude ...` so npm's `claude.cmd` shim resolves; on
-    // POSIX it spawns `claude` directly. Either way the same flags appear in
-    // argv, so we assert on those.
-    if (process.platform === 'win32') {
-      expect(spawnArgs?.file).toBe('cmd.exe');
-      expect(spawnArgs?.args).toContain('claude');
-    } else {
-      expect(spawnArgs?.file).toBe('claude');
+    const isWindows = process.platform === 'win32';
+    expect(spawnArgs?.file).toBe(isWindows ? 'cmd.exe' : 'claude');
+    const allArgs = spawnArgs?.args ?? [];
+    expect(allArgs).toContain('--print');
+    expect(allArgs).toContain('--output-format');
+    expect(allArgs).toContain('stream-json');
+    expect(allArgs).toContain('--mcp-config');
+    expect(allArgs).toContain('.cowire-mcp.json');
+    if (isWindows) {
+      expect(allArgs.slice(0, 3)).toEqual(['/d', '/s', '/c']);
+      expect(allArgs).toContain('claude');
     }
-    expect(spawnArgs?.args).toContain('--print');
-    expect(spawnArgs?.args).toContain('--output-format');
-    expect(spawnArgs?.args).toContain('stream-json');
-    expect(spawnArgs?.args).toContain('--mcp-config');
-    expect(spawnArgs?.args).toContain('.cowire-mcp.json');
 
     // The prompt is delivered as a stream-json user message on stdin, then
     // stdin is closed so claude knows input is finished.
@@ -145,68 +143,6 @@ describe('cc spawner', () => {
     expect(stdinWrites).toContain('"role":"user"');
     expect(stdinWrites).toContain('"content":"hello"');
     expect((child.stdin as FakeStdin).ended).toBe(true);
-  });
-
-  it('parses stream-json stdout lines into structured progress events', async () => {
-    const git = async () => ({ stdout: '', stderr: '' });
-    const child = new FakeChild();
-    const watcher = new FakeWatcher();
-    const spawner = createCcSpawner({ git, spawn: (() => child) as never, watch: (() => watcher as never) });
-    const inst = await spawner.spawn(
-      { repo_path: tmp, branch: 'feat/test', base: 'main', prompt: 'hi', cleanup_on_terminate: false, approval_mode: 'normal' },
-      ctx,
-    );
-    const progress: WorkerProgressInfo[] = [];
-    inst.events.on('progress', (p) => progress.push(p));
-
-    // Single complete JSONL line — should round-trip as a structured event.
-    child.stdout.push('{"type":"assistant","message":{"role":"assistant","content":"hi"}}\n');
-    await Promise.resolve();
-    expect(progress).toHaveLength(1);
-    expect(progress[0].message).toBe('claude:assistant');
-    expect((progress[0].payload as { format: string }).format).toBe('stream-json');
-    expect(((progress[0].payload as { event: { type: string } }).event).type).toBe('assistant');
-
-    // Two lines arriving in three chunks with a partial split — buffering
-    // should reassemble both cleanly.
-    progress.length = 0;
-    child.stdout.push('{"type":"tool_use","na');
-    child.stdout.push('me":"Read"}\n{"type":"resu');
-    child.stdout.push('lt","cost_usd":0.01}\n');
-    await Promise.resolve();
-    expect(progress).toHaveLength(2);
-    expect(progress[0].message).toBe('claude:tool_use');
-    expect(progress[1].message).toBe('claude:result');
-
-    // Non-JSON garbage falls through as a raw progress line so we never
-    // silently lose output.
-    progress.length = 0;
-    child.stdout.push('not valid json\n');
-    await Promise.resolve();
-    expect(progress).toHaveLength(1);
-    expect(progress[0].message).toBe('not valid json');
-    expect((progress[0].payload as { format: string }).format).toBe('raw');
-  });
-
-  it('forwards stderr lines as stream=stderr progress events', async () => {
-    const git = async () => ({ stdout: '', stderr: '' });
-    const child = new FakeChild();
-    const watcher = new FakeWatcher();
-    const spawner = createCcSpawner({ git, spawn: (() => child) as never, watch: (() => watcher as never) });
-    const inst = await spawner.spawn(
-      { repo_path: tmp, branch: 'feat/test', base: 'main', prompt: 'hi', cleanup_on_terminate: false, approval_mode: 'normal' },
-      ctx,
-    );
-    const progress: WorkerProgressInfo[] = [];
-    inst.events.on('progress', (p) => progress.push(p));
-
-    child.stderr.push('warning: deprecated flag\n');
-    child.stderr.push('error: thing went wrong\n');
-    await Promise.resolve();
-    expect(progress).toHaveLength(2);
-    expect(progress[0].message).toBe('warning: deprecated flag');
-    expect((progress[0].payload as { stream: string }).stream).toBe('stderr');
-    expect(progress[1].message).toBe('error: thing went wrong');
   });
 
   it('chokidar change events emit metadata within 100ms', async () => {

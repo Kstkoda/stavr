@@ -4,6 +4,7 @@ import type {
   WorkerErrorInfo,
   WorkerEventEmitter,
   WorkerExitInfo,
+  WorkerLogInfo,
   WorkerMetadataInfo,
   WorkerProgressInfo,
 } from './types.js';
@@ -23,6 +24,7 @@ export class WorkerEventBus implements WorkerEventEmitter {
   on(event: 'metadata', cb: (info: WorkerMetadataInfo) => void): () => void;
   on(event: 'exit', cb: (info: WorkerExitInfo) => void): () => void;
   on(event: 'error', cb: (info: WorkerErrorInfo) => void): () => void;
+  on(event: 'log', cb: (info: WorkerLogInfo) => void): () => void;
   on(event: string, cb: (info: never) => void): () => void {
     const wrapped = cb as (...args: unknown[]) => void;
     this.bus.on(event, wrapped);
@@ -43,5 +45,8 @@ export class WorkerEventBus implements WorkerEventEmitter {
   }
   emitError(info: WorkerErrorInfo): void {
     this.bus.emit('error', info);
+  }
+  emitLog(info: WorkerLogInfo): void {
+    this.bus.emit('log', info);
   }
 }

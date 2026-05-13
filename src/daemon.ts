@@ -24,6 +24,7 @@ import {
   STARTER_NO_GO_LIST,
   type NoGoEntry,
 } from './trust/no-go-list.js';
+import { start as startWorkerWatchdog } from './workers/watchdog.js';
 
 export interface DaemonOptions {
   port: number;
@@ -249,6 +250,8 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
+  const workerWatchdog = startWorkerWatchdog(broker, store);
+
   let shuttingDown = false;
   const shutdown = async (sig: string) => {
     if (shuttingDown) return;
@@ -261,6 +264,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
         /* best effort */
       }
     }
+    workerWatchdog.stop();
     await transports.shutdown();
     removePidFile();
     process.exit(0);

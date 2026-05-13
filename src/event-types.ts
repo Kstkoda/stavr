@@ -24,6 +24,9 @@ export const EventKind = z.enum([
   'worker_dispatch_request',
   'worker_terminated',
   'worker_error',
+  // Worker visibility (spec 47)
+  'worker_log',
+  'worker_stuck',
   // Trust scopes (spec 46)
   'trust_scope_proposed',
   'trust_scope_granted',
@@ -450,6 +453,31 @@ export const StewardResumedPayload = z.object({
   override_budget: z.boolean(),
 });
 
+// Worker visibility payloads (spec 47)
+
+export const WorkerLogPayload = z.object({
+  worker_id: z.string(),
+  worker_name: z.string(),
+  stream: z.enum(['stdout', 'stderr']),
+  format: z.enum(['stream-json', 'raw']).optional(),
+  event: z.unknown().optional(),
+  line: z.string().optional(),
+  truncated: z.boolean().optional(),
+});
+
+export const WorkerStuckPayload = z.object({
+  worker_id: z.string(),
+  worker_name: z.string(),
+  worker_type: z.string(),
+  pid: z.number().int().optional(),
+  started_at: z.string(),
+  last_activity_at: z.string(),
+  idle_seconds: z.number().nonnegative(),
+  last_event_id: z.string().optional(),
+  last_event_kind: z.string().optional(),
+  hint: z.string(),
+});
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -493,29 +521,31 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     trust_scope_progress: TrustScopeProgressPayload,
     trust_scope_completed: TrustScopeCompletedPayload,
     trust_scope_action_authorized: TrustScopeActionAuthorizedPayload,
-    stale_pid_cleaned: StalePidCleanedPayload,
-    steward_claimed: StewardClaimedPayload,
-    steward_released: StewardReleasedPayload,
-    steward_handoff: StewardHandoffPayload,
-    steward_pulse: StewardPulsePayload,
     credential_added: CredentialAddedPayload,
-    credential_used: CredentialUsedPayload,
-    credential_revoked: CredentialRevokedPayload,
     credential_grant_added: CredentialGrantAddedPayload,
     credential_grant_revoked: CredentialGrantRevokedPayload,
+    credential_revoked: CredentialRevokedPayload,
     credential_unsafe_storage: CredentialUnsafeStoragePayload,
-    no_go_match: NoGoMatchPayload,
+    credential_used: CredentialUsedPayload,
     no_go_authorized: NoGoAuthorizedPayload,
     no_go_blocked: NoGoBlockedPayload,
+    no_go_match: NoGoMatchPayload,
+    stale_pid_cleaned: StalePidCleanedPayload,
+    steward_claimed: StewardClaimedPayload,
+    steward_handoff: StewardHandoffPayload,
+    steward_paused_for_budget: StewardPausedForBudgetPayload,
+    steward_prompt: StewardPromptPayload,
+    steward_pulse: StewardPulsePayload,
+    steward_released: StewardReleasedPayload,
+    steward_response: StewardResponsePayload,
+    steward_resumed: StewardResumedPayload,
     steward_started: StewardStartedPayload,
     steward_stopped: StewardStoppedPayload,
-    steward_prompt: StewardPromptPayload,
     steward_thinking: StewardThinkingPayload,
     steward_tool_call: StewardToolCallPayload,
-    steward_response: StewardResponsePayload,
     steward_usage: StewardUsagePayload,
-    steward_paused_for_budget: StewardPausedForBudgetPayload,
-    steward_resumed: StewardResumedPayload,
+    worker_log: WorkerLogPayload,
+    worker_stuck: WorkerStuckPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);

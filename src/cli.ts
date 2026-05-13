@@ -209,6 +209,54 @@ registerUsageCli(program);
 registerAskCli(program);
 
 program
+  .command('tail')
+  .description('Stream live events from the daemon, with optional replay and filtering.')
+  .option('-u, --url <url>', 'Daemon base URL', process.env.COWIRE_DAEMON_URL?.replace(/\/mcp\/sse.*$/, '') ?? 'http://127.0.0.1:7777')
+  .option('--since <duration>', 'Replay events from the last duration (e.g. 5m, 1h, 30s).')
+  .option('--since-id <id>', 'Replay events since this event ID.')
+  .option('--kind <kinds>', 'Comma-separated event kinds to show (e.g. worker_log,worker_stuck).')
+  .option('--worker <name>', 'Filter to events from a specific worker name.')
+  .option('--source-agent <name>', 'Filter to events from a specific source agent.')
+  .option('--no-color', 'Disable color output.')
+  .option('--json', 'Output raw JSON instead of formatted text.')
+  .action(async (opts: {
+    url: string;
+    since?: string;
+    sinceId?: string;
+    kind?: string;
+    worker?: string;
+    sourceAgent?: string;
+    color: boolean;
+    json?: boolean;
+  }) => {
+    const { runTail } = await import('./tail.js');
+    const ac = new AbortController();
+    process.on('SIGINT', () => ac.abort());
+    process.on('SIGTERM', () => ac.abort());
+    try {
+      await runTail(
+        {
+          url: opts.url,
+          since: opts.since,
+          sinceId: opts.sinceId,
+          kinds: opts.kind ? opts.kind.split(',') : undefined,
+          worker: opts.worker,
+          sourceAgent: opts.sourceAgent,
+          noColor: !opts.color,
+          json: opts.json,
+          signal: ac.signal,
+        },
+        (line) => console.log(line),
+      );
+    } catch (err) {
+      if (!ac.signal.aborted) {
+        console.error(`[cowire] tail: ${(err as Error).message}`);
+        process.exit(1);
+      }
+    }
+  });
+
+program
   .command('shim')
   .description('Stdio↔SSE proxy: speak stdio to an MCP client, SSE to the Switch daemon.')
   .option(

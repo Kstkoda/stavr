@@ -319,6 +319,7 @@ export class EventStore {
 
   getEvents(filter: {
     sinceEventId?: string;
+    sinceAt?: string;
     kinds?: string[];
     sourceAgent?: string;
     tenantId?: string;
@@ -334,6 +335,10 @@ export class EventStore {
       const seq = row?.seq ?? 0;
       where.push(`seq > ?`);
       params.push(seq);
+    }
+    if (filter.sinceAt) {
+      where.push(`at >= ?`);
+      params.push(filter.sinceAt);
     }
     if (filter.kinds && filter.kinds.length > 0 && !filter.kinds.includes('*')) {
       where.push(`kind IN (${filter.kinds.map(() => '?').join(',')})`);
@@ -674,6 +679,31 @@ export class EventStore {
       .prepare(`UPDATE workers SET status = ?, pid = COALESCE(?, pid), last_activity_at = ? WHERE id = ?`)
       .run(status, pid ?? null, last, id);
     return { ...existing, status, pid: pid ?? existing.pid, last_activity_at: last };
+  }
+
+  listWorkersForWatchdog(): Array<{
+    id: string;
+    name: string;
+    type: string;
+    pid: number | null;
+    started_at: string;
+    last_activity_at: string | null;
+    status: string;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT id, name, type, pid, started_at, last_activity_at, status
+         FROM workers WHERE status IN ('running', 'idle')`,
+      )
+      .all() as Array<{
+        id: string;
+        name: string;
+        type: string;
+        pid: number | null;
+        started_at: string;
+        last_activity_at: string | null;
+        status: string;
+      }>;
   }
 
   nameIsAvailable(name: string): boolean {
