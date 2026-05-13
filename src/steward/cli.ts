@@ -7,13 +7,15 @@ import {
   StewardAlreadyClaimedError,
   StewardTokenInvalidError,
 } from './types.js';
+import { restartDaemon } from '../daemon.js';
+import { loadStewardConfig } from './config.js';
 
 /**
- * `cowire steward` CLI commands.
+ * `cowire steward` CLI commands (spec 48 Layer 1).
  *
  * Direct DB access (matches the pattern used by `cowire status` / `cowire events`).
  * For the chat-surface claim flow, callers use `mcp__cowire__steward_claim` instead;
- * this CLI is the User's authoritative path for token minting, force-release, and
+ * this CLI is the User\'s authoritative path for token minting, force-release, and
  * audit visibility.
  */
 export function registerStewardCli(program: Command, defaultDbPath: () => string): void {
@@ -161,5 +163,53 @@ export function registerStewardCli(program: Command, defaultDbPath: () => string
       } finally {
         store.close();
       }
+    });
+}
+
+/**
+ * Spec 49 Layer 1 — `cowire daemon-steward` CLI surface for the daemon-hosted Steward subprocess.
+ *
+ * Note: registered under `daemon-steward` (not `steward`) to avoid a Commander.js name
+ * collision with the spec-48 Layer 1 commands above. v1 only ships `restart` and
+ * `daemon-status` (best-effort, reading the config + daemon state). A future
+ * follow-up will fold these subcommands into a unified `steward` namespace.
+ */
+export function registerDaemonStewardCli(program: Command): void {
+  const steward = program.command('daemon-steward').description('Manage the daemon-hosted Steward subprocess (spec 49).');
+
+  steward
+    .command('restart')
+    .description('Restart the daemon, which respawns the Steward subprocess from steward-config.yaml.')
+    .action(async () => {
+      try {
+        const result = await restartDaemon();
+        console.log(JSON.stringify({ ok: true, ...result }, null, 2));
+      } catch (err) {
+        console.error(`[cowire] daemon-steward restart failed: ${(err as Error).message}`);
+        process.exit(1);
+      }
+    });
+
+  steward
+    .command('status')
+    .description('Show the steward-config.yaml resolution and whether the Steward subprocess should be running.')
+    .action(() => {
+      const cfg = loadStewardConfig();
+      console.log(
+        JSON.stringify(
+          {
+            config_path: cfg.path,
+            enabled: cfg.config?.steward.enabled ?? false,
+            provider: cfg.config?.steward.provider,
+            model: cfg.config?.steward.model,
+            display_name: cfg.config?.steward.display_name,
+            credential_id: cfg.config?.steward.credential_id,
+            daily_budget_usd: cfg.config?.steward.budget.daily_usd,
+            error: cfg.error,
+          },
+          null,
+          2,
+        ),
+      );
     });
 }

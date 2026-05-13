@@ -13,6 +13,11 @@ import { STEWARD_MEMORY_ROOT } from './steward/tools.js';
 import { loadMasterKey } from './credentials/vault.js';
 import { CredentialStore } from './credentials/store.js';
 import { setCredentialStore } from './server.js';
+import { loadStewardConfig } from './steward/config.js';
+import { makeAnthropicProvider } from './steward/providers/anthropic.js';
+import { makeClaudeCodeProvider } from './steward/providers/claude-code.js';
+import { startStewardLoop, type RunningLoop } from './steward/loop.js';
+import type { StewardProvider } from './steward/providers/types.js';
 
 export interface DaemonOptions {
   port: number;
@@ -202,11 +207,51 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
 
   installCrashHandler(store);
 
+  // Spec 49 Layer 1: daemon-hosted Steward. Spawns only if
+  // ~/.cowire/steward-config.yaml exists AND `steward.enabled: true`.
+  let stewardLoop: RunningLoop | undefined;
+  try {
+    const cfgResult = loadStewardConfig();
+    if (cfgResult.config?.steward.enabled) {
+      const provider = makeProviderFromConfig(cfgResult.config);
+      stewardLoop = await startStewardLoop({
+        broker,
+        provider,
+        config: cfgResult.config,
+        toolDispatcher: async (_tool, _args) => {
+          // v1: in-process tool dispatcher is a no-op placeholder. The
+          // tool surface gets wired in spec 49 Layer 2 (operator channels).
+          return undefined;
+        },
+      });
+      logger.info('steward subprocess started', {
+        provider: cfgResult.config.steward.provider,
+        model: cfgResult.config.steward.model,
+      });
+    } else if (cfgResult.error) {
+      logger.warn('steward-config.yaml present but invalid; steward disabled', {
+        path: cfgResult.path,
+        error: cfgResult.error,
+      });
+    }
+  } catch (err) {
+    logger.error('failed to start steward; daemon continues without it', {
+      error: (err as Error).message,
+    });
+  }
+
   let shuttingDown = false;
   const shutdown = async (sig: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info('shutting down', { signal: sig });
+    if (stewardLoop) {
+      try {
+        await stewardLoop.stop('shutdown');
+      } catch {
+        /* best effort */
+      }
+    }
     await transports.shutdown();
     removePidFile();
     process.exit(0);
@@ -368,6 +413,16 @@ export async function restartDaemon(): Promise<{ pid: number; port: number; db: 
 
 export function getDefaultDbPath(): string {
   return defaultDbPath();
+}
+
+function makeProviderFromConfig(config: {
+  steward: { provider: 'anthropic' | 'claude-code'; model: string };
+}): StewardProvider {
+  if (config.steward.provider === 'anthropic') {
+    const apiKey = process.env.ANTHROPIC_API_KEY ?? '';
+    return makeAnthropicProvider({ apiKey, model: config.steward.model });
+  }
+  return makeClaudeCodeProvider({ model: config.steward.model });
 }
 
 /**

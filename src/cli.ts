@@ -17,7 +17,7 @@ import {
   uninstallWatchdog,
   watchdogStatus,
 } from './watchdog-install.js';
-import { registerStewardCli } from './steward/cli.js';
+import { registerStewardCli, registerDaemonStewardCli } from './steward/cli.js';
 import { registerCredentialsCli } from './credentials/cli.js';
 
 const program = new Command();
@@ -202,6 +202,7 @@ daemon
 
 registerStewardCli(program, defaultDbPath);
 registerCredentialsCli(program, defaultDbPath);
+registerDaemonStewardCli(program);
 
 program
   .command('shim')

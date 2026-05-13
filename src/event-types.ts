@@ -46,6 +46,16 @@ export const EventKind = z.enum([
   'credential_grant_added',
   'credential_grant_revoked',
   'credential_unsafe_storage',
+  // Spec 49 Layer 1 — daemon-hosted Steward
+  'steward_started',
+  'steward_stopped',
+  'steward_prompt',
+  'steward_thinking',
+  'steward_tool_call',
+  'steward_response',
+  'steward_usage',
+  'steward_paused_for_budget',
+  'steward_resumed',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -357,6 +367,60 @@ export const CredentialUnsafeStoragePayload = z.object({
   fallback_path: z.string(),
 });
 
+// Spec 49 Layer 1 — daemon-hosted Steward payloads.
+
+export const StewardStartedPayload = z.object({
+  provider: z.string(),
+  model: z.string(),
+  display_name: z.string(),
+  pid: z.number().int().optional(),
+});
+
+export const StewardStoppedPayload = z.object({
+  reason: z.enum(['shutdown', 'crashed', 'budget_paused']),
+  detail: z.string().optional(),
+});
+
+export const StewardPromptPayload = z.object({
+  text: z.string(),
+  source: z.enum(['cli', 'dashboard', 'mcp', 'scheduled']).optional(),
+});
+
+export const StewardThinkingPayload = z.object({
+  text: z.string().optional(),
+});
+
+export const StewardToolCallPayload = z.object({
+  tool: z.string(),
+  args: z.unknown(),
+  call_id: z.string().optional(),
+});
+
+export const StewardResponsePayload = z.object({
+  text: z.string(),
+});
+
+export const StewardUsagePayload = z.object({
+  provider: z.string(),
+  model: z.string(),
+  input_tokens: z.number().int().nonnegative(),
+  output_tokens: z.number().int().nonnegative(),
+  cache_read_tokens: z.number().int().nonnegative().optional(),
+  cache_creation_tokens: z.number().int().nonnegative().optional(),
+  cost_usd: z.number().nonnegative().optional(),
+  credential_id: z.string().optional(),
+});
+
+export const StewardPausedForBudgetPayload = z.object({
+  period: z.enum(['daily', 'weekly']),
+  budget_usd: z.number().nonnegative(),
+  spent_usd: z.number().nonnegative(),
+});
+
+export const StewardResumedPayload = z.object({
+  override_budget: z.boolean(),
+});
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -411,6 +475,15 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     credential_grant_added: CredentialGrantAddedPayload,
     credential_grant_revoked: CredentialGrantRevokedPayload,
     credential_unsafe_storage: CredentialUnsafeStoragePayload,
+    steward_started: StewardStartedPayload,
+    steward_stopped: StewardStoppedPayload,
+    steward_prompt: StewardPromptPayload,
+    steward_thinking: StewardThinkingPayload,
+    steward_tool_call: StewardToolCallPayload,
+    steward_response: StewardResponsePayload,
+    steward_usage: StewardUsagePayload,
+    steward_paused_for_budget: StewardPausedForBudgetPayload,
+    steward_resumed: StewardResumedPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);
