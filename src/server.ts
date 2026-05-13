@@ -21,6 +21,7 @@ import { StewardStore } from './steward/store.js';
 import { registerStewardTools } from './steward/tools.js';
 import { CredentialStore } from './credentials/store.js';
 import { registerCredentialTools } from './credentials/tools.js';
+import { registerStewardAskTool } from './steward-ask-tool.js';
 
 export interface SwitchServerHandle {
   server: McpServer;
@@ -101,6 +102,7 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   if (credentialStore) {
     registerCredentialTools(server, broker, credentialStore);
   }
+  registerStewardAskTool(server, broker);
   return { server, sessionId, orchestrator };
 }
 

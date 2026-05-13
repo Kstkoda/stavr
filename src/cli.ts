@@ -20,6 +20,7 @@ import {
 import { registerStewardCli, registerDaemonStewardCli } from './steward/cli.js';
 import { registerCredentialsCli } from './credentials/cli.js';
 import { registerUsageCli } from './usage-cli.js';
+import { registerAskCli } from './steward-ask-cli.js';
 
 const program = new Command();
 program
@@ -205,6 +206,7 @@ registerStewardCli(program, defaultDbPath);
 registerCredentialsCli(program, defaultDbPath);
 registerDaemonStewardCli(program);
 registerUsageCli(program);
+registerAskCli(program);
 
 program
   .command('shim')

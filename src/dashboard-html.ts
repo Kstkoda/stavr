@@ -635,6 +635,128 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
   setInterval(refreshDecisions, 2000);
 })();
 </script>
+
+<!-- Spec 49 Layer 2 — Steward chat panel (right rail).
+     Posts steward_prompt events; subscribes to per-correlation_id SSE for
+     thinking/tool_call/response/usage events. Renders distinct styling per
+     event kind so the User can follow the Steward's run live. -->
+<style>
+  .steward-panel {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    width: 360px;
+    max-height: 70vh;
+    background: var(--bg-2, #1a1d24);
+    border: 1px solid var(--accent, #4ade80);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+    font: 12px/1.5 -apple-system, system-ui, sans-serif;
+    color: var(--fg, #e5e7eb);
+    z-index: 50;
+  }
+  .steward-panel header { padding: 6px 10px; border-bottom: 1px solid #3a3f4a; display: flex; justify-content: space-between; align-items: center; }
+  .steward-panel header strong { color: var(--accent, #4ade80); }
+  .steward-panel header button { background: transparent; border: 0; color: var(--fg-2, #9ca3af); cursor: pointer; }
+  .steward-log { flex: 1; overflow-y: auto; padding: 8px 10px; min-height: 200px; }
+  .steward-log .msg { margin-bottom: 8px; }
+  .steward-log .msg .label { display: inline-block; min-width: 64px; color: var(--fg-2, #9ca3af); }
+  .steward-log .msg.user .label { color: #60a5fa; }
+  .steward-log .msg.thinking .label { color: #fbbf24; }
+  .steward-log .msg.tool .label { color: #f472b6; }
+  .steward-log .msg.response .label { color: #4ade80; }
+  .steward-log .msg.usage .label { color: #9ca3af; }
+  .steward-input { display: flex; gap: 6px; padding: 6px; border-top: 1px solid #3a3f4a; }
+  .steward-input input { flex: 1; background: #0f1115; color: var(--fg, #e5e7eb); border: 1px solid #3a3f4a; border-radius: 4px; padding: 5px 8px; font: inherit; }
+  .steward-input button { background: var(--accent, #4ade80); border: 0; color: #0f1115; font-weight: bold; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+  .steward-collapsed .steward-log, .steward-collapsed .steward-input { display: none; }
+</style>
+
+<aside class="steward-panel" id="steward-panel" aria-label="Steward chat">
+  <header>
+    <strong>Steward</strong>
+    <button id="steward-toggle" aria-label="Toggle">_</button>
+  </header>
+  <div class="steward-log" id="steward-log"></div>
+  <form class="steward-input" id="steward-form">
+    <input type="text" id="steward-input" placeholder="Ask the Steward…" autocomplete="off">
+    <button type="submit">Send</button>
+  </form>
+</aside>
+
+<script>
+(function() {
+  const log = document.getElementById('steward-log');
+  const form = document.getElementById('steward-form');
+  const input = document.getElementById('steward-input');
+  const panel = document.getElementById('steward-panel');
+  const toggle = document.getElementById('steward-toggle');
+  let activeEs = null;
+
+  function appendMsg(kind, label, body) {
+    const row = document.createElement('div');
+    row.className = 'msg ' + kind;
+    const lbl = document.createElement('span');
+    lbl.className = 'label';
+    lbl.textContent = label;
+    const txt = document.createElement('span');
+    txt.textContent = ' ' + body;
+    row.appendChild(lbl);
+    row.appendChild(txt);
+    log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  toggle?.addEventListener('click', () => {
+    panel.classList.toggle('steward-collapsed');
+  });
+
+  form?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const text = (input.value || '').trim();
+    if (!text) return;
+    input.value = '';
+    appendMsg('user', 'you', text);
+    let body;
+    try {
+      const res = await fetch('/dashboard/steward/prompt', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      body = await res.json();
+    } catch (err) {
+      appendMsg('thinking', 'error', String(err));
+      return;
+    }
+    if (!body.ok) {
+      appendMsg('thinking', 'error', body.error || 'unknown error');
+      return;
+    }
+    const cid = body.correlation_id;
+    if (activeEs) { try { activeEs.close(); } catch (e) {} }
+    activeEs = new EventSource('/dashboard/steward/responses?correlation_id=' + encodeURIComponent(cid));
+    activeEs.addEventListener('steward_thinking', (e) => {
+      try { const ev = JSON.parse(e.data); appendMsg('thinking', 'thinking', (ev.payload && ev.payload.text) || '…'); } catch (err) {}
+    });
+    activeEs.addEventListener('steward_tool_call', (e) => {
+      try { const ev = JSON.parse(e.data); appendMsg('tool', 'tool', (ev.payload && ev.payload.tool) || '?'); } catch (err) {}
+    });
+    activeEs.addEventListener('steward_response', (e) => {
+      try { const ev = JSON.parse(e.data); appendMsg('response', 'steward', (ev.payload && ev.payload.text) || ''); } catch (err) {}
+    });
+    activeEs.addEventListener('steward_usage', (e) => {
+      try {
+        const ev = JSON.parse(e.data);
+        const p = ev.payload || {};
+        appendMsg('usage', 'usage', '$' + ((p.cost_usd || 0).toFixed(4)) + ' (in=' + (p.input_tokens||0) + ', out=' + (p.output_tokens||0) + ')');
+      } catch (err) {}
+    });
+  });
+})();
+</script>
 </body>
 </html>
 `;

@@ -401,6 +401,74 @@ export function mountDashboardRoutes(
     });
   });
 
+  // Spec 49 Layer 2 — operator input channel for the dashboard chat panel.
+  // POST publishes a steward_prompt event with a fresh correlation_id and
+  // returns 202 + correlation_id. The chat panel then opens an SSE on
+  // /dashboard/steward/responses?correlation_id=<id> to render live thinking,
+  // tool_call, response, and usage events for that correlation.
+  app.post('/dashboard/steward/prompt', async (req, res) => {
+    const text = typeof req.body?.text === 'string' ? req.body.text : '';
+    if (!text.trim()) {
+      res.status(400).json({ ok: false, error: 'text required' });
+      return;
+    }
+    const correlation_id = `prompt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      await broker.publish({
+        kind: 'steward_prompt',
+        at: new Date().toISOString(),
+        correlation_id,
+        source_agent: 'dashboard',
+        payload: { text, source: 'dashboard' },
+      });
+      res.status(202).json({ ok: true, correlation_id });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  app.get('/dashboard/steward/responses', (req: Request, res: Response) => {
+    const correlationId = String(req.query.correlation_id ?? '');
+    res.setHeader('content-type', 'text/event-stream');
+    res.setHeader('cache-control', 'no-cache, no-transform');
+    res.setHeader('connection', 'keep-alive');
+    res.setHeader('x-accel-buffering', 'no');
+    res.flushHeaders?.();
+    const targetKinds = new Set([
+      'steward_thinking',
+      'steward_tool_call',
+      'steward_response',
+      'steward_usage',
+    ]);
+    const write = (kind: string, data: unknown) => {
+      try {
+        res.write(`event: ${kind}\ndata: ${JSON.stringify(data)}\n\n`);
+      } catch {
+        /* socket closing */
+      }
+    };
+    write('ping', { at: new Date().toISOString(), correlation_id: correlationId });
+    const keepalive = setInterval(
+      () => write('ping', { at: new Date().toISOString(), correlation_id: correlationId }),
+      25_000,
+    );
+    const dispose = broker.onEvent((ev) => {
+      if (!targetKinds.has(ev.kind)) return;
+      if (correlationId && ev.correlation_id !== correlationId) return;
+      write(ev.kind, ev);
+    });
+    const onClose = () => {
+      clearInterval(keepalive);
+      dispose();
+      try {
+        res.end();
+      } catch {
+        /* already gone */
+      }
+    };
+    res.on('close', onClose);
+  });
+
   // Live SSE tail for the browser. Distinct from /mcp/sse: this is plain
   // text/event-stream with raw event JSON; no MCP handshake required. Lives
   // and dies entirely on the broker's onEvent tap.
