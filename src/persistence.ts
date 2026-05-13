@@ -241,6 +241,42 @@ export class EventStore {
         redeemed_at   TEXT,
         redeemed_by   TEXT
       );
+
+      -- Spec 48 Layer 2: encrypted credentials vault.
+      -- AES-256-GCM-encrypted plaintext lives in encrypted_blob; key never
+      -- appears in the DB (OS keychain or ~/.cowire/master.key fallback).
+      CREATE TABLE IF NOT EXISTS credentials (
+        id                              TEXT PRIMARY KEY,
+        user_id                         TEXT NOT NULL,
+        service                         TEXT NOT NULL,
+        kind                            TEXT NOT NULL,
+        encrypted_blob                  BLOB,
+        oauth_scopes                    TEXT,
+        oauth_refresh_token_encrypted   BLOB,
+        expires_at                      TEXT,
+        created_at                      TEXT NOT NULL,
+        last_used_at                    TEXT,
+        revoked_at                      TEXT,
+        metadata_json                   TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_credentials_service
+        ON credentials(service) WHERE revoked_at IS NULL;
+
+      -- Grants tie a credential to a specific Steward session. A credential
+      -- without an active grant is unusable to the Steward (mcp__cowire__credential_use
+      -- returns CREDENTIAL_NOT_GRANTED).
+      CREATE TABLE IF NOT EXISTS credential_grants (
+        id                  TEXT PRIMARY KEY,
+        credential_id       TEXT NOT NULL,
+        steward_session_id  TEXT,
+        granted_at          TEXT NOT NULL,
+        revoked_at          TEXT,
+        granted_by_user_id  TEXT NOT NULL,
+        uses_remaining      INTEGER,
+        expires_at          TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_credential_grants_active
+        ON credential_grants(credential_id) WHERE revoked_at IS NULL;
     `);
   }
 

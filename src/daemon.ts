@@ -10,6 +10,9 @@ import { mountTransports, type MountedTransports } from './transports.js';
 import { defaultDbPath } from './paths.js';
 import { getLogger } from './log.js';
 import { STEWARD_MEMORY_ROOT } from './steward/tools.js';
+import { loadMasterKey } from './credentials/vault.js';
+import { CredentialStore } from './credentials/store.js';
+import { setCredentialStore } from './server.js';
 
 export interface DaemonOptions {
   port: number;
@@ -130,6 +133,36 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
   // subdirs created at claim time have a stable parent. Contents are opaque
   // to the daemon — Stewards own their working memory format.
   mkdirSync(STEWARD_MEMORY_ROOT, { recursive: true });
+
+  // Spec 48 Layer 2: load the master key once on boot. Required before any
+  // credential_use call can decrypt a stored secret. If the OS keychain isn't
+  // available we fall back to ~/.cowire/master.key and emit credential_unsafe_storage.
+  try {
+    const keyResult = await loadMasterKey();
+    setCredentialStore(broker, new CredentialStore(store, keyResult.key));
+    if (keyResult.unsafeStorageReason) {
+      try {
+        await broker.publish({
+          kind: 'credential_unsafe_storage',
+          at: new Date().toISOString(),
+          source_agent: 'cowire-daemon',
+          payload: {
+            reason: keyResult.unsafeStorageReason,
+            fallback_path: 'master-key-file',
+          },
+        });
+      } catch (err) {
+        getLogger().error('failed to emit credential_unsafe_storage', {
+          error: (err as Error).message,
+        });
+      }
+    }
+  } catch (err) {
+    getLogger().error('credential vault key load failed; credential tools disabled', {
+      error: (err as Error).message,
+    });
+  }
+
 
   // If we just had to quarantine a corrupt DB, surface the event so subscribers
   // (dashboard, oncall) see it. Best-effort; the daemon must come up either way.

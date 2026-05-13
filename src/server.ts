@@ -19,6 +19,8 @@ import { registerTrustScopeTools } from './trust/tools.js';
 import { initTrustReporter } from './trust/reporter.js';
 import { StewardStore } from './steward/store.js';
 import { registerStewardTools } from './steward/tools.js';
+import { CredentialStore } from './credentials/store.js';
+import { registerCredentialTools } from './credentials/tools.js';
 
 export interface SwitchServerHandle {
   server: McpServer;
@@ -35,6 +37,7 @@ export interface SwitchServerHandle {
 const orchestratorsByBroker = new WeakMap<Broker, WorkerOrchestrator>();
 const trustStoresByBroker = new WeakMap<Broker, TrustStore>();
 const stewardStoresByBroker = new WeakMap<Broker, StewardStore>();
+const credentialStoresByBroker = new WeakMap<Broker, CredentialStore>();
 
 function getOrCreateOrchestrator(broker: Broker, trustStore: TrustStore): WorkerOrchestrator {
   const existing = orchestratorsByBroker.get(broker);
@@ -62,6 +65,19 @@ export function getOrCreateStewardStore(broker: Broker): StewardStore {
   return s;
 }
 
+/**
+ * Externally-initialized credential store. The daemon calls this once on
+ * boot (after loading the master key). When unset, credential tools are
+ * silently skipped — keeps tests and stdio-only mode working without a key.
+ */
+export function setCredentialStore(broker: Broker, store: CredentialStore): void {
+  credentialStoresByBroker.set(broker, store);
+}
+
+export function getCredentialStore(broker: Broker): CredentialStore | undefined {
+  return credentialStoresByBroker.get(broker);
+}
+
 export function createSwitchServer(broker: Broker): SwitchServerHandle {
   const sessionId = newSessionId();
   const server = new McpServer({ name: 'cowire-switch', version: '0.1.0' });
@@ -81,6 +97,10 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   registerWorkerTools(server, orchestrator);
   registerTrustScopeTools(server, broker, trustStore);
   registerStewardTools(server, broker, stewardStore, trustStore);
+  const credentialStore = credentialStoresByBroker.get(broker);
+  if (credentialStore) {
+    registerCredentialTools(server, broker, credentialStore);
+  }
   return { server, sessionId, orchestrator };
 }
 

@@ -39,6 +39,13 @@ export const EventKind = z.enum([
   'steward_released',
   'steward_handoff',
   'steward_pulse',
+  // Spec 48 Layer 2 — Credential vault
+  'credential_added',
+  'credential_used',
+  'credential_revoked',
+  'credential_grant_added',
+  'credential_grant_revoked',
+  'credential_unsafe_storage',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -303,6 +310,53 @@ export const StewardPulsePayload = z.object({
   detail: z.string().optional(),
 });
 
+// Spec 48 Layer 2 — Credential vault payloads.
+
+export const CredentialAddedPayload = z.object({
+  credential_id: z.string(),
+  service: z.string(),
+  kind: z.enum(['oauth', 'api_key', 'local_ref']),
+  user_id: z.string(),
+  expires_at: z.string().optional(),
+  oauth_scopes: z.array(z.string()).optional(),
+});
+
+export const CredentialUsedPayload = z.object({
+  credential_id: z.string(),
+  service: z.string(),
+  request_signature: z.string(),
+  status: z.enum(['success', 'error']),
+  steward_session_id: z.string().optional(),
+  duration_ms: z.number().nonnegative().optional(),
+  error_message: z.string().optional(),
+});
+
+export const CredentialRevokedPayload = z.object({
+  credential_id: z.string(),
+  service: z.string(),
+  revoked_by: z.string(),
+});
+
+export const CredentialGrantAddedPayload = z.object({
+  grant_id: z.string(),
+  credential_id: z.string(),
+  steward_session_id: z.string().optional(),
+  granted_by_user_id: z.string(),
+  uses_remaining: z.number().int().positive().optional(),
+  expires_at: z.string().optional(),
+});
+
+export const CredentialGrantRevokedPayload = z.object({
+  grant_id: z.string(),
+  credential_id: z.string(),
+  revoked_by: z.string(),
+});
+
+export const CredentialUnsafeStoragePayload = z.object({
+  reason: z.string(),
+  fallback_path: z.string(),
+});
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -351,6 +405,12 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     steward_released: StewardReleasedPayload,
     steward_handoff: StewardHandoffPayload,
     steward_pulse: StewardPulsePayload,
+    credential_added: CredentialAddedPayload,
+    credential_used: CredentialUsedPayload,
+    credential_revoked: CredentialRevokedPayload,
+    credential_grant_added: CredentialGrantAddedPayload,
+    credential_grant_revoked: CredentialGrantRevokedPayload,
+    credential_unsafe_storage: CredentialUnsafeStoragePayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);

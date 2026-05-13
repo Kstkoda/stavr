@@ -18,6 +18,7 @@ import {
   watchdogStatus,
 } from './watchdog-install.js';
 import { registerStewardCli } from './steward/cli.js';
+import { registerCredentialsCli } from './credentials/cli.js';
 
 const program = new Command();
 program
@@ -200,6 +201,7 @@ daemon
   });
 
 registerStewardCli(program, defaultDbPath);
+registerCredentialsCli(program, defaultDbPath);
 
 program
   .command('shim')
