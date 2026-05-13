@@ -8,6 +8,7 @@ import { startupDecisionSweep } from './tools/decisions.js';
 import { getLogger } from './log.js';
 import { DASHBOARD_HTML } from './dashboard-html.js';
 import type { StoredEvent } from './persistence.js';
+import { computeUsage, fetchAnthropicBalance, type ComputeUsageOpts } from './usage.js';
 
 /**
  * Transport modes:
@@ -108,6 +109,28 @@ export async function mountTransports(
         sse_sessions: sseSessions.size,
         pending_decisions: broker.store.pendingDecisionCount(),
       });
+    });
+
+    // Spec 50 Layer 1 — usage endpoint. Same auth posture as /dashboard/*
+    // (127.0.0.1 only via the binding, no auth header).
+    app.get('/usage', async (req, res) => {
+      try {
+        const windowParam = (req.query.window as string | undefined) ?? '24h';
+        const granularityParam = (req.query.granularity as string | undefined) ?? 'hour';
+        const allowedWindow = ['1h', '6h', '24h', '7d'] as const;
+        const allowedGran = ['minute', 'hour', 'day'] as const;
+        const window = (allowedWindow as readonly string[]).includes(windowParam)
+          ? (windowParam as ComputeUsageOpts['window'])
+          : '24h';
+        const granularity = (allowedGran as readonly string[]).includes(granularityParam)
+          ? (granularityParam as ComputeUsageOpts['granularity'])
+          : 'hour';
+        const apiBalance = await fetchAnthropicBalance();
+        const usage = computeUsage(broker.store, { window, granularity, apiBalance });
+        res.json(usage);
+      } catch (err) {
+        res.status(500).json({ ok: false, error: (err as Error).message });
+      }
     });
 
     app.get('/mcp/sse', async (_req: Request, res: Response) => {
