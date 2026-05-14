@@ -8,13 +8,13 @@ import { loadMasterKey } from './vault.js';
 import { CredentialStore } from './store.js';
 
 /**
- * Spec 48 Layer 2 — `cowire connect <service>` + `cowire credentials list/revoke`.
+ * Spec 48 Layer 2 — `stavr connect <service>` + `stavr credentials list/revoke`.
  *
- * `cowire connect github` runs the OAuth code-flow against a registered GitHub
- * App. The User must supply COWIRE_GITHUB_CLIENT_ID and COWIRE_GITHUB_CLIENT_SECRET
+ * `stavr connect github` runs the OAuth code-flow against a registered GitHub
+ * App. The User must supply STAVR_GITHUB_CLIENT_ID and STAVR_GITHUB_CLIENT_SECRET
  * (App ownership is the User's responsibility). We never ship public secrets.
  *
- * `cowire connect anthropic --key sk-ant-...` is the API-key path: no OAuth
+ * `stavr connect anthropic --key sk-ant-...` is the API-key path: no OAuth
  * dance, the key goes straight to the vault. Never echoed back; reads from
  * argv to be a stable interface (stdin-only would complicate scripted setup).
  */
@@ -23,14 +23,14 @@ export function registerCredentialsCli(program: Command, defaultDbPath: () => st
 
   connect
     .command('github')
-    .description('Connect a GitHub App via OAuth code flow. Requires COWIRE_GITHUB_CLIENT_ID + COWIRE_GITHUB_CLIENT_SECRET in env.')
+    .description('Connect a GitHub App via OAuth code flow. Requires STAVR_GITHUB_CLIENT_ID + STAVR_GITHUB_CLIENT_SECRET in env.')
     .option('--user-id <id>', 'User identifier', 'default-user')
     .option('--scopes <s>', 'Comma-separated OAuth scopes', 'repo,read:user')
     .option('--db <path>', 'SQLite path', defaultDbPath())
     .option('--no-open', 'Print the auth URL but don\'t open the browser.')
     .action(async (opts: { userId: string; scopes: string; db: string; open: boolean }) => {
-      const clientId = process.env.COWIRE_GITHUB_CLIENT_ID;
-      const clientSecret = process.env.COWIRE_GITHUB_CLIENT_SECRET;
+      const clientId = process.env.STAVR_GITHUB_CLIENT_ID;
+      const clientSecret = process.env.STAVR_GITHUB_CLIENT_SECRET;
       if (!clientId || !clientSecret) {
         console.error(
           JSON.stringify(
@@ -38,7 +38,7 @@ export function registerCredentialsCli(program: Command, defaultDbPath: () => st
               ok: false,
               code: 'GH_OAUTH_NOT_CONFIGURED',
               message:
-                'COWIRE_GITHUB_CLIENT_ID + COWIRE_GITHUB_CLIENT_SECRET must be set. Register a GitHub App at https://github.com/settings/apps and add a callback to http://127.0.0.1/oauth/callback (cowire binds to an ephemeral port at runtime; configure the redirect URI in your App to allow 127.0.0.1).',
+                'STAVR_GITHUB_CLIENT_ID + STAVR_GITHUB_CLIENT_SECRET must be set. Register a GitHub App at https://github.com/settings/apps and add a callback to http://127.0.0.1/oauth/callback (stavr binds to an ephemeral port at runtime; configure the redirect URI in your App to allow 127.0.0.1).',
             },
             null,
             2,
@@ -252,7 +252,7 @@ function captureOAuthCode(expectedState: string, onListening: (port: number) => 
       }
       res.statusCode = 200;
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.end('<html><body><h2>Cowire connected. You can close this tab.</h2></body></html>');
+      res.end('<html><body><h2>Stavr connected. You can close this tab.</h2></body></html>');
       resolve(code);
       server.close();
     });

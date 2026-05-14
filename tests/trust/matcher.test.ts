@@ -27,13 +27,13 @@ describe('trust matcher', () => {
   it('exact-value constraint requires deep equality', () => {
     const m = { tool: 'github.create_issue', param_constraints: { repo: 'Kstkoda/privacy-tracker' } };
     expect(matchesOne(m, 'github.create_issue', { repo: 'Kstkoda/privacy-tracker', title: 'x' })).toBe(true);
-    expect(matchesOne(m, 'github.create_issue', { repo: 'Kstkoda/cowire', title: 'x' })).toBe(false);
+    expect(matchesOne(m, 'github.create_issue', { repo: 'stenlund/stavr', title: 'x' })).toBe(false);
   });
 
   it('regex constraint with ^ prefix matches by RegExp', () => {
     const m = { tool: 'github.create_issue', param_constraints: { repo: '^Kstkoda/.*' } };
     expect(matchesOne(m, 'github.create_issue', { repo: 'Kstkoda/privacy-tracker' })).toBe(true);
-    expect(matchesOne(m, 'github.create_issue', { repo: 'Kstkoda/cowire' })).toBe(true);
+    expect(matchesOne(m, 'github.create_issue', { repo: 'Kstkoda/stavr' })).toBe(true);
     expect(matchesOne(m, 'github.create_issue', { repo: 'someone-else/repo' })).toBe(false);
   });
 

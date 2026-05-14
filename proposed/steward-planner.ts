@@ -28,7 +28,7 @@ import type {
 } from './types';
 import { DEFAULT_PROFILES, ALWAYS_GATED_CLASSES } from './types';
 
-// Replace these with actual cowire imports:
+// Replace these with actual stavr imports:
 type EventEmitter = { emit(kind: string, payload: unknown): Promise<void> };
 type Persistence = {
   saveBom(bom: Bom): Promise<void>;
@@ -221,7 +221,7 @@ export class StewardPlanner {
   ): Promise<{ steps: Array<Omit<BomStep, 'step_no' | 'model' | 'cost_estimate' | 'duration_sec_est'>>; cost: number }> {
     // Build the planner prompt — keep it terse, ask for JSON.
     const system = [
-      'You are the cowire Steward planner. Given a goal and the available capabilities,',
+      'You are the stavr Steward planner. Given a goal and the available capabilities,',
       'produce a numbered Bill of Materials (BOM) of 1-12 steps. Each step has:',
       '  title (short), description (one sentence), capability (one of: reading, cheap-classifier, code-execution, code-reasoning, long-context, multimodal-vision, multimodal-audio, tool-use-heavy, simple-summary, no-model),',
       '  risk_class (one of: read-only, write-local, write-remote, execute, external-comm, financial, credential, destructive),',
@@ -259,7 +259,7 @@ export class StewardPlanner {
     profile: ProfileConfig;
   }): Promise<{ steps: Array<Omit<BomStep, 'step_no' | 'model' | 'cost_estimate' | 'duration_sec_est'>>; cost: number }> {
     const system = [
-      'You are the cowire Steward replanner. A step in an active BOM has failed.',
+      'You are the stavr Steward replanner. A step in an active BOM has failed.',
       'Produce a new plan that recovers. Prefer: promote model tier, retry with different tool, split the step.',
       'If the recovery requires a risk class not in the original envelope, include it — the framework will ask for approval.',
       'Respond as JSON: { "steps": [...] }.',
@@ -411,5 +411,5 @@ function estimateStepDuration(capability: CapabilityTag): number {
 //    per step, captures cost/results, emits bom_step_* events, calls
 //    planner.replan() on failure.
 //
-// 5. Feature flag: gate the new tool behind `cowire.experimental.planner = true`
+// 5. Feature flag: gate the new tool behind `stavr.experimental.planner = true`
 //    in config. Default off until you've validated outputs on real plans.

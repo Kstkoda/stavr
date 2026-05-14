@@ -60,12 +60,12 @@ export interface DaemonStatusResult {
   pending_decisions?: number;
 }
 
-function cowireHomeDir(): string {
-  return process.env.COWIRE_HOME?.trim() || join(homedir(), '.cowire');
+function stavrHomeDir(): string {
+  return process.env.STAVR_HOME?.trim() || join(homedir(), '.stavr');
 }
 
 function pidDir(): string {
-  return cowireHomeDir();
+  return stavrHomeDir();
 }
 
 function pidFile(): string {
@@ -126,7 +126,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
   if (existing && isProcessAlive(existing.pid) && !opts.force) {
     throw new Error(
       `daemon already running (pid ${existing.pid} on port ${existing.port}). ` +
-        `Use --force to override or 'cowire daemon stop' first.`,
+        `Use --force to override or 'stavr daemon stop' first.`,
     );
   }
   const logger = getLogger();
@@ -146,7 +146,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
       await broker.publish({
         kind: 'stale_pid_cleaned',
         at: new Date().toISOString(),
-        source_agent: 'cowire-daemon',
+        source_agent: 'stavr-daemon',
         payload: {
           dead_pid: stalePid.pid,
           port: stalePid.port,
@@ -165,7 +165,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
 
   // Spec 48 Layer 2: load the master key once on boot. Required before any
   // credential_use call can decrypt a stored secret. If the OS keychain isn't
-  // available we fall back to ~/.cowire/master.key and emit credential_unsafe_storage.
+  // available we fall back to ~/.stavr/master.key and emit credential_unsafe_storage.
   try {
     const keyResult = await loadMasterKey();
     setCredentialStore(broker, new CredentialStore(store, keyResult.key));
@@ -174,7 +174,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
         await broker.publish({
           kind: 'credential_unsafe_storage',
           at: new Date().toISOString(),
-          source_agent: 'cowire-daemon',
+          source_agent: 'stavr-daemon',
           payload: {
             reason: keyResult.unsafeStorageReason,
             fallback_path: 'master-key-file',
@@ -192,7 +192,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
-  // Spec 48 Layer 3: load optional User additions from ~/.cowire/no-go-additions.ts.
+  // Spec 48 Layer 3: load optional User additions from ~/.stavr/no-go-additions.ts.
   // Users can ADD entries; mergeUserAdditions() refuses to override built-ins.
   await loadNoGoAdditions();
 
@@ -203,7 +203,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
       await broker.publish({
         kind: 'error',
         at: new Date().toISOString(),
-        source_agent: 'cowire-daemon',
+        source_agent: 'stavr-daemon',
         payload: {
           message: 'db corrupted; quarantined and rebuilt from empty schema',
           recoverable: true,
@@ -243,7 +243,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
   installCrashHandler(store);
 
   // Spec 49 Layer 1: daemon-hosted Steward. Spawns only if
-  // ~/.cowire/steward-config.yaml exists AND `steward.enabled: true`.
+  // ~/.stavr/steward-config.yaml exists AND `steward.enabled: true`.
   let stewardLoop: RunningLoop | undefined;
   try {
     const cfgResult = loadStewardConfig();
@@ -330,7 +330,7 @@ function spawnDetachedDaemon(opts: DaemonOptions): { pid: number; detached: true
   const child = spawn(process.execPath, [cliEntry, ...args], {
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, COWIRE_DAEMON_DETACHED_CHILD: '1' },
+    env: { ...process.env, STAVR_DAEMON_DETACHED_CHILD: '1' },
   });
   child.unref();
   if (typeof child.pid !== 'number') {
@@ -466,16 +466,16 @@ function makeProviderFromConfig(config: {
 }
 
 /**
- * Load `~/.cowire/no-go-additions.ts` (or .js) if it exists and `export default
+ * Load `~/.stavr/no-go-additions.ts` (or .js) if it exists and `export default
  * NoGoEntry[]`. Best-effort: parse / type errors are logged and the daemon
  * boots with just the built-in list. Built-in entries can never be overridden
  * — mergeUserAdditions strips duplicate ids before installing the live list.
  */
 async function loadNoGoAdditions(): Promise<void> {
   const candidates = [
-    join(homedir(), '.cowire', 'no-go-additions.ts'),
-    join(homedir(), '.cowire', 'no-go-additions.js'),
-    join(homedir(), '.cowire', 'no-go-additions.mjs'),
+    join(homedir(), '.stavr', 'no-go-additions.ts'),
+    join(homedir(), '.stavr', 'no-go-additions.js'),
+    join(homedir(), '.stavr', 'no-go-additions.mjs'),
   ];
   for (const path of candidates) {
     if (!existsSync(path)) continue;
@@ -504,7 +504,7 @@ async function loadNoGoAdditions(): Promise<void> {
 
 /**
  * Top-level uncaughtException / unhandledRejection trap. Writes a JSON crash
- * dump under ~/.cowire/crash-<ts>.json and exits 1 so the watchdog (ADR-020)
+ * dump under ~/.stavr/crash-<ts>.json and exits 1 so the watchdog (ADR-020)
  * restarts. Pulls the last 100 events for postmortem; failures during dump
  * generation are swallowed — we'd rather die than infinitely loop on errors.
  */

@@ -1,15 +1,15 @@
 /**
- * Stream C C1 — `cowire steward bug-fix` end-to-end integration test.
+ * Stream C C1 — `stavr steward bug-fix` end-to-end integration test.
  *
- * Spawns a real cowire daemon (loopback) and exercises the full pipeline:
+ * Spawns a real stavr daemon (loopback) and exercises the full pipeline:
  *  1. Stand up a tiny mock GitHub API on a separate ephemeral port (we
  *     redirect the `gh` shim via PATH so it consults our fake instead of
  *     hitting github.com).
- *  2. Run `cowire steward bug-fix --issue Kstkoda/cowire-test-sandbox#1`
- *     against the daemon. With COWIRE_AUTO_APPROVE_BUG_FIXES=1 set we
+ *  2. Run `stavr steward bug-fix --issue stenlund/stavr-test-sandbox#1`
+ *     against the daemon. With STAVR_AUTO_APPROVE_BUG_FIXES=1 set we
  *     expect trust_scope_proposed + trust_scope_granted + steward_prompt
  *     events to land on the daemon's broker.
- *  3. Read the daemon's events table via the `cowire events` CLI and assert
+ *  3. Read the daemon's events table via the `stavr events` CLI and assert
  *     the three events were persisted with the right correlation ids.
  *  4. --dry-run path exits 0 without contacting the daemon (used by smoke).
  *
@@ -99,14 +99,14 @@ async function shutdown(d: SpawnedDaemon): Promise<void> {
 
 /**
  * Writes a Node-script shim that mimics `gh issue view --json … --repo X N`.
- * On both platforms we point COWIRE_GH_BIN at this script's absolute path —
+ * On both platforms we point STAVR_GH_BIN at this script's absolute path —
  * sidesteps PATH-ordering quirks where Windows' execFile finds real gh.exe
  * before our PATH-prepended gh.cmd. The shim parses argv enough to detect
  * `issue view`, emits the canned JSON, and exits 0; anything else exits 1.
  */
 function writeFakeGh(dir: string, expected: { repo: string; number: number; body: object }): string {
   mkdirSync(dir, { recursive: true });
-  // On Windows, COWIRE_GH_BIN must be a .exe / .cmd / etc. that execFile can
+  // On Windows, STAVR_GH_BIN must be a .exe / .cmd / etc. that execFile can
   // exec. A bare .js file won't execute. So on Windows we wrap a tiny .cmd
   // that calls `node <script>`; on POSIX we write a shebang'd script.
   const jsBody =
@@ -142,7 +142,7 @@ describe('Stream C C1 — steward bug-fix end-to-end', () => {
   let ghBinPath: string;
 
   beforeEach(async () => {
-    tmp = mkdtempSync(join(tmpdir(), 'cowire-c1-'));
+    tmp = mkdtempSync(join(tmpdir(), 'stavr-c1-'));
     daemonHome = join(tmp, 'daemon');
     daemonDb = join(tmp, 'daemon.db');
     ghDir = join(tmp, 'bin');
@@ -150,7 +150,7 @@ describe('Stream C C1 — steward bug-fix end-to-end', () => {
     daemonPort = await pickPort();
 
     ghBinPath = writeFakeGh(ghDir, {
-      repo: 'Kstkoda/cowire-test-sandbox',
+      repo: 'stenlund/stavr-test-sandbox',
       number: 1,
       body: {
         number: 1,
@@ -158,7 +158,7 @@ describe('Stream C C1 — steward bug-fix end-to-end', () => {
         body: 'Something is wrong with the X widget.',
         state: 'open',
         labels: [{ name: 'bug' }, { name: 'cc-mega' }],
-        url: 'https://github.com/Kstkoda/cowire-test-sandbox/issues/1',
+        url: 'https://github.com/stenlund/stavr-test-sandbox/issues/1',
       },
     });
   });
@@ -174,8 +174,8 @@ describe('Stream C C1 — steward bug-fix end-to-end', () => {
 
   it('--dry-run prints scope + brief preview without contacting the daemon', () => {
     const r = runCli(
-      ['steward', 'bug-fix', '--issue', 'Kstkoda/cowire-test-sandbox#1', '--dry-run'],
-      { COWIRE_GH_BIN: ghBinPath, COWIRE_HOME: daemonHome, COWIRE_AUTO_APPROVE_BUG_FIXES: '1' },
+      ['steward', 'bug-fix', '--issue', 'stenlund/stavr-test-sandbox#1', '--dry-run'],
+      { STAVR_GH_BIN: ghBinPath, STAVR_HOME: daemonHome, STAVR_AUTO_APPROVE_BUG_FIXES: '1' },
     );
     expect(r.status).toBe(0);
     const parsed = JSON.parse(r.stdout) as {
@@ -186,18 +186,18 @@ describe('Stream C C1 — steward bug-fix end-to-end', () => {
       brief_preview: string;
     };
     expect(parsed.dry_run).toBe(true);
-    expect(parsed.issue).toBe('Kstkoda/cowire-test-sandbox#1');
+    expect(parsed.issue).toBe('stenlund/stavr-test-sandbox#1');
     expect(parsed.scope.allowed_actions.map((a) => a.tool)).toEqual(
       expect.arrayContaining(['github.create_pr', 'github.create_pr_comment']),
     );
     expect(parsed.auto_approval.granted).toBe(true);
-    expect(parsed.brief_preview).toContain('Bug-fix request: Kstkoda/cowire-test-sandbox#1');
+    expect(parsed.brief_preview).toContain('Bug-fix request: stenlund/stavr-test-sandbox#1');
   });
 
   it('end-to-end: dispatches a brief, persists trust_scope_proposed + granted + steward_prompt', async () => {
     const nas = spawnCli(
       ['daemon', 'start', '--port', String(daemonPort), '--db', daemonDb, '--log-format', 'json'],
-      { COWIRE_HOME: daemonHome },
+      { STAVR_HOME: daemonHome },
     );
     processes.push(nas);
     await waitForHealthz(daemonPort, 20_000);
@@ -207,11 +207,11 @@ describe('Stream C C1 — steward bug-fix end-to-end', () => {
         'steward',
         'bug-fix',
         '--issue',
-        'Kstkoda/cowire-test-sandbox#1',
+        'stenlund/stavr-test-sandbox#1',
         '--daemon-url',
         `http://127.0.0.1:${daemonPort}`,
       ],
-      { COWIRE_GH_BIN: ghBinPath, COWIRE_HOME: daemonHome, COWIRE_AUTO_APPROVE_BUG_FIXES: '1' },
+      { STAVR_GH_BIN: ghBinPath, STAVR_HOME: daemonHome, STAVR_AUTO_APPROVE_BUG_FIXES: '1' },
     );
     expect(r.status).toBe(0);
     const out = JSON.parse(r.stdout) as {
@@ -222,14 +222,14 @@ describe('Stream C C1 — steward bug-fix end-to-end', () => {
     };
     expect(out.ok).toBe(true);
     expect(out.auto_approved).toBe(true);
-    expect(out.scope_id).toMatch(/scope-bug-fix-cowire-test-sandbox-1-[0-9a-f]{8}/);
+    expect(out.scope_id).toMatch(/scope-bug-fix-stavr-test-sandbox-1-[0-9a-f]{8}/);
     expect(out.correlation_id).toMatch(/^prompt-/);
 
     // Query the event log via the CLI — proves the events actually landed on
     // the daemon's broker, not just that the HTTP POST returned 200.
     const events = runCli(
       ['events', '--db', daemonDb, '--kind', 'trust_scope_proposed', '--kind', 'trust_scope_granted', '--kind', 'steward_prompt'],
-      { COWIRE_HOME: daemonHome },
+      { STAVR_HOME: daemonHome },
     );
     expect(events.status).toBe(0);
     const eventsBody = JSON.parse(events.stdout) as {
@@ -244,10 +244,10 @@ describe('Stream C C1 — steward bug-fix end-to-end', () => {
     expect(scopeEvents.length).toBeGreaterThanOrEqual(2);
   }, 60_000);
 
-  it('without COWIRE_AUTO_APPROVE_BUG_FIXES, emits only proposed (no granted)', async () => {
+  it('without STAVR_AUTO_APPROVE_BUG_FIXES, emits only proposed (no granted)', async () => {
     const nas = spawnCli(
       ['daemon', 'start', '--port', String(daemonPort), '--db', daemonDb, '--log-format', 'json'],
-      { COWIRE_HOME: daemonHome },
+      { STAVR_HOME: daemonHome },
     );
     processes.push(nas);
     await waitForHealthz(daemonPort, 20_000);
@@ -257,11 +257,11 @@ describe('Stream C C1 — steward bug-fix end-to-end', () => {
         'steward',
         'bug-fix',
         '--issue',
-        'Kstkoda/cowire-test-sandbox#1',
+        'stenlund/stavr-test-sandbox#1',
         '--daemon-url',
         `http://127.0.0.1:${daemonPort}`,
       ],
-      { COWIRE_GH_BIN: ghBinPath, COWIRE_HOME: daemonHome },
+      { STAVR_GH_BIN: ghBinPath, STAVR_HOME: daemonHome },
     );
     expect(r.status).toBe(0);
     const out = JSON.parse(r.stdout) as { auto_approved: boolean };
@@ -269,7 +269,7 @@ describe('Stream C C1 — steward bug-fix end-to-end', () => {
 
     const events = runCli(
       ['events', '--db', daemonDb, '--kind', 'trust_scope_granted'],
-      { COWIRE_HOME: daemonHome },
+      { STAVR_HOME: daemonHome },
     );
     const body = JSON.parse(events.stdout) as { events: unknown[] };
     expect(body.events).toHaveLength(0);
@@ -281,13 +281,13 @@ describe('Stream C C1 — steward bug-fix end-to-end', () => {
         'steward',
         'bug-fix',
         '--issue',
-        'Kstkoda/cowire-test-sandbox#1',
+        'stenlund/stavr-test-sandbox#1',
         '--daemon-url',
         `http://127.0.0.1:${daemonPort}`,
         '--dry-run',
       ],
-      // Point COWIRE_GH_BIN at a path that definitely doesn't exist.
-      { COWIRE_GH_BIN: join(ghDir, 'nope-this-does-not-exist'), COWIRE_HOME: daemonHome },
+      // Point STAVR_GH_BIN at a path that definitely doesn't exist.
+      { STAVR_GH_BIN: join(ghDir, 'nope-this-does-not-exist'), STAVR_HOME: daemonHome },
     );
     expect(r.status).toBe(1);
     expect(r.stderr).toMatch(/not found on PATH|failed/i);

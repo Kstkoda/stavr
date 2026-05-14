@@ -1,14 +1,14 @@
 # Architecture
 
-This document explains how Cowire is put together. It targets a contributor who has read the [README](./README.md) and now wants to extend, debug, or reason about the system. Read it once end-to-end (~20 minutes) and you should be able to find your way around any file in `src/`.
+This document explains how Stavr is put together. It targets a contributor who has read the [README](./README.md) and now wants to extend, debug, or reason about the system. Read it once end-to-end (~20 minutes) and you should be able to find your way around any file in `src/`.
 
 For each component we name the file path so you can jump to the canonical implementation.
 
 ---
 
-## What is Cowire?
+## What is Stavr?
 
-**Cowire** is an MCP-native broker — a single process that sits between cooperating agents (Co, CC, future agents) and the human user, and that turns every interesting moment of their work into a typed, persisted event.
+**Stavr** is an MCP-native broker — a single process that sits between cooperating agents (Co, CC, future agents) and the human user, and that turns every interesting moment of their work into a typed, persisted event.
 
 The broker process is called **Switch**. Switch is an [MCP server](https://modelcontextprotocol.io/) that speaks two transports at once: stdio (for clients embedded as child processes) and HTTP/SSE (for long-lived remote clients like Cowork dashboards and other agents). It owns:
 
@@ -48,7 +48,7 @@ This repository is the reference implementation of Switch. Agents are *clients*;
 
 One daemon per host. Binds `127.0.0.1:7777` (local-only). All remote MCP clients connect via SSE; one process can also accept a stdio client for legacy / per-spawn use. The dashboard at `:7777/dashboard` is planned for v0.2 (spec 40 Phase 2).
 
-The picture above is the **daemon topology** — see `cowire daemon start` in the README. There is also a legacy *per-spawn* mode (`cowire start --stdio-only`) where each MCP client gets its own Switch process and SQLite store; this is what an MCP client like CC uses today when configured to launch Switch as a child process. The per-spawn model is documented in [ADR-005](./adr/005-per-spawn-architecture-v01.md); the daemon model is documented in [ADR-006](./adr/006-daemon-binds-127001-only.md).
+The picture above is the **daemon topology** — see `stavr daemon start` in the README. There is also a legacy *per-spawn* mode (`stavr start --stdio-only`) where each MCP client gets its own Switch process and SQLite store; this is what an MCP client like CC uses today when configured to launch Switch as a child process. The per-spawn model is documented in [ADR-005](./adr/005-per-spawn-architecture-v01.md); the daemon model is documented in [ADR-006](./adr/006-daemon-binds-127001-only.md).
 
 ---
 
@@ -64,7 +64,7 @@ The broker is intentionally thin. All durability lives in the event store; all t
 
 ### Event store — `src/persistence.ts`
 
-A single SQLite database at `~/.cowire/cowire.db` (configurable via `--db`). Four tables:
+A single SQLite database at `~/.stavr/runestone.db` (configurable via `--db`). Four tables:
 
 - `events` — every event ever published. Append-only. Indexed by `kind`, `correlation_id`, and a monotonic `seq` cursor.
 - `decisions` — pending and resolved decisions, keyed by `correlation_id`. Status is one of `open | responded | expired`.
@@ -86,7 +86,7 @@ Mode resolution:
 
 - `'stdio'` — stdio only.
 - `'daemon'` — HTTP/SSE only; bind failure is fatal.
-- `'both'` — stdio plus optional HTTP/SSE; on `EADDRINUSE`, falls back to stdio-only with a warning. This is the legacy `cowire start` behavior and is what makes simultaneous per-spawn MCP sessions tolerable. See [ADR-007](./adr/007-eaddrinuse-graceful-fallback.md).
+- `'both'` — stdio plus optional HTTP/SSE; on `EADDRINUSE`, falls back to stdio-only with a warning. This is the legacy `stavr start` behavior and is what makes simultaneous per-spawn MCP sessions tolerable. See [ADR-007](./adr/007-eaddrinuse-graceful-fallback.md).
 
 On startup, transports also run `startupDecisionSweep(broker)` to expire any decisions whose deadlines elapsed while Switch was down (see [Decision flow](#decision-flow-walkthrough)).
 
@@ -115,10 +115,10 @@ The two MCP tools that implement the interactive rendezvous: `await_decision` an
 
 Thin wrappers over the components above:
 
-- `cowire start` — legacy per-spawn launcher (`mode: 'both'`).
-- `cowire daemon start/stop/status/restart` — manages the long-running daemon via a PID file at `~/.cowire/daemon.pid`.
-- `cowire connect-test` — open an SSE session to a running daemon, emit one event, subscribe, print what came back. The minimal end-to-end smoke check.
-- `cowire status` / `cowire events` — read-only views over the SQLite store.
+- `stavr start` — legacy per-spawn launcher (`mode: 'both'`).
+- `stavr daemon start/stop/status/restart` — manages the long-running daemon via a PID file at `~/.stavr/daemon.pid`.
+- `stavr connect-test` — open an SSE session to a running daemon, emit one event, subscribe, print what came back. The minimal end-to-end smoke check.
+- `stavr status` / `stavr events` — read-only views over the SQLite store.
 
 ---
 
@@ -295,18 +295,18 @@ through, no other plumbing.
 
 | Transport | Used by | Code path |
 |---|---|---|
-| stdio | An MCP client that spawns Switch as a child process (today: CC's `.mcp.json` entry running `npx cowire start --stdio-only`). One session per process. | `transports.ts` modes `'stdio'` and `'both'`. |
-| HTTP/SSE | Long-lived remote clients connecting to the daemon (today: `cowire connect-test`, future: Cowork, future: dashboard). Many sessions per process. | `transports.ts` modes `'daemon'` and `'both'` when `--port` is set. |
+| stdio | An MCP client that spawns Switch as a child process (today: CC's `.mcp.json` entry running `npx stavr start --stdio-only`). One session per process. | `transports.ts` modes `'stdio'` and `'both'`. |
+| HTTP/SSE | Long-lived remote clients connecting to the daemon (today: `stavr connect-test`, future: Cowork, future: dashboard). Many sessions per process. | `transports.ts` modes `'daemon'` and `'both'` when `--port` is set. |
 
 In `'both'` mode, both run on the same process against the same broker. In daemon mode, HTTP/SSE is the only transport and bind failure is fatal — there is no point continuing if the port is taken. See [ADR-001](./adr/001-stdio-and-sse-dual-transport.md) for why we kept both.
 
-**Shim mode** (`src/shim.ts`, `dist/shim.js`, `cowire shim`) is a thin client that speaks stdio downward (to an MCP client that requires stdio) and SSE upward (to the daemon). It exists because some MCP clients — Cowork at the time of writing — do not recognize `type: "sse"` entries in their config, so the daemon's HTTP/SSE transport is unreachable from them directly. The shim is the bridge until that gap closes. It is byte-level: it forwards JSON-RPC messages without inspection. See [ADR-009](./adr/009-stdio-sse-shim.md).
+**Shim mode** (`src/shim.ts`, `dist/shim.js`, `stavr shim`) is a thin client that speaks stdio downward (to an MCP client that requires stdio) and SSE upward (to the daemon). It exists because some MCP clients — Cowork at the time of writing — do not recognize `type: "sse"` entries in their config, so the daemon's HTTP/SSE transport is unreachable from them directly. The shim is the bridge until that gap closes. It is byte-level: it forwards JSON-RPC messages without inspection. See [ADR-009](./adr/009-stdio-sse-shim.md).
 
 ---
 
 ## Persistence
 
-SQLite via `better-sqlite3`. WAL mode. Single file, default location `~/.cowire/cowire.db` (override with `--db`). Use `:memory:` in tests.
+SQLite via `better-sqlite3`. WAL mode. Single file, default location `~/.stavr/runestone.db` (override with `--db`). Use `:memory:` in tests.
 
 Why SQLite and not Postgres: Switch is a single-process local broker. We never want a "is the database server up?" question between the user and their tools. The whole datastore travels in one file you can `cp` or attach a debugger to. See [ADR-002](./adr/002-sqlite-not-postgres.md).
 
@@ -322,10 +322,10 @@ Spec 44 defines six resilience invariants. The implementation is spread across t
 
 1. **No silent disconnects.** Every SSE close path is observable: the daemon's `/mcp/sse` handler removes the session from the broker on `res.on('close')`; the shim logs every SSE error and reconnect attempt; the watchdog logs every ping result. The deepened `/healthz` exposes `broker.connected_sessions` so a dashboard can graph the count.
 2. **Auto-reconnect within 30 seconds.** The shim's reconnect loop (`src/shim.ts`) uses exponential backoff starting at 1s, doubling to a 5-min ceiling, with a 30s clean-operation reset and a 1h give-up cutoff. See [ADR-019](./adr/019-exponential-backoff-reconnect-in-shim.md). The first attempt fires within the first second of failure, so the 30s target is comfortable.
-3. **Daemon supervision.** `src/watchdog.ts` is a standalone Node process registered with the per-platform scheduler via `cowire daemon install` (Task Scheduler / launchd / systemd --user). It pings `/healthz` every 30s and runs `cowire daemon start --detach` after 3 consecutive failures. The 60s restart cooldown protects against tight crash loops. See [ADR-020](./adr/020-daemon-watchdog.md).
+3. **Daemon supervision.** `src/watchdog.ts` is a standalone Node process registered with the per-platform scheduler via `stavr daemon install` (Task Scheduler / launchd / systemd --user). It pings `/healthz` every 30s and runs `stavr daemon start --detach` after 3 consecutive failures. The 60s restart cooldown protects against tight crash loops. See [ADR-020](./adr/020-daemon-watchdog.md).
 4. **Decisions never get lost.** Decisions are written to SQLite (WAL mode) before any reply is awaited. On daemon startup, `startupDecisionSweep` (in `src/tools/decisions.ts`) walks every `status='open'` row, marks expired ones, and emits `decision_late_response` so subscribers can re-converge. Covered by the chaos test in `tests/chaos.test.ts`.
-5. **Graceful degradation, not crash.** `Broker.publish` catches `appendEvent` failures, logs, and synthesizes an in-memory event so fanout still happens. `EventStore.init` detects corruption (via `PRAGMA integrity_check`) and quarantines the file as `cowire.db.corrupt.<ts>` before rebuilding. `installCrashHandler` (in `src/daemon.ts`) traps `uncaughtException` / `unhandledRejection` and writes `~/.cowire/crash-<ts>.json` before exit, so the watchdog has enough to restart and a human has enough to debug. See [ADR-021](./adr/021-graceful-degradation-vs-crash.md).
-6. **Structured logs.** `src/log.ts` exports a `Logger` interface with `info / warn / error` methods. The default is the legacy `[cowire] ...` text format; `--log-format=json` (on `cowire start` and `cowire daemon start`) emits newline-delimited JSON to stderr for log shippers.
+5. **Graceful degradation, not crash.** `Broker.publish` catches `appendEvent` failures, logs, and synthesizes an in-memory event so fanout still happens. `EventStore.init` detects corruption (via `PRAGMA integrity_check`) and quarantines the file as `runestone.db.corrupt.<ts>` before rebuilding. `installCrashHandler` (in `src/daemon.ts`) traps `uncaughtException` / `unhandledRejection` and writes `~/.stavr/crash-<ts>.json` before exit, so the watchdog has enough to restart and a human has enough to debug. See [ADR-021](./adr/021-graceful-degradation-vs-crash.md).
+6. **Structured logs.** `src/log.ts` exports a `Logger` interface with `info / warn / error` methods. The default is the legacy `[stavr] ...` text format; `--log-format=json` (on `stavr start` and `stavr daemon start`) emits newline-delimited JSON to stderr for log shippers.
 
 ### Failure-recovery walkthrough
 
@@ -333,7 +333,7 @@ When the daemon crashes:
 
 1. The OS reaps the process. The shim sees its SSE connection drop.
 2. The shim begins exponential-backoff reconnect attempts (1s, 2s, 4s, ...).
-3. The watchdog's next ping (within 30s of the death) fails. After 3 consecutive failed pings (~90s worst-case), the watchdog runs `cowire daemon start --detach`.
+3. The watchdog's next ping (within 30s of the death) fails. After 3 consecutive failed pings (~90s worst-case), the watchdog runs `stavr daemon start --detach`.
 4. The daemon comes back up. Its `/healthz` returns 200 and the watchdog resumes idle pinging.
 5. The shim's next reconnect attempt succeeds. It fetches `/status`, sees a new `started_at`, logs `daemon restart detected`, and emits a `progress` event with body `shim_reconnected after Xms` so subscribers (dashboards, Cowork) know there was a gap.
 6. Any decision that was open at the moment of the crash is picked up by `startupDecisionSweep` on the new daemon and replied to with `decision_late_response`. Cowork can either re-issue or accept the late status.
@@ -383,9 +383,9 @@ Every spawner is event-driven by construction: child-process exits use `'exit'` 
 
 **`src/workers/cc.ts` — Claude Code.** Each spawn:
 
-1. `git worktree add <repo>/.cowire-worktrees/<name> -B <branch> origin/<base>` — every CC worker gets a dedicated worktree so parallel workers in the same repo never collide. State-of-the-art 2026 pattern (Conductor, Vibe Kanban, Claude Squad). See [ADR-016](./adr/016-cc-worker-uses-git-worktree-isolation.md).
-2. Write `<worktree>/.cowire-mcp.json` with the daemon URL (SSE or shim).
-3. Spawn `cmd.exe /c start cc:<name> cmd /K claude --mcp-config .cowire-mcp.json …` so the user sees a visible window.
+1. `git worktree add <repo>/.stavr-worktrees/<name> -B <branch> origin/<base>` — every CC worker gets a dedicated worktree so parallel workers in the same repo never collide. State-of-the-art 2026 pattern (Conductor, Vibe Kanban, Claude Squad). See [ADR-016](./adr/016-cc-worker-uses-git-worktree-isolation.md).
+2. Write `<worktree>/.stavr-mcp.json` with the daemon URL (SSE or shim).
+3. Spawn `cmd.exe /c start cc:<name> cmd /K claude --mcp-config .stavr-mcp.json …` so the user sees a visible window.
 4. `chokidar.watch` on `.git/HEAD`, `.git/refs/heads/<branch>`, `.git/index` in the worktree — replaces the prior 10s `git status` poller. Metadata events arrive within ~50 ms of an `git commit` / branch update.
 5. On exit (or `worker_terminate`), best-effort `git worktree remove --force` cleans up.
 
@@ -426,23 +426,23 @@ The orchestrator (`src/workers/orchestrator.ts`) is the only thing that talks to
 
 ### Resolutions for open design questions (in-phase)
 
-1. **CC's `--mcp-config` SSE vs shim.** `.cowire-mcp.json` is written with `type: "sse"` pointing at the daemon. CC builds that don't speak SSE natively use the shim entry from the daemon README — same file, different URL.
+1. **CC's `--mcp-config` SSE vs shim.** `.stavr-mcp.json` is written with `type: "sse"` pointing at the daemon. CC builds that don't speak SSE natively use the shim entry from the daemon README — same file, different URL.
 2. **PID capture under `cmd /K start`.** `child.pid` is the launcher cmd's PID, not `claude.exe`. We record `launcher_pid` in worker metadata; the dashboard surfaces it as "this is the window, not the process inside." A future spawner option could `start /B` for headless modes to capture the inner PID directly.
 3. **`worker_dispatch_request` reaches the spawned CC.** Mechanism (a): the orchestrator publishes the event on the broker; the spawned CC subscribed to its own dispatch kind via the MCP `subscribe_to_events` tool at startup picks it up. No filesystem polling, no extra ingress.
 
 ### Federation-readiness (constraint, not v1)
 
-The `worker_*` event taxonomy is treated as a public API — see [ADR-015](./adr/015-federation-readiness-design-constraint.md). External orchestrators (Anthropic Agent Teams, n8n, A2A-speaking agents) should be able to produce these events too, so the schemas avoid Cowire-internal metadata an external worker couldn't supply. A future `src/workers/external.ts` will represent off-host work without spawning anything locally.
+The `worker_*` event taxonomy is treated as a public API — see [ADR-015](./adr/015-federation-readiness-design-constraint.md). External orchestrators (Anthropic Agent Teams, n8n, A2A-speaking agents) should be able to produce these events too, so the schemas avoid Stavr-internal metadata an external worker couldn't supply. A future `src/workers/external.ts` will represent off-host work without spawning anything locally.
 
 ---
 
 ## Cross-references
 
-Cowire is the reference implementation; the design docs that drove it live in the sibling `privacy tracker/specs/` directory. This repo is self-contained — you do not need those specs to contribute. They are useful when you want the *why*:
+Stavr is the reference implementation; the design docs that drove it live in the sibling `privacy tracker/specs/` directory. This repo is self-contained — you do not need those specs to contribute. They are useful when you want the *why*:
 
 - `../privacy tracker/specs/37_cowork-cc-event-bridge.md` — the original event-bridge architecture; the source of the event taxonomy.
 - `../privacy tracker/specs/39_co-actions-and-tiered-authorization.md` — the AUTO/CONFIRM/NEVER tier model that informs tool cards (see also `docs/writing-an-adapter.md`).
-- `../privacy tracker/specs/40_cowire_v0.2_daemon_multi_agent_dashboard.md` — the v0.2 vision: daemon, multi-CC orchestration, dashboard. Phase 1 (the daemon) has landed; Phase 2+ (dashboard, Co-as-orchestrator, git-aware sessions) are pending.
-- `../privacy tracker/specs/41_cowire_docs_and_machine_readable_contracts.md` — the spec that produced this document and the ADRs.
+- `../privacy tracker/specs/40_stavr_v0.2_daemon_multi_agent_dashboard.md` — the v0.2 vision: daemon, multi-CC orchestration, dashboard. Phase 1 (the daemon) has landed; Phase 2+ (dashboard, Co-as-orchestrator, git-aware sessions) are pending.
+- `../privacy tracker/specs/41_stavr_docs_and_machine_readable_contracts.md` — the spec that produced this document and the ADRs.
 
 Decision rationale lives in [`adr/`](./adr/). Each ADR captures one decision, its context, and its alternatives. Start with [`adr/README.md`](./adr/README.md).

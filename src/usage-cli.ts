@@ -5,7 +5,7 @@ import { defaultDbPath } from './paths.js';
 import { readPidFile } from './daemon.js';
 
 /**
- * Spec 50 Layer 1 — `cowire usage` CLI command.
+ * Spec 50 Layer 1 — `stavr usage` CLI command.
  *
  * Three modes:
  *   - one-shot (default): print the pretty table once and exit.
@@ -91,7 +91,7 @@ interface UsageShape {
 
 function prettyUsage(u: UsageShape): string {
   const lines: string[] = [];
-  lines.push(`cowire usage   window=${u.window}   as_of=${u.as_of}`);
+  lines.push(`stavr usage   window=${u.window}   as_of=${u.as_of}`);
   lines.push('─'.repeat(70));
   lines.push(`  totals      cost_usd=${u.totals.cost_usd.toFixed(4)}   events=${u.totals.events}   in=${u.totals.input_tokens}  out=${u.totals.output_tokens}`);
   lines.push(`  burn_rate   15m=$${u.burn_rate.last_15_min_usd.toFixed(4)}   projected_daily=$${u.burn_rate.projected_daily_usd.toFixed(2)}`);

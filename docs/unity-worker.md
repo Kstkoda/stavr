@@ -1,12 +1,12 @@
 # Unity worker
 
-Spawn-and-watch integration between Cowire and the Unity Editor. Use it to:
+Spawn-and-watch integration between Stavr and the Unity Editor. Use it to:
 
 - Watch compile errors in real time as Claude Code drops C# scripts into a Unity project.
 - See play-mode exceptions surfaced as worker errors in the audit log.
 - Run Unity in headless batch mode for CI-style automation, or attach to a live Editor for interactive game dev.
 
-The worker spawner lives at [`src/workers/unity.ts`](../src/workers/unity.ts). The matching Editor-side bridge is shipped as [`dist/unity-bridge/CowireBridge.cs`](../dist/unity-bridge/CowireBridge.cs).
+The worker spawner lives at [`src/workers/unity.ts`](../src/workers/unity.ts). The matching Editor-side bridge is shipped as [`dist/unity-bridge/StavrBridge.cs`](../dist/unity-bridge/StavrBridge.cs).
 
 ---
 
@@ -31,10 +31,10 @@ See [ADR-012 (event-driven over polling)](../adr/012-event-driven-over-polling.m
 
 ```text
 1. Open your Unity project in Unity Hub.
-2. Create the folder Assets/Editor/Cowire/ (anywhere under Assets/Editor/ works).
-3. Copy dist/unity-bridge/CowireBridge.cs into that folder.
+2. Create the folder Assets/Editor/Stavr/ (anywhere under Assets/Editor/ works).
+3. Copy dist/unity-bridge/StavrBridge.cs into that folder.
 4. Switch focus to Unity — it auto-compiles and the bridge logs
-   "CowireBridge initialized" to Logs/cowire-events.jsonl.
+   "StavrBridge initialized" to Logs/stavr-events.jsonl.
 ```
 
 The bridge is `#if UNITY_EDITOR`-gated, so it ships only with the Editor and never bloats player builds.
@@ -43,7 +43,7 @@ The bridge is `#if UNITY_EDITOR`-gated, so it ships only with the Editor and nev
 
 ## 3. Spawning the worker
 
-From a Cowire-connected Claude / CC session:
+From a Stavr-connected Claude / CC session:
 
 ```jsonc
 // worker_spawn
@@ -60,7 +60,7 @@ From a Cowire-connected Claude / CC session:
 That's enough. The worker:
 
 1. Validates `project_path` is a Unity project (has `Assets/` + `ProjectSettings/`).
-2. Truncates `Logs/cowire-events.jsonl` so previous events don't replay.
+2. Truncates `Logs/stavr-events.jsonl` so previous events don't replay.
 3. Starts chokidar on the events file.
 4. Returns a `WorkerInstance` with `metadata.events_file` so a dashboard can deep-link.
 
@@ -84,9 +84,9 @@ For batch (no UI) automation: `batch_mode: true`.
 
 ## 4. Event taxonomy
 
-The bridge writes one JSON object per line. The worker spawner maps each line to Cowire's worker-event vocabulary:
+The bridge writes one JSON object per line. The worker spawner maps each line to Stavr's worker-event vocabulary:
 
-| Bridge `type`       | Cowire surface                                  | Notes                                              |
+| Bridge `type`       | Stavr surface                                  | Notes                                              |
 | ------------------- | ----------------------------------------------- | -------------------------------------------------- |
 | `compile_start`     | `progress` + `activity: "compiling"`            | Per compile pass (every script save).              |
 | `compile_error`     | `progress` + `error` (recoverable)              | One per CS-prefixed error from the compiler.       |
@@ -112,13 +112,13 @@ operator ──► Co (orchestrator)
                 │  worker_spawn cc-feature-x { prompt: "Add a dash ability ..." }
                 │
                 ▼
-       Cowire daemon (Switch)
+       Stavr daemon (Switch)
                 │  trust_scope: "unity-game-dev" (auto-approves cc + unity)
                 │
                 ├──► CC worker (in its own git worktree)
                 │       writes Assets/Scripts/Dash.cs
                 │
-                └──► Unity worker (tails Logs/cowire-events.jsonl)
+                └──► Unity worker (tails Logs/stavr-events.jsonl)
                         Unity Editor auto-recompiles
                         bridge writes compile_error CS0103
                         worker emits error → orchestrator → audit log
@@ -126,7 +126,7 @@ operator ──► Co (orchestrator)
                         loop until compile_finish errors=0
 ```
 
-The operator approves the trust scope once at the start of the session. Every CC spawn, every file write into `Assets/`, every Unity event after that flows through the audit log without further prompts. Revoke with `cowire trust-scope revoke unity-game-dev`.
+The operator approves the trust scope once at the start of the session. Every CC spawn, every file write into `Assets/`, every Unity event after that flows through the audit log without further prompts. Revoke with `stavr trust-scope revoke unity-game-dev`.
 
 ---
 
@@ -149,9 +149,9 @@ If you'd rather pick something else — a tower defense, a runner, a chess clone
 
 ## 7. Troubleshooting
 
-**The events file never appears.** Confirm `Assets/Editor/Cowire/CowireBridge.cs` is in the project and Unity has compiled at least once after the file was added. Trigger a compile by saving any `.cs` file in the project.
+**The events file never appears.** Confirm `Assets/Editor/Stavr/StavrBridge.cs` is in the project and Unity has compiled at least once after the file was added. Trigger a compile by saving any `.cs` file in the project.
 
-**Events stop arriving mid-session.** Check `Logs/cowire-events.jsonl.1` — the bridge rotates at 5 MB. Both files are valid JSONL; the tailer always reads the current file.
+**Events stop arriving mid-session.** Check `Logs/stavr-events.jsonl.1` — the bridge rotates at 5 MB. Both files are valid JSONL; the tailer always reads the current file.
 
 **Worker shows `compile_errors > 0` forever.** The bridge counts per-pass. If the Editor never finishes compiling (e.g. an infinite-loop in an Editor script) you'll see `compile_start` with no matching `compile_finish`. Look at Unity's main `Editor.log` for the underlying hang.
 
@@ -161,6 +161,6 @@ If you'd rather pick something else — a tower defense, a runner, a chess clone
 
 ## 8. Roadmap
 
-- **Dispatch:** plumb `worker_dispatch` so the orchestrator can tell the Editor to enter play mode, build a player, or run a specific EditMode test — the bridge would tail a sibling `cowire-commands.jsonl` for inbound messages.
+- **Dispatch:** plumb `worker_dispatch` so the orchestrator can tell the Editor to enter play mode, build a player, or run a specific EditMode test — the bridge would tail a sibling `stavr-commands.jsonl` for inbound messages.
 - **Per-scene metadata:** include the active scene name in `play_mode_enter` so multi-scene games surface usefully in the dashboard.
 - **Test runner integration:** subscribe to `TestRunnerApi` callbacks and emit per-test pass/fail events. Unblocks "have CC keep iterating until tests are green" loops.

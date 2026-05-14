@@ -5,7 +5,7 @@ import { Broker } from '../../src/broker.js';
 import { mountTransports, type MountedTransports } from '../../src/transports.js';
 import { runTail } from '../../src/tail.js';
 
-describe('cowire tail', () => {
+describe('stavr tail', () => {
   let store: EventStore;
   let broker: Broker;
   let transports: MountedTransports;

@@ -401,7 +401,7 @@ export class WorkerOrchestrator {
         await this.broker.publish({
           kind: 'trust_scope_action_authorized',
           at: new Date().toISOString(),
-          source_agent: 'cowire-workers',
+          source_agent: 'stavr-workers',
           payload: {
             scope_id: scope.id,
             tool: req.tool,
@@ -444,7 +444,7 @@ export class WorkerOrchestrator {
       kind: 'decision_request',
       at: new Date().toISOString(),
       correlation_id: correlationId,
-      source_agent: 'cowire-workers',
+      source_agent: 'stavr-workers',
       payload: {
         question,
         options,

@@ -1,6 +1,6 @@
 # Writing a worker spawner
 
-This guide walks through adding a new **worker spawner** to Cowire end-to-end, with a working `python` example. By the end you'll have read enough to add your own spawner and you'll have a copy-pasteable starting point.
+This guide walks through adding a new **worker spawner** to Stavr end-to-end, with a working `python` example. By the end you'll have read enough to add your own spawner and you'll have a copy-pasteable starting point.
 
 A *worker spawner* is a file that teaches Switch how to start, observe, and stop one kind of workload — a Claude Code session, a `cmd` script, a Unity build, a Python script. Spawners are the main extension point of the worker subsystem. Adding a new type is one file.
 

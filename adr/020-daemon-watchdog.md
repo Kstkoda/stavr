@@ -11,13 +11,13 @@ The natural place to put supervision is the OS — every supported platform ship
 
 ## Decision
 
-Ship a small standalone watchdog process at `src/watchdog.ts` → `dist/watchdog.js`, and a `cowire daemon install / uninstall / watchdog-status` CLI that registers it with the per-platform scheduler:
+Ship a small standalone watchdog process at `src/watchdog.ts` → `dist/watchdog.js`, and a `stavr daemon install / uninstall / watchdog-status` CLI that registers it with the per-platform scheduler:
 
-- **Windows**: `schtasks /Create /TN CowireWatchdog /SC ONSTART` and a sibling `/SC ONLOGON` task, both running the watchdog as the current user.
-- **macOS**: `~/Library/LaunchAgents/com.cowire.watchdog.plist` with `RunAtLoad=true` and `KeepAlive=true`, loaded via `launchctl load -w`.
-- **Linux**: `~/.config/systemd/user/cowire-watchdog.service`, enabled with `systemctl --user enable --now`.
+- **Windows**: `schtasks /Create /TN StavrWatchdog /SC ONSTART` and a sibling `/SC ONLOGON` task, both running the watchdog as the current user.
+- **macOS**: `~/Library/LaunchAgents/com.stavr.watchdog.plist` with `RunAtLoad=true` and `KeepAlive=true`, loaded via `launchctl load -w`.
+- **Linux**: `~/.config/systemd/user/stavr-watchdog.service`, enabled with `systemctl --user enable --now`.
 
-The watchdog itself pings `http://127.0.0.1:7777/healthz` every 30s. After 3 consecutive failures, and provided more than 60s has passed since the last restart attempt, it runs `cowire daemon stop` (best-effort) followed by `cowire daemon start --detach --log-format=json`. It writes a newline-delimited JSON log at `~/.cowire/watchdog.log` and a PID file at `~/.cowire/watchdog.pid` so `cowire daemon watchdog-status` can answer "is it registered? is it running? when did it last restart the daemon?"
+The watchdog itself pings `http://127.0.0.1:7777/healthz` every 30s. After 3 consecutive failures, and provided more than 60s has passed since the last restart attempt, it runs `stavr daemon stop` (best-effort) followed by `stavr daemon start --detach --log-format=json`. It writes a newline-delimited JSON log at `~/.stavr/watchdog.log` and a PID file at `~/.stavr/watchdog.pid` so `stavr daemon watchdog-status` can answer "is it registered? is it running? when did it last restart the daemon?"
 
 We keep the watchdog as a separate process rather than:
 1. **Letting the OS supervisor restart the daemon directly.** systemd / launchd can do exit-code-based restart, but they can't ping `/healthz` and react to a *hung* daemon (one that is still alive but no longer serving). The watchdog covers both "process died" and "process locked up" with one mechanism.
@@ -28,9 +28,9 @@ The deepened `/healthz` (spec 44 §3) is critical to this design: it returns 503
 ## Consequences
 
 - One extra long-lived process per host. The watchdog does nothing but ping and sleep — RAM and CPU footprint is negligible.
-- The watchdog and daemon are coupled via the CLI: if `cowire daemon start` changes its flags, the watchdog needs to be rebuilt and re-installed. Acceptable: re-running `cowire daemon install` is idempotent.
-- A 60s restart cooldown means a daemon that crashes immediately on boot will see at most one restart per minute, not a tight loop. Worst case: the user manually inspects `~/.cowire/watchdog.log` and `~/.cowire/crash-*.json` to figure out why startup is failing.
-- Install is per-user (LaunchAgent / `systemctl --user` / schtasks RU current user), not system-wide. The watchdog can therefore restart only the current user's daemon, which is what we want — Cowire is a per-user tool, not a shared service.
+- The watchdog and daemon are coupled via the CLI: if `stavr daemon start` changes its flags, the watchdog needs to be rebuilt and re-installed. Acceptable: re-running `stavr daemon install` is idempotent.
+- A 60s restart cooldown means a daemon that crashes immediately on boot will see at most one restart per minute, not a tight loop. Worst case: the user manually inspects `~/.stavr/watchdog.log` and `~/.stavr/crash-*.json` to figure out why startup is failing.
+- Install is per-user (LaunchAgent / `systemctl --user` / schtasks RU current user), not system-wide. The watchdog can therefore restart only the current user's daemon, which is what we want — Stavr is a per-user tool, not a shared service.
 - On Linux, the watchdog stops when the user logs out unless they `loginctl enable-linger`. Documented in README, not enforced — users on multi-user hosts may prefer that behavior.
 
 ## Alternatives considered

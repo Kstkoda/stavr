@@ -36,12 +36,12 @@ describe('unity spawner', () => {
   let eventsFile: string;
 
   beforeEach(() => {
-    projectRoot = mkdtempSync(join(tmpdir(), 'cowire-unity-test-'));
+    projectRoot = mkdtempSync(join(tmpdir(), 'stavr-unity-test-'));
     // Pretend this is a Unity project — the spawner checks Assets/ and
     // ProjectSettings/ exist before doing anything else.
     mkdirSync(join(projectRoot, 'Assets'), { recursive: true });
     mkdirSync(join(projectRoot, 'ProjectSettings'), { recursive: true });
-    eventsFile = join(projectRoot, 'Logs', 'cowire-events.jsonl');
+    eventsFile = join(projectRoot, 'Logs', 'stavr-events.jsonl');
   });
 
   afterEach(() => {

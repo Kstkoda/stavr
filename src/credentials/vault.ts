@@ -15,12 +15,12 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
  *
  * AES-256-GCM. The 32-byte master key is sourced from the OS keychain when
  * possible (Windows Credential Manager via the optional `wincred` package);
- * otherwise we fall back to a 0600-mode file at ~/.cowire/master.key and emit
+ * otherwise we fall back to a 0600-mode file at ~/.stavr/master.key and emit
  * `credential_unsafe_storage` so the User sees the regression in their event
  * stream. The key never lives in the SQLite DB.
  */
-export const MASTER_KEY_FILE = join(homedir(), '.cowire', 'master.key');
-const KEYCHAIN_SERVICE = 'cowire';
+export const MASTER_KEY_FILE = join(homedir(), '.stavr', 'master.key');
+const KEYCHAIN_SERVICE = 'stavr';
 const KEYCHAIN_ACCOUNT = 'master-key';
 
 export type KeyOrigin = 'os-keychain' | 'master-key-file' | 'master-key-file-created';
@@ -96,7 +96,7 @@ async function loadKeychainAdapter(): Promise<KeychainAdapter | null> {
 
 /**
  * Load (or first-time provision) the master key. Tries the OS keychain first,
- * then the ~/.cowire/master.key file. Caller decides whether to emit a
+ * then the ~/.stavr/master.key file. Caller decides whether to emit a
  * `credential_unsafe_storage` event based on the returned `origin`.
  */
 export async function loadMasterKey(opts: { filePath?: string } = {}): Promise<KeyLoadResult> {
@@ -123,7 +123,7 @@ export async function loadMasterKey(opts: { filePath?: string } = {}): Promise<K
         key: raw,
         origin: 'master-key-file',
         unsafeStorageReason:
-          'OS keychain unavailable; master key loaded from ~/.cowire/master.key',
+          'OS keychain unavailable; master key loaded from ~/.stavr/master.key',
       };
     }
     // Wrong length — treat as garbage and rotate.
@@ -136,14 +136,14 @@ export async function loadMasterKey(opts: { filePath?: string } = {}): Promise<K
     chmodSync(tmp, 0o600);
   } catch {
     // chmod has no effect on Windows NTFS; the file inherits user-only ACLs
-    // because it lives under %USERPROFILE%/.cowire. Best-effort.
+    // because it lives under %USERPROFILE%/.stavr. Best-effort.
   }
   renameSync(tmp, filePath);
   return {
     key: fresh,
     origin: 'master-key-file-created',
     unsafeStorageReason:
-      'OS keychain unavailable; provisioned a 32-byte master key at ~/.cowire/master.key',
+      'OS keychain unavailable; provisioned a 32-byte master key at ~/.stavr/master.key',
   };
 }
 

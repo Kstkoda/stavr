@@ -5,11 +5,11 @@ import type { Broker } from './broker.js';
 import { toolError, toolJson } from './server.js';
 
 /**
- * Spec 49 Layer 2 — `mcp__cowire__steward_ask` tool.
+ * Spec 49 Layer 2 — `mcp__stavr__steward_ask` tool.
  *
  * Lets external chat surfaces (Cowork, Claude.ai, custom MCP clients) post
  * prompts to the daemon-hosted Steward and (optionally) wait for the response.
- * Same flow as the dashboard chat panel and `cowire ask`, packaged as a tool
+ * Same flow as the dashboard chat panel and `stavr ask`, packaged as a tool
  * call so any MCP-speaking front-end can route through it.
  */
 export function registerStewardAskTool(server: McpServer, broker: Broker): void {

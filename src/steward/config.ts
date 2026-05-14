@@ -6,7 +6,7 @@ import { z } from 'zod';
 /**
  * Spec 49 Layer 1 — daemon-hosted Steward configuration.
  *
- * Loaded from `~/.cowire/steward-config.yaml` (or .yml / .json) at daemon
+ * Loaded from `~/.stavr/steward-config.yaml` (or .yml / .json) at daemon
  * boot. If the file is absent OR `steward.enabled: false`, the daemon does
  * not spawn the Steward subprocess — keeps current users unaffected.
  *
@@ -31,7 +31,7 @@ export const StewardConfigZ = z.object({
       })
       .default({ daily_usd: 10, weekly_usd: 50 }),
     system_prompt_path: z.string().optional(),
-    memory_path: z.string().default(join(homedir(), '.cowire', 'steward-memory')),
+    memory_path: z.string().default(join(homedir(), '.stavr', 'steward-memory')),
     trust_scope: z
       .object({
         auto_grant_basics: z.boolean().default(true),
@@ -43,9 +43,9 @@ export const StewardConfigZ = z.object({
 export type StewardConfig = z.infer<typeof StewardConfigZ>;
 
 export const DEFAULT_CONFIG_PATHS = [
-  join(homedir(), '.cowire', 'steward-config.yaml'),
-  join(homedir(), '.cowire', 'steward-config.yml'),
-  join(homedir(), '.cowire', 'steward-config.json'),
+  join(homedir(), '.stavr', 'steward-config.yaml'),
+  join(homedir(), '.stavr', 'steward-config.yml'),
+  join(homedir(), '.stavr', 'steward-config.json'),
 ];
 
 export interface LoadConfigResult {

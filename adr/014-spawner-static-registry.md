@@ -7,7 +7,7 @@
 
 Spec 42 said "adding a new worker type is a single file in `src/workers/`." The most aesthetically pleasing reading is filesystem auto-discovery — scan `src/workers/*.ts`, dynamically `import()` each one, treat the default export as a spawner. The static-list reading is `src/workers/spawners-registry.ts` with one `import` and one entry in `allSpawners`. Both honor the "one file plus one line" budget; one is implicit, the other explicit.
 
-The trade-offs are packaging-bound. Dynamic discovery works fine under `tsx` (everything is on disk) but fights with bundlers and ESM static analysis: when Cowire eventually ships as a single bundled file, "scan a directory at runtime" stops working. We've already had to thread `dist/cli.js` location resolution through `import.meta.url` in [`daemon.ts`](../src/daemon.ts) — the cost of "look at your own filesystem" in distributable JS is real and recurring.
+The trade-offs are packaging-bound. Dynamic discovery works fine under `tsx` (everything is on disk) but fights with bundlers and ESM static analysis: when Stavr eventually ships as a single bundled file, "scan a directory at runtime" stops working. We've already had to thread `dist/cli.js` location resolution through `import.meta.url` in [`daemon.ts`](../src/daemon.ts) — the cost of "look at your own filesystem" in distributable JS is real and recurring.
 
 ## Decision
 
@@ -34,8 +34,8 @@ Adding a new spawner is two edits: drop the file at `src/workers/<type>.ts`, add
 
 - **Filesystem auto-discovery.** Scan `src/workers/`, dynamic-import each `.ts`. Aesthetic; breaks under bundlers and forces `import.meta.url` plumbing.
 - **Decorator-based registration.** Each spawner file imports a registry and calls `registry.register(this)` at top level. Side-effecting imports are hard to reason about — order matters, partial imports break the system, and tree-shakers struggle.
-- **Plugin manifest in `package.json`.** Over-engineering for a single-binary CLI. Useful if Cowire ever ships a plugin SDK for third-party spawners; not now.
+- **Plugin manifest in `package.json`.** Over-engineering for a single-binary CLI. Useful if Stavr ever ships a plugin SDK for third-party spawners; not now.
 
 ## When to revisit
 
-If Cowire ever exposes "drop this folder in `~/.cowire/spawners` to add a new worker type" — i.e., third-party plugins outside the source tree — auto-discovery comes back. It would be a `loadDynamicSpawners(dir)` helper that supplements the static list, not a replacement.
+If Stavr ever exposes "drop this folder in `~/.stavr/spawners` to add a new worker type" — i.e., third-party plugins outside the source tree — auto-discovery comes back. It would be a `loadDynamicSpawners(dir)` helper that supplements the static list, not a replacement.

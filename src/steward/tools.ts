@@ -15,7 +15,7 @@ import {
 } from './types.js';
 import type { StewardStore } from './store.js';
 
-export const STEWARD_MEMORY_ROOT = join(homedir(), '.cowire', 'steward-memory');
+export const STEWARD_MEMORY_ROOT = join(homedir(), '.stavr', 'steward-memory');
 
 /** Per-steward memory directory. The daemon never reads/writes the contents. */
 export function stewardMemoryPath(stewardId: string): string {
@@ -51,7 +51,7 @@ function registerClaim(
     'steward_claim',
     {
       description:
-        'Claim the Steward role for this MCP client. Requires a one-shot token from `cowire steward mint-token`. ' +
+        'Claim the Steward role for this MCP client. Requires a one-shot token from `stavr steward mint-token`. ' +
         'Tier: confirm — User approval required unless a covering trust scope is active. ' +
         'Refuses with StewardAlreadyClaimedError if another Steward holds the role.',
       inputSchema: {

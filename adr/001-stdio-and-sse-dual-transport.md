@@ -5,7 +5,7 @@
 
 ## Context
 
-MCP defines two standard transports: stdio (the server runs as a child process of one client, communication over pipes) and HTTP/SSE (the server runs as a network endpoint, one or more clients connect remotely). Cowire is consumed by two very different clients today: Claude Code (CC), which is launched per-session and spawns its MCP servers as child processes, and Cowork, which wants a long-lived remote connection so it can observe events across many CC sessions. Picking one transport would force one of those two consumers into an awkward shim.
+MCP defines two standard transports: stdio (the server runs as a child process of one client, communication over pipes) and HTTP/SSE (the server runs as a network endpoint, one or more clients connect remotely). Stavr is consumed by two very different clients today: Claude Code (CC), which is launched per-session and spawns its MCP servers as child processes, and Cowork, which wants a long-lived remote connection so it can observe events across many CC sessions. Picking one transport would force one of those two consumers into an awkward shim.
 
 ## Decision
 
@@ -21,5 +21,5 @@ Switch supports both transports in the same binary, via `mountTransports(broker,
 ## Alternatives considered
 
 - **stdio only.** Would force Cowork to spawn its own Switch per session, with no shared state across the dashboard's view. The whole point of Cowork is cross-session observation; this defeats it.
-- **SSE only.** Would force CC to learn a network-server model and would require Switch to be running before CC starts. Adds a configuration step ("did you remember to `cowire daemon start`?") that breaks the zero-setup CC story.
+- **SSE only.** Would force CC to learn a network-server model and would require Switch to be running before CC starts. Adds a configuration step ("did you remember to `stavr daemon start`?") that breaks the zero-setup CC story.
 - **A separate stdio→SSE shim binary** that runs as a child of CC and proxies to a daemon. Possible future fallback if a given MCP client cannot consume `type: "sse"` config, but pure overhead today.

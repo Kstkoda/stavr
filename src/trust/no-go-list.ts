@@ -3,8 +3,8 @@
 // Every action that passes tier/scope/decision still has to pass this gate.
 // A match opens a fresh decision_request that cannot be auto-approved by any
 // trust scope. Removing or weakening built-in entries requires editing this
-// file and rebuilding cowire — the User can ADD entries via
-// ~/.cowire/no-go-additions.ts but cannot disable the built-ins.
+// file and rebuilding stavr — the User can ADD entries via
+// ~/.stavr/no-go-additions.ts but cannot disable the built-ins.
 
 export type NoGoSeverity = 'high' | 'critical';
 export type NoGoAuditLevel = 'standard' | 'mandatory_post_action_summary';
@@ -36,7 +36,7 @@ export const STARTER_NO_GO_LIST: NoGoEntry[] = [
     matcher: {
       tool: ['Bash', 'PowerShell', 'shell'],
       free_text_pattern:
-        /\b(rm\s+-rf|Remove-Item\s+-Recurse\s+-Force)\s+\/?(?!.*\.cowire-worktrees)/i,
+        /\b(rm\s+-rf|Remove-Item\s+-Recurse\s+-Force)\s+\/?(?!.*\.stavr-worktrees)/i,
     },
     severity: 'critical',
     auditLevel: 'mandatory_post_action_summary',
@@ -70,11 +70,11 @@ export const STARTER_NO_GO_LIST: NoGoEntry[] = [
       // and attach it to args before invoking gatedAction. Without that
       // signal we don't fire (the merge would otherwise be unmatchable in
       // mocked-gh test environments). 60s is the spec default; configurable
-      // via env COWIRE_NO_GO_FAST_MERGE_SECONDS for User installs.
+      // via env STAVR_NO_GO_FAST_MERGE_SECONDS for User installs.
       runtime: (args) => {
         const age = (args as { pr_age_seconds?: number }).pr_age_seconds;
         if (typeof age !== 'number') return false;
-        const thresholdEnv = process.env.COWIRE_NO_GO_FAST_MERGE_SECONDS;
+        const thresholdEnv = process.env.STAVR_NO_GO_FAST_MERGE_SECONDS;
         const threshold = thresholdEnv ? Number(thresholdEnv) : 60;
         return age < threshold;
       },
@@ -248,7 +248,7 @@ export function checkNoGo(
 }
 
 /**
- * Merge User additions from ~/.cowire/no-go-additions.ts (loaded by the
+ * Merge User additions from ~/.stavr/no-go-additions.ts (loaded by the
  * daemon at boot — see daemon.ts). User can ADD but never REMOVE built-ins,
  * so we always start from STARTER_NO_GO_LIST.
  */

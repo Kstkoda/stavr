@@ -1,5 +1,5 @@
 /**
- * Cowire audit dashboard — single-file vanilla HTML/CSS/JS.
+ * Stavr audit dashboard — single-file vanilla HTML/CSS/JS.
  *
  * Served at `GET /dashboard`. Lives as a TS string so the `tsc` build doesn't
  * need an asset-copy step. No build step on the browser side either; Tailwind
@@ -19,7 +19,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
 <html lang="en" class="dark">
 <head>
   <meta charset="utf-8" />
-  <title>Cowire — Audit Dashboard</title>
+  <title>Stavr — Audit Dashboard</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
@@ -215,7 +215,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
     <header class="area-top flex items-center px-3" role="banner" aria-label="Daemon status">
       <div class="flex items-center gap-2 mr-4">
         <span class="live-dot live" id="live-dot" aria-hidden="true"></span>
-        <span class="font-bold tracking-wide" style="color:var(--accent)">cowire</span>
+        <span class="font-bold tracking-wide" style="color:var(--accent)">stavr</span>
         <span style="color:var(--fg-2)">·</span>
         <span style="color:var(--fg-1)">audit dashboard</span>
       </div>

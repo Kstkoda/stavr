@@ -106,7 +106,7 @@ describe('Spec 40 Phase 1b — stdio↔SSE shim', () => {
     const res = await pending;
     expect(res.error, `unexpected error: ${JSON.stringify(res.error)}`).toBeUndefined();
     expect(res.result).toBeDefined();
-    expect(res.result.serverInfo?.name).toBe('cowire-switch');
+    expect(res.result.serverInfo?.name).toBe('stavr-switch');
     expect(res.result.protocolVersion).toBeTruthy();
   }, 15_000);
 

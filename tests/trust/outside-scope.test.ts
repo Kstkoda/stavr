@@ -60,7 +60,7 @@ describe('trust scope — outside-scope action still gates', () => {
 
     // Different repo: same tool but the constraint blocks → must gate.
     const otherRepoPromise = callTool(h.client, 'github.create_issue', {
-      repo: 'Kstkoda/cowire',
+      repo: 'stenlund/stavr',
       title: 'wrong repo',
       body: 'x',
     });

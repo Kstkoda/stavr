@@ -13,7 +13,7 @@ if (-not (Test-Path $cliJs)) {
     exit 2
 }
 
-$tmp = Join-Path $env:TEMP ("cowire-a2-smoke-" + [Guid]::NewGuid().ToString('N'))
+$tmp = Join-Path $env:TEMP ("stavr-a2-smoke-" + [Guid]::NewGuid().ToString('N'))
 $nasHome = Join-Path $tmp 'nas'
 $devHome = Join-Path $tmp 'device'
 $nasDb = Join-Path $tmp 'nas.db'
@@ -50,7 +50,7 @@ function Run-CliJson {
 
 try {
     Write-Host '==> 1/4: start daemon (loopback, no auth yet)'
-    $env:COWIRE_HOME = $nasHome
+    $env:STAVR_HOME = $nasHome
     $daemonProc = Start-Process -FilePath node `
         -ArgumentList @($cliJs, 'daemon', 'start', '--port', $port, '--db', $nasDb, '--log-format', 'json') `
         -PassThru -NoNewWindow `
@@ -76,7 +76,7 @@ try {
     Write-Host '==> 2/4: pair bootstrap returns a 6-digit code'
     $bootstrap = Run-CliJson `
         -NodeArgs @($cliJs, 'pair', 'bootstrap', '--daemon-url', ("http://127.0.0.1:" + $port)) `
-        -Env @{ COWIRE_HOME = $nasHome }
+        -Env @{ STAVR_HOME = $nasHome }
     if ($bootstrap.ExitCode -ne 0) {
         Write-Host "FAIL: pair bootstrap exit $($bootstrap.ExitCode)"
         Write-Host $bootstrap.Stderr
@@ -94,7 +94,7 @@ try {
     Write-Host '==> 3/4: pair remote-host -> token + devices.json'
     $remote = Run-CliJson `
         -NodeArgs @($cliJs, 'pair', 'remote-host', '--daemon-url', ("http://127.0.0.1:" + $port), '--code', $bootstrapJson.code, '--name', 'smoke-device') `
-        -Env @{ COWIRE_HOME = $devHome }
+        -Env @{ STAVR_HOME = $devHome }
     if ($remote.ExitCode -ne 0) {
         Write-Host "FAIL: pair remote-host exit $($remote.ExitCode)"
         Write-Host $remote.Stderr
@@ -118,7 +118,7 @@ try {
     Write-Host '==> 4/4: devices list, then revoke, then verify gone'
     $list = Run-CliJson `
         -NodeArgs @($cliJs, 'devices', 'list', '--db', $nasDb) `
-        -Env @{ COWIRE_HOME = $nasHome }
+        -Env @{ STAVR_HOME = $nasHome }
     $listJson = $list.Stdout | ConvertFrom-Json
     if ($listJson.devices.Count -ne 1 -or $listJson.devices[0].name -ne 'smoke-device') {
         Write-Host 'FAIL: devices list did not show smoke-device'
@@ -129,7 +129,7 @@ try {
     $deviceId = $listJson.devices[0].id
     $revoke = Run-CliJson `
         -NodeArgs @($cliJs, 'devices', 'revoke', $deviceId, '--db', $nasDb) `
-        -Env @{ COWIRE_HOME = $nasHome }
+        -Env @{ STAVR_HOME = $nasHome }
     if ($revoke.ExitCode -ne 0) {
         Write-Host "FAIL: devices revoke exit $($revoke.ExitCode)"
         Write-Host $revoke.Stderr
@@ -138,7 +138,7 @@ try {
     }
     $listAfter = Run-CliJson `
         -NodeArgs @($cliJs, 'devices', 'list', '--db', $nasDb) `
-        -Env @{ COWIRE_HOME = $nasHome }
+        -Env @{ STAVR_HOME = $nasHome }
     $listAfterJson = $listAfter.Stdout | ConvertFrom-Json
     if ($listAfterJson.devices.Count -ne 0) {
         Write-Host 'FAIL: device still active after revoke'

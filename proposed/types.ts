@@ -1,4 +1,4 @@
-// types.ts — proposed additions to cowire's type system
+// types.ts — proposed additions to stavr's type system
 //
 // Merge the event-kind additions into src/event-types.ts.
 // Move the rest into src/types/ (one file per concept if you prefer).

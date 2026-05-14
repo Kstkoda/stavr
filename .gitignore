@@ -12,10 +12,10 @@ dist/
 .idea/
 .DS_Store
 coverage/
-.cowire/
+.stavr/
 
 # spec 47 workspace state (per-worker worktrees, never commit)
-.cowire-worktrees/
+.stavr-worktrees/
 
 # Claude Code per-project state
 .claude/

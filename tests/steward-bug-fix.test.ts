@@ -36,11 +36,11 @@ describe('parseIssueRef', () => {
   });
 
   it('accepts https GitHub URLs', () => {
-    expect(parseIssueRef('https://github.com/Kstkoda/cowire/issues/26')).toEqual({
-      owner: 'Kstkoda',
-      repo: 'cowire',
+    expect(parseIssueRef('https://github.com/stenlund/stavr/issues/26')).toEqual({
+      owner: 'stenlund',
+      repo: 'stavr',
       number: 26,
-      repo_full: 'Kstkoda/cowire',
+      repo_full: 'stenlund/stavr',
     });
   });
 
@@ -155,29 +155,29 @@ describe('buildScopeProposal', () => {
 });
 
 describe('decideAutoApproval', () => {
-  it('grants on COWIRE_AUTO_APPROVE_BUG_FIXES=1', () => {
-    expect(decideAutoApproval({ COWIRE_AUTO_APPROVE_BUG_FIXES: '1' })).toEqual({
+  it('grants on STAVR_AUTO_APPROVE_BUG_FIXES=1', () => {
+    expect(decideAutoApproval({ STAVR_AUTO_APPROVE_BUG_FIXES: '1' })).toEqual({
       granted: true,
-      reason: 'COWIRE_AUTO_APPROVE_BUG_FIXES=1 in env',
+      reason: 'STAVR_AUTO_APPROVE_BUG_FIXES=1 in env',
     });
   });
 
-  it('grants on COWIRE_AUTO_APPROVE_BUG_FIXES=true (case-insensitive)', () => {
-    expect(decideAutoApproval({ COWIRE_AUTO_APPROVE_BUG_FIXES: 'TRUE' }).granted).toBe(true);
-    expect(decideAutoApproval({ COWIRE_AUTO_APPROVE_BUG_FIXES: 'true' }).granted).toBe(true);
+  it('grants on STAVR_AUTO_APPROVE_BUG_FIXES=true (case-insensitive)', () => {
+    expect(decideAutoApproval({ STAVR_AUTO_APPROVE_BUG_FIXES: 'TRUE' }).granted).toBe(true);
+    expect(decideAutoApproval({ STAVR_AUTO_APPROVE_BUG_FIXES: 'true' }).granted).toBe(true);
   });
 
   it('does not grant when the env var is missing', () => {
     expect(decideAutoApproval({}).granted).toBe(false);
   });
 
-  it('does not grant on COWIRE_AUTO_APPROVE_BUG_FIXES=0 or empty', () => {
-    expect(decideAutoApproval({ COWIRE_AUTO_APPROVE_BUG_FIXES: '0' }).granted).toBe(false);
-    expect(decideAutoApproval({ COWIRE_AUTO_APPROVE_BUG_FIXES: '' }).granted).toBe(false);
+  it('does not grant on STAVR_AUTO_APPROVE_BUG_FIXES=0 or empty', () => {
+    expect(decideAutoApproval({ STAVR_AUTO_APPROVE_BUG_FIXES: '0' }).granted).toBe(false);
+    expect(decideAutoApproval({ STAVR_AUTO_APPROVE_BUG_FIXES: '' }).granted).toBe(false);
   });
 
   it('does not grant on arbitrary other values', () => {
-    expect(decideAutoApproval({ COWIRE_AUTO_APPROVE_BUG_FIXES: 'yes' }).granted).toBe(false);
+    expect(decideAutoApproval({ STAVR_AUTO_APPROVE_BUG_FIXES: 'yes' }).granted).toBe(false);
   });
 });
 

@@ -215,8 +215,8 @@ describe('Phase B — decision flow', () => {
   });
 
   it('persists across restart: open & overdue decisions expire on startup sweep', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'cowire-test-'));
-    const dbPath = join(dir, 'cowire.db');
+    const dir = mkdtempSync(join(tmpdir(), 'stavr-test-'));
+    const dbPath = join(dir, 'runestone.db');
     try {
       // First run: open a decision with very short timeout, then close without responding.
       const store1 = new EventStore();

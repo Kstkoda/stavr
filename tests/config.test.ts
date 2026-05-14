@@ -6,7 +6,7 @@
  *  - resolveBind() maps the symbolic specs (localhost|lan|tailscale) and
  *    explicit host[:port] into concrete listen targets.
  *  - checkBindAuthGate() centralises the refusal rule — defence-in-depth,
- *    invoked from both `cowire daemon start` and `mountTransports`.
+ *    invoked from both `stavr daemon start` and `mountTransports`.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -24,7 +24,7 @@ describe('loadConfig', () => {
   let tmp: string;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'cowire-config-'));
+    tmp = mkdtempSync(join(tmpdir(), 'stavr-config-'));
   });
 
   afterEach(() => {
@@ -44,7 +44,7 @@ describe('loadConfig', () => {
   });
 
   it('parses a complete YAML config', () => {
-    const path = join(tmp, 'cowire.yaml');
+    const path = join(tmp, 'stavr.yaml');
     writeFileSync(
       path,
       'network:\n  bind: lan\n  require_auth_when_non_local: false\n',
@@ -57,7 +57,7 @@ describe('loadConfig', () => {
   });
 
   it('fills missing keys with defaults', () => {
-    const path = join(tmp, 'cowire.yaml');
+    const path = join(tmp, 'stavr.yaml');
     writeFileSync(path, 'network:\n  bind: 192.168.1.10:7777\n', 'utf8');
     const r = loadConfig(path);
     expect(r.config.network.bind).toBe('192.168.1.10:7777');
@@ -66,7 +66,7 @@ describe('loadConfig', () => {
   });
 
   it('treats an empty file as defaults', () => {
-    const path = join(tmp, 'cowire.yaml');
+    const path = join(tmp, 'stavr.yaml');
     writeFileSync(path, '', 'utf8');
     const r = loadConfig(path);
     expect(r.source).toBe('file');
@@ -74,13 +74,13 @@ describe('loadConfig', () => {
   });
 
   it('surfaces a clear error on YAML parse failure', () => {
-    const path = join(tmp, 'cowire.yaml');
+    const path = join(tmp, 'stavr.yaml');
     writeFileSync(path, 'network: { unterminated:', 'utf8');
     expect(() => loadConfig(path)).toThrow(/YAML parse error/);
   });
 
   it('surfaces a clear error on invalid schema (wrong type)', () => {
-    const path = join(tmp, 'cowire.yaml');
+    const path = join(tmp, 'stavr.yaml');
     writeFileSync(
       path,
       'network:\n  bind: localhost\n  require_auth_when_non_local: "yes"\n',
@@ -89,14 +89,14 @@ describe('loadConfig', () => {
     expect(() => loadConfig(path)).toThrow(/invalid config/);
   });
 
-  it('defaultConfigPath honours COWIRE_HOME', () => {
-    const before = process.env.COWIRE_HOME;
+  it('defaultConfigPath honours STAVR_HOME', () => {
+    const before = process.env.STAVR_HOME;
     try {
-      process.env.COWIRE_HOME = tmp;
-      expect(defaultConfigPath()).toBe(join(tmp, 'cowire.yaml'));
+      process.env.STAVR_HOME = tmp;
+      expect(defaultConfigPath()).toBe(join(tmp, 'stavr.yaml'));
     } finally {
-      if (before === undefined) delete process.env.COWIRE_HOME;
-      else process.env.COWIRE_HOME = before;
+      if (before === undefined) delete process.env.STAVR_HOME;
+      else process.env.STAVR_HOME = before;
     }
   });
 });

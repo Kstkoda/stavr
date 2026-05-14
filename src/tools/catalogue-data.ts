@@ -1074,25 +1074,25 @@ export const TOOL_EXAMPLES: Record<string, { args: unknown; result: unknown }> =
     },
   },
   'github.read_pr': {
-    args: { repo: 'Kstkoda/cowire', number: 9 },
+    args: { repo: 'stenlund/stavr', number: 9 },
     result: { number: 9, title: 'Spec 40 Phase 2', state: 'MERGED', /* … */ },
   },
   'github.create_pr': {
     args: {
-      repo: 'Kstkoda/cowire',
+      repo: 'stenlund/stavr',
       head: 'feat/foo',
       base: 'main',
       title: 'feat: add foo',
       body: 'See spec.',
     },
-    result: { ok: true, correlation_id: 'cor_...', pr_url: 'https://github.com/Kstkoda/cowire/pull/42', pr_number: 42 },
+    result: { ok: true, correlation_id: 'cor_...', pr_url: 'https://github.com/stenlund/stavr/pull/42', pr_number: 42 },
   },
   worker_spawn: {
     args: {
       type: 'cc',
       name: 'my-cc',
       params: {
-        repo_path: 'C:/dev/cowire',
+        repo_path: 'C:/dev/stavr',
         branch: 'feat/spec-X',
         base: 'main',
         prompt: 'Implement spec X',
@@ -1104,7 +1104,7 @@ export const TOOL_EXAMPLES: Record<string, { args: unknown; result: unknown }> =
     args: {
       title: 'Auto-merge dependabot PRs',
       description: 'Allow merging dependabot PRs without confirmation',
-      allowed_actions: [{ tool: 'github_merge_pr', param_constraints: { repo: 'Kstkoda/cowire' } }],
+      allowed_actions: [{ tool: 'github_merge_pr', param_constraints: { repo: 'stenlund/stavr' } }],
       expires_after_actions: 10,
     },
     result: { scope_id: 'ts_...', scope: { /* TrustScope */ } },

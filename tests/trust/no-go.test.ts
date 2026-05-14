@@ -16,12 +16,12 @@ describe('Spec 48 Layer 3 — no-go starter pattern matchers', () => {
   beforeEach(() => setLiveNoGoList(STARTER_NO_GO_LIST));
   afterEach(() => setLiveNoGoList(STARTER_NO_GO_LIST));
 
-  it('fs.rm_recursive_root fires on rm -rf / but not on rm -rf .cowire-worktrees/x', () => {
+  it('fs.rm_recursive_root fires on rm -rf / but not on rm -rf .stavr-worktrees/x', () => {
     const hit = findNoGoMatch(STARTER_NO_GO_LIST, 'Bash', { command: 'rm -rf /' });
     expect(hit?.id).toBe('fs.rm_recursive_root');
 
     const clean = findNoGoMatch(STARTER_NO_GO_LIST, 'Bash', {
-      command: 'rm -rf .cowire-worktrees/cc-w',
+      command: 'rm -rf .stavr-worktrees/cc-w',
     });
     expect(clean).toBeUndefined();
   });
@@ -102,7 +102,7 @@ describe('Spec 48 Layer 3 — no-go starter pattern matchers', () => {
 
   it('self.modify_no_go_list fires when Edit / Write targets src/trust/no-go-list.ts', () => {
     const hit = findNoGoMatch(STARTER_NO_GO_LIST, 'Edit', {
-      file_path: 'C:/dev/cowire/src/trust/no-go-list.ts',
+      file_path: 'C:/dev/stavr/src/trust/no-go-list.ts',
     });
     expect(hit?.id).toBe('self.modify_no_go_list');
 

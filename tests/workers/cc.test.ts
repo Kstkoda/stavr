@@ -67,7 +67,7 @@ describe('cc spawner', () => {
   let tmp: string;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'cowire-cc-test-'));
+    tmp = mkdtempSync(join(tmpdir(), 'stavr-cc-test-'));
   });
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });
@@ -108,8 +108,8 @@ describe('cc spawner', () => {
       ctx,
     );
 
-    // Worktree path created under tmp/.cowire-worktrees/cc-w
-    const expectedWorktree = join(tmp, '.cowire-worktrees', 'cc-w');
+    // Worktree path created under tmp/.stavr-worktrees/cc-w
+    const expectedWorktree = join(tmp, '.stavr-worktrees', 'cc-w');
     expect(inst.metadata.worktree_path).toBe(expectedWorktree);
 
     // git commands invoked in order: rev-parse --git-dir, fetch, rev-parse --verify origin/main, worktree add
@@ -119,10 +119,10 @@ describe('cc spawner', () => {
     expect(gitCalls.some((c) => c[0] === 'worktree' && c[1] === 'add')).toBe(true);
 
     // mcp config written (spawner creates the dir defensively when git is mocked)
-    const mcp = join(expectedWorktree, '.cowire-mcp.json');
+    const mcp = join(expectedWorktree, '.stavr-mcp.json');
     expect(existsSync(mcp)).toBe(true);
     const parsed = JSON.parse(readFileSync(mcp, 'utf8'));
-    expect(parsed.mcpServers.cowire.type).toBe('sse');
+    expect(parsed.mcpServers.stavr.type).toBe('sse');
 
     const isWindows = process.platform === 'win32';
     expect(spawnArgs?.file).toBe(isWindows ? 'cmd.exe' : 'claude');
@@ -131,7 +131,7 @@ describe('cc spawner', () => {
     expect(allArgs).toContain('--output-format');
     expect(allArgs).toContain('stream-json');
     expect(allArgs).toContain('--mcp-config');
-    expect(allArgs).toContain('.cowire-mcp.json');
+    expect(allArgs).toContain('.stavr-mcp.json');
     if (isWindows) {
       expect(allArgs.slice(0, 3)).toEqual(['/d', '/s', '/c']);
       expect(allArgs).toContain('claude');
@@ -172,7 +172,7 @@ describe('cc spawner', () => {
     inst.events.on('metadata', (m) => metadataEvents.push(m));
 
     const start = Date.now();
-    watcher.emit('all', 'change', join(tmp, '.cowire-worktrees', 'cc-w', '.git', 'HEAD'));
+    watcher.emit('all', 'change', join(tmp, '.stavr-worktrees', 'cc-w', '.git', 'HEAD'));
     // Wait up to 200ms for the async readGitState to finish.
     while (metadataEvents.length === 0 && Date.now() - start < 200) {
       await new Promise((r) => setTimeout(r, 10));

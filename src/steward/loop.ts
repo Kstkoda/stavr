@@ -112,7 +112,7 @@ export async function startStewardLoop(deps: LoopDeps): Promise<RunningLoop> {
     if (pausedForBudget && !budgetOverride) {
       await emit('steward_response', {
         text:
-          'Paused for budget — daily spend has reached the configured cap. Run `cowire steward resume --override-budget` to continue today, or wait until the next UTC day.',
+          'Paused for budget — daily spend has reached the configured cap. Run `stavr steward resume --override-budget` to continue today, or wait until the next UTC day.',
       }, correlationId);
       return { correlation_id: correlationId, paused: true };
     }
@@ -120,7 +120,7 @@ export async function startStewardLoop(deps: LoopDeps): Promise<RunningLoop> {
       await pauseForBudget('daily');
       await emit('steward_response', {
         text:
-          'Paused for budget — daily spend has reached the configured cap. Run `cowire steward resume --override-budget` to continue today, or wait until the next UTC day.',
+          'Paused for budget — daily spend has reached the configured cap. Run `stavr steward resume --override-budget` to continue today, or wait until the next UTC day.',
       }, correlationId);
       return { correlation_id: correlationId, paused: true };
     }

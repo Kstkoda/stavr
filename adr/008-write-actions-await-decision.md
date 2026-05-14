@@ -22,4 +22,4 @@ GitHub write actions, when they ship, will be exposed as MCP tools whose handler
 
 - **Separate "write token" model.** Issue an OAuth token with write scope on demand, hand it to the agent. Multiplies the auth surface and decouples the *decision to write* from the *act of writing*, which is exactly the boundary we want to keep close together.
 - **Whitelist of safe writes that bypass approval.** Slippery slope — "comments are safe" until they aren't. We can layer auto-approval policies on top of `await_decision` later without weakening the default gate.
-- **No write actions at all.** Available today (v0.1 has none). Eventually limits Cowire to read-only co-pilot work, which contradicts the spec 39 vision of agents acting on the user's behalf.
+- **No write actions at all.** Available today (v0.1 has none). Eventually limits Stavr to read-only co-pilot work, which contradicts the spec 39 vision of agents acting on the user's behalf.

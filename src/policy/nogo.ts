@@ -8,7 +8,7 @@
 // migration; users add/disable via the dashboard or CLI. This module is the
 // pure matcher — DB persistence is the caller's job.
 
-import type { RiskClass } from '../types/cowire-bom.js';
+import type { RiskClass } from '../types/stavr-bom.js';
 
 export interface NoGoRule {
   id: string;

@@ -24,10 +24,10 @@ export const CcSpawnParams = z.object({
   prompt: z.string().min(1),
   model: z.string().optional(),
   approval_mode: z.enum(['auto-accept', 'normal']).optional().default('normal'),
-  /** Directory under which to put the worktree. Default: <repo_path>/.cowire-worktrees */
+  /** Directory under which to put the worktree. Default: <repo_path>/.stavr-worktrees */
   worktree_base: z.string().optional(),
   cleanup_on_terminate: z.boolean().optional().default(true),
-  /** Daemon URL the spawned CC will connect to. Defaults to env COWIRE_DAEMON_URL or http://127.0.0.1:7777/mcp/sse. Note: /mcp/sse, not /sse — the daemon's MCP endpoint is under /mcp/. (Pre-spec-47 the spawner wrote the wrong path and every worker's MCP connection silently failed.) */
+  /** Daemon URL the spawned CC will connect to. Defaults to env STAVR_DAEMON_URL or http://127.0.0.1:7777/mcp/sse. Note: /mcp/sse, not /sse — the daemon's MCP endpoint is under /mcp/. (Pre-spec-47 the spawner wrote the wrong path and every worker's MCP connection silently failed.) */
   daemon_url: z.string().url().optional(),
 });
 
@@ -65,7 +65,7 @@ export function createCcSpawner(opts: CcSpawnerOptions = {}): WorkerSpawner<CcSp
       const repoPath = resolve(params.repo_path);
       const worktreeBase = params.worktree_base
         ? resolve(params.worktree_base)
-        : join(repoPath, '.cowire-worktrees');
+        : join(repoPath, '.stavr-worktrees');
       const worktreePath = join(worktreeBase, ctx.workerName);
 
       if (existsSync(worktreePath)) {
@@ -89,9 +89,9 @@ export function createCcSpawner(opts: CcSpawnerOptions = {}): WorkerSpawner<CcSp
 
       // 4. Write the MCP config. `git worktree add` creates the dir in prod; we
       // mkdir defensively so tests with a mocked git runner still succeed.
-      const daemonUrl = params.daemon_url ?? opts.defaultDaemonUrl ?? process.env.COWIRE_DAEMON_URL ?? 'http://127.0.0.1:7777/mcp/sse';
+      const daemonUrl = params.daemon_url ?? opts.defaultDaemonUrl ?? process.env.STAVR_DAEMON_URL ?? 'http://127.0.0.1:7777/mcp/sse';
       mkdirSync(worktreePath, { recursive: true });
-      const mcpConfigPath = join(worktreePath, '.cowire-mcp.json');
+      const mcpConfigPath = join(worktreePath, '.stavr-mcp.json');
       safeWrite(mcpConfigPath, buildMcpConfig(daemonUrl));
 
       // 5. Spawn claude directly as a child process — no shell wrapper, no
@@ -232,7 +232,7 @@ export function createCcSpawner(opts: CcSpawnerOptions = {}): WorkerSpawner<CcSp
     ): Promise<void> {
       // Resolution of open question Q3: the orchestrator publishes
       // worker_dispatch_request on the broker; the spawned CC subscribes to that
-      // kind at startup (see its initial prompt / .cowire-mcp.json). This method
+      // kind at startup (see its initial prompt / .stavr-mcp.json). This method
       // is a no-op because the orchestrator does the publish.
     },
   };
@@ -280,7 +280,7 @@ function launchClaude(spawnFn: Spawner, opts: LaunchOpts): ChildProcess {
     '--output-format', 'stream-json',
     '--input-format', 'stream-json',
     '--verbose',
-    '--mcp-config', '.cowire-mcp.json',
+    '--mcp-config', '.stavr-mcp.json',
   ];
   if (opts.model) claudeArgs.push('--model', opts.model);
   // bypassPermissions, not acceptEdits: headless workers have no UI to surface
@@ -304,9 +304,9 @@ function launchClaude(spawnFn: Spawner, opts: LaunchOpts): ChildProcess {
   // the next credential source - typically the User's logged-in Claude Max
   // OAuth session. API key beats OAuth in CC's precedence, so without this the
   // worker bills the API key even when Max is available. Opt back into API
-  // billing by setting COWIRE_FORCE_API_KEY=1 in the daemon's env.
+  // billing by setting STAVR_FORCE_API_KEY=1 in the daemon's env.
   const env = { ...process.env };
-  if (!process.env.COWIRE_FORCE_API_KEY) {
+  if (!process.env.STAVR_FORCE_API_KEY) {
     delete env.ANTHROPIC_API_KEY;
   }
   const spawnOpts: SpawnOptions = {
@@ -337,13 +337,13 @@ function launchClaude(spawnFn: Spawner, opts: LaunchOpts): ChildProcess {
 }
 
 function buildMcpConfig(daemonUrl: string): string {
-  // CC's mcp-config accepts an `mcpServers` map. We register Cowire's daemon
-  // under the key `cowire`. SSE transport is used directly; if the local CC
+  // CC's mcp-config accepts an `mcpServers` map. We register Stavr's daemon
+  // under the key `stavr`. SSE transport is used directly; if the local CC
   // doesn't speak SSE, the user wires the stdio<->SSE shim instead. Documented
   // in ARCHITECTURE.md (Resolution of open question Q1).
   const config = {
     mcpServers: {
-      cowire: {
+      stavr: {
         type: 'sse',
         url: daemonUrl,
       },

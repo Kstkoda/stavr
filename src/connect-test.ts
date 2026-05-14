@@ -17,7 +17,7 @@ export interface ConnectTestResult {
 
 export async function runConnectTest(opts: ConnectTestOptions): Promise<ConnectTestResult> {
   const transport = new SSEClientTransport(new URL(opts.url));
-  const client = new Client({ name: 'cowire-connect-test', version: '0.0.1' });
+  const client = new Client({ name: 'stavr-connect-test', version: '0.0.1' });
 
   const received: Array<{ method: string; params: { kind?: string } }> = [];
   client.fallbackNotificationHandler = async (n) => {
@@ -33,7 +33,7 @@ export async function runConnectTest(opts: ConnectTestOptions): Promise<ConnectT
   const emitRes = await callTool(client, 'emit_event', {
     kind: 'progress',
     payload: { message: 'connect-test probe' },
-    source_agent: 'cowire-connect-test',
+    source_agent: 'stavr-connect-test',
   });
 
   // Wait for the notification to arrive.

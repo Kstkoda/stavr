@@ -2,7 +2,7 @@
 //
 // Anything external that isn't already an MCP server (Wiser, Unifi, Roblox, Unity,
 // SMTP, webhooks, custom scripts, vendor APIs) implements this interface.
-// cowire treats them uniformly: register, authenticate, expose capabilities,
+// stavr treats them uniformly: register, authenticate, expose capabilities,
 // route through no-go list, log all exec.
 //
 // Put this in src/connectors/connector.ts. Each concrete connector lives in
@@ -16,7 +16,7 @@ import type { RiskClass, CapabilityTag } from './types';
 // ============================================================
 
 /**
- * A Connector is a registered orange brick on the cowire toolkit canvas.
+ * A Connector is a registered orange brick on the stavr toolkit canvas.
  * It wraps an external service or local capability that doesn't speak MCP.
  *
  * Lifecycle:
@@ -26,7 +26,7 @@ import type { RiskClass, CapabilityTag } from './types';
  * them as draggable bricks with editable config.
  */
 export interface Connector {
-  /** Unique id within cowire, e.g. 'wiser', 'unifi-main', 'webhook-stripe' */
+  /** Unique id within stavr, e.g. 'wiser', 'unifi-main', 'webhook-stripe' */
   id: string;
 
   /** Kind groups instances. Wiser brick + custom Wiser instance share kind='wiser'. */

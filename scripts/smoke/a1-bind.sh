@@ -12,15 +12,15 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-TMP="$(mktemp -d 2>/dev/null || mktemp -d -t cowire-smoke)"
+TMP="$(mktemp -d 2>/dev/null || mktemp -d -t stavr-smoke)"
 trap 'rm -rf "$TMP"' EXIT
 
-export COWIRE_HOME="$TMP/home"
-mkdir -p "$COWIRE_HOME"
+export STAVR_HOME="$TMP/home"
+mkdir -p "$STAVR_HOME"
 
 PORT=${PORT:-17777}
-CONFIG="$TMP/cowire.yaml"
-DB="$TMP/cowire.db"
+CONFIG="$TMP/stavr.yaml"
+DB="$TMP/runestone.db"
 
 CLI="node $ROOT/dist/cli.js"
 if [[ ! -f "$ROOT/dist/cli.js" ]]; then
@@ -74,7 +74,7 @@ if ! curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null; then
 fi
 echo "    /healthz reachable on 127.0.0.1:$PORT"
 
-echo "==> 3/3: cowire config show reports auth-gate verdict"
+echo "==> 3/3: stavr config show reports auth-gate verdict"
 verdict=$($CLI config show --config "$CONFIG" --bind-host 0.0.0.0)
 echo "$verdict" | grep -q '"would_refuse": true' \
   || { echo "FAIL: config show did not flag 0.0.0.0 as would_refuse"; echo "$verdict"; exit 1; }

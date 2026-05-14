@@ -7,9 +7,9 @@
 
 Spec 42 (event-driven worker orchestration, bundled into spec 40 Phase 2) introduces a new family of broker events — `worker_dispatch_request`, `worker_progress`, `worker_metadata_changed`, `worker_terminated` — that describe the lifecycle of orchestrated workers. The shape of those events is, on the schedule, about to ship.
 
-In parallel, the Agent2Agent (A2A) protocol reached v1.0.0 on 2026-03-12 under the Linux Foundation's Agentic AI Foundation, with 150+ adopters (Microsoft, AWS, Salesforce, SAP, ServiceNow, IBM, Workday) and SDKs in five languages. It defines a JSON-RPC 2.0 vocabulary for agent↔agent communication (`Task`, `Message`, `Part`, `Artifact`, `AgentCard`, `TaskStatusUpdateEvent`, `TaskArtifactUpdateEvent`) that overlaps materially with what Cowire's worker events describe.
+In parallel, the Agent2Agent (A2A) protocol reached v1.0.0 on 2026-03-12 under the Linux Foundation's Agentic AI Foundation, with 150+ adopters (Microsoft, AWS, Salesforce, SAP, ServiceNow, IBM, Workday) and SDKs in five languages. It defines a JSON-RPC 2.0 vocabulary for agent↔agent communication (`Task`, `Message`, `Part`, `Artifact`, `AgentCard`, `TaskStatusUpdateEvent`, `TaskArtifactUpdateEvent`) that overlaps materially with what Stavr's worker events describe.
 
-The question this ADR settles, before Phase 2 freezes the event schema: should Cowire's internal `worker_*` event vocabulary be aligned with A2A's terms, or stay broker-pattern as designed, with any A2A interop handled at a future boundary? The detailed mapping and option scoring live in [spec 43 — A2A compatibility analysis](../../../privacy%20tracker/specs/43_a2a_compatibility.md); this ADR records the decision.
+The question this ADR settles, before Phase 2 freezes the event schema: should Stavr's internal `worker_*` event vocabulary be aligned with A2A's terms, or stay broker-pattern as designed, with any A2A interop handled at a future boundary? The detailed mapping and option scoring live in [spec 43 — A2A compatibility analysis](../../../privacy%20tracker/specs/43_a2a_compatibility.md); this ADR records the decision.
 
 ## Decision
 
@@ -19,10 +19,10 @@ Keep the broker-pattern as designed. Phase 2 ships its `worker_*` event taxonomy
 
 - Phase 2 of spec 40 / spec 42 is unblocked; no event schema rewrite, no payload reshaping.
 - The internal event log remains insulated from A2A spec churn (v1.0 is two months old; v1.1/v1.2 corner-case clarifications are likely).
-- Cowire's local-process identity model (PID, cwd, worktree path) is preserved unchanged; we do not invent HTTPS-published `AgentCard` identity for child processes that don't have URLs.
+- Stavr's local-process identity model (PID, cwd, worktree path) is preserved unchanged; we do not invent HTTPS-published `AgentCard` identity for child processes that don't have URLs.
 - When a real A2A consumer arrives, the bridge cost is bounded: ~300–500 LOC of projection plus three HTTP endpoints, scoped as a follow-up spec. The mapping table in spec 43 demonstrates the vocabulary overlap is high enough to make this a translation problem, not a redesign.
 - Two forward-compat nudges fall out of this decision and apply to the Phase 2 dispatch at no cost: (a) `worker_terminated.reason` enum values must stay mappable to A2A terminal `TaskState`s (`completed`→`COMPLETED`, `crashed`→`FAILED`, `terminated`→`CANCELED`) — pin with a test so a future rename can't drift; (b) `correlation_id` must be set consistently across one worker's lifecycle so a projection can group them as one A2A `Task`.
-- Trade-off accepted: an A2A-speaking peer that wants to consume Cowire events today gets nothing. We chose schema stability over zero-day interop because no such peer exists in any current Cowire consumer (Cowork, Claude Code, dashboard).
+- Trade-off accepted: an A2A-speaking peer that wants to consume Stavr events today gets nothing. We chose schema stability over zero-day interop because no such peer exists in any current Stavr consumer (Cowork, Claude Code, dashboard).
 
 ## Alternatives considered
 

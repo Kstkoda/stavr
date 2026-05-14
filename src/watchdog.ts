@@ -1,21 +1,21 @@
 #!/usr/bin/env node
 /**
  * Daemon watchdog (ADR-020). Pings `/healthz` every 30s; after 3 consecutive
- * failures it restarts the daemon by invoking the cowire CLI.
+ * failures it restarts the daemon by invoking the stavr CLI.
  *
  * Stays simple on purpose:
  *  - Plain Node, no extra deps.
- *  - Single-file log at `~/.cowire/watchdog.log`. Newline-delimited JSON.
- *  - Re-uses `cowire daemon start --detach` / `cowire daemon stop` so we
+ *  - Single-file log at `~/.stavr/watchdog.log`. Newline-delimited JSON.
+ *  - Re-uses `stavr daemon start --detach` / `stavr daemon stop` so we
  *    don't duplicate PID management.
  *  - Runs `forever` when registered via OS scheduler; in tests we can run it
  *    once via `runWatchdogOnce`.
  *
  * Config:
- *  - COWIRE_WATCHDOG_URL (default http://127.0.0.1:7777/healthz)
- *  - COWIRE_WATCHDOG_INTERVAL_MS (default 30000)
- *  - COWIRE_WATCHDOG_FAIL_THRESHOLD (default 3)
- *  - COWIRE_WATCHDOG_PORT (default 7777, used when invoking `cowire daemon start`)
+ *  - STAVR_WATCHDOG_URL (default http://127.0.0.1:7777/healthz)
+ *  - STAVR_WATCHDOG_INTERVAL_MS (default 30000)
+ *  - STAVR_WATCHDOG_FAIL_THRESHOLD (default 3)
+ *  - STAVR_WATCHDOG_PORT (default 7777, used when invoking `stavr daemon start`)
  */
 import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
@@ -23,7 +23,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const WATCHDOG_DIR = join(homedir(), '.cowire');
+const WATCHDOG_DIR = join(homedir(), '.stavr');
 export const WATCHDOG_LOG_PATH = join(WATCHDOG_DIR, 'watchdog.log');
 export const WATCHDOG_PID_PATH = join(WATCHDOG_DIR, 'watchdog.pid');
 
@@ -36,20 +36,20 @@ export interface WatchdogConfig {
   cliEntry: string;
   /** How long to wait for a ping before timing it out. */
   pingTimeoutMs: number;
-  /** Daemon port to use when restarting via `cowire daemon start --port`. */
+  /** Daemon port to use when restarting via `stavr daemon start --port`. */
   port: number;
 }
 
 export function defaultWatchdogConfig(): WatchdogConfig {
   const here = dirname(fileURLToPath(import.meta.url));
   return {
-    healthUrl: process.env.COWIRE_WATCHDOG_URL ?? 'http://127.0.0.1:7777/healthz',
-    intervalMs: parseInt(process.env.COWIRE_WATCHDOG_INTERVAL_MS ?? '30000', 10),
-    failThreshold: parseInt(process.env.COWIRE_WATCHDOG_FAIL_THRESHOLD ?? '3', 10),
-    restartCooldownMs: parseInt(process.env.COWIRE_WATCHDOG_COOLDOWN_MS ?? '60000', 10),
+    healthUrl: process.env.STAVR_WATCHDOG_URL ?? 'http://127.0.0.1:7777/healthz',
+    intervalMs: parseInt(process.env.STAVR_WATCHDOG_INTERVAL_MS ?? '30000', 10),
+    failThreshold: parseInt(process.env.STAVR_WATCHDOG_FAIL_THRESHOLD ?? '3', 10),
+    restartCooldownMs: parseInt(process.env.STAVR_WATCHDOG_COOLDOWN_MS ?? '60000', 10),
     cliEntry: join(here, 'cli.js'),
-    pingTimeoutMs: parseInt(process.env.COWIRE_WATCHDOG_PING_TIMEOUT_MS ?? '5000', 10),
-    port: parseInt(process.env.COWIRE_WATCHDOG_PORT ?? '7777', 10),
+    pingTimeoutMs: parseInt(process.env.STAVR_WATCHDOG_PING_TIMEOUT_MS ?? '5000', 10),
+    port: parseInt(process.env.STAVR_WATCHDOG_PORT ?? '7777', 10),
   };
 }
 

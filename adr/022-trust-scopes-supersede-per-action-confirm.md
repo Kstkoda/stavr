@@ -5,12 +5,12 @@
 
 ## Context
 
-Cowire's spec 39 tier model gates every CONFIRM-tier action (worker_spawn,
+Stavr's spec 39 tier model gates every CONFIRM-tier action (worker_spawn,
 github.create_pr, github.merge_pr, github.create_issue, …) behind its own
 `await_decision`. Approving a ten-issue migration meant ten round-trips through
 Cowork to Kenneth and back. The cost was Kenneth's attention, and at ten
 approvals it was already too high to scale to the spec-driven autonomous
-workflow Cowire is aiming at.
+workflow Stavr is aiming at.
 
 Kenneth's framing (2026-05-12): approve *a plan*, then let agents execute the
 plan, while reports stream back. That maps cleanly to OAuth-scope semantics:

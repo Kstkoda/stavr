@@ -19,7 +19,7 @@ import { signatureMatchesService } from '../../src/credentials/tools.js';
 describe('Spec 48 Layer 2 — credential vault', () => {
   let tmp: string;
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'cowire-vault-test-'));
+    tmp = mkdtempSync(join(tmpdir(), 'stavr-vault-test-'));
     // Force the file-fallback path so tests never touch the real OS keychain.
     _resetKeychainAdapterForTests(null);
   });

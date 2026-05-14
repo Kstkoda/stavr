@@ -115,15 +115,15 @@ describe('devices-storage (file-backed pairing store)', () => {
   let savedEnv: string | undefined;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'cowire-devices-'));
+    tmp = mkdtempSync(join(tmpdir(), 'stavr-devices-'));
     devicesPath = join(tmp, 'devices.json');
-    savedEnv = process.env.COWIRE_HOME;
-    process.env.COWIRE_HOME = tmp;
+    savedEnv = process.env.STAVR_HOME;
+    process.env.STAVR_HOME = tmp;
   });
 
   afterEach(() => {
-    if (savedEnv === undefined) delete process.env.COWIRE_HOME;
-    else process.env.COWIRE_HOME = savedEnv;
+    if (savedEnv === undefined) delete process.env.STAVR_HOME;
+    else process.env.STAVR_HOME = savedEnv;
     try {
       rmSync(tmp, { recursive: true, force: true });
     } catch {
@@ -136,7 +136,7 @@ describe('devices-storage (file-backed pairing store)', () => {
     expect(file).toEqual({ version: 1, pairings: [] });
   });
 
-  it('devicesFilePath honours COWIRE_HOME', () => {
+  it('devicesFilePath honours STAVR_HOME', () => {
     expect(devicesFilePath()).toBe(join(tmp, 'devices.json'));
   });
 

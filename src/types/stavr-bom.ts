@@ -1,4 +1,4 @@
-// src/types/cowire-bom.ts
+// src/types/stavr-bom.ts
 //
 // Canonical type module for the v0.2 substrate: risk classes, capability tags,
 // profile modes (with default routing tables), BOM artifacts. Pure types +

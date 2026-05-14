@@ -11,10 +11,10 @@ import { restartDaemon } from '../daemon.js';
 import { loadStewardConfig } from './config.js';
 
 /**
- * `cowire steward` CLI commands (spec 48 Layer 1).
+ * `stavr steward` CLI commands (spec 48 Layer 1).
  *
- * Direct DB access (matches the pattern used by `cowire status` / `cowire events`).
- * For the chat-surface claim flow, callers use `mcp__cowire__steward_claim` instead;
+ * Direct DB access (matches the pattern used by `stavr status` / `stavr events`).
+ * For the chat-surface claim flow, callers use `mcp__stavr__steward_claim` instead;
  * this CLI is the User\'s authoritative path for token minting, force-release, and
  * audit visibility.
  */
@@ -53,7 +53,7 @@ export function registerStewardCli(program: Command, defaultDbPath: () => string
   steward
     .command('claim')
     .description('Claim the Steward role directly from the CLI (bypasses the MCP-tool gate). Mostly for testing.')
-    .requiredOption('--token <t>', 'Claim token from `cowire steward mint-token`.')
+    .requiredOption('--token <t>', 'Claim token from `stavr steward mint-token`.')
     .requiredOption('--client-id <id>', 'Client identifier (e.g. "cowork-chat").')
     .requiredOption('--user-id <id>', 'User identifier (e.g. "kenneth").')
     .option('--display-name <name>', 'Human-readable Steward name.')
@@ -167,7 +167,7 @@ export function registerStewardCli(program: Command, defaultDbPath: () => string
 }
 
 /**
- * Spec 49 Layer 1 — `cowire daemon-steward` CLI surface for the daemon-hosted Steward subprocess.
+ * Spec 49 Layer 1 — `stavr daemon-steward` CLI surface for the daemon-hosted Steward subprocess.
  *
  * Note: registered under `daemon-steward` (not `steward`) to avoid a Commander.js name
  * collision with the spec-48 Layer 1 commands above. v1 only ships `restart` and
@@ -185,7 +185,7 @@ export function registerDaemonStewardCli(program: Command): void {
         const result = await restartDaemon();
         console.log(JSON.stringify({ ok: true, ...result }, null, 2));
       } catch (err) {
-        console.error(`[cowire] daemon-steward restart failed: ${(err as Error).message}`);
+        console.error(`[stavr] daemon-steward restart failed: ${(err as Error).message}`);
         process.exit(1);
       }
     });

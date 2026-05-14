@@ -237,7 +237,7 @@ export async function runTail(opts: TailOptions, onLine: (line: string) => void)
       lastErrorAt = errNow;
 
       if (errNow - firstFailureAt > giveUpAfterMs) {
-        throw new Error(`cowire tail: giving up after ${giveUpAfterMs}ms without a successful connection`);
+        throw new Error(`stavr tail: giving up after ${giveUpAfterMs}ms without a successful connection`);
       }
 
       // Backoff wait (honours abort)

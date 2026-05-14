@@ -32,7 +32,7 @@ describe('cc spawner worker_log emission', () => {
   let tmp: string;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'cowire-cc-log-test-'));
+    tmp = mkdtempSync(join(tmpdir(), 'stavr-cc-log-test-'));
   });
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });

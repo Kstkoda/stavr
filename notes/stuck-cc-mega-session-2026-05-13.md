@@ -2,7 +2,7 @@
 
 ## What shipped
 
-- **A1** (configurable bind + auth gate) → PR **Kstkoda/cowire#26**, based on #18.
+- **A1** (configurable bind + auth gate) → PR **stenlund/stavr#26**, based on #18.
   - 129/129 tests green on Windows.
   - Both bash and pwsh smoke scripts run end-to-end locally.
   - CI workflow now matrixes `[ubuntu-latest, windows-latest]`.
@@ -56,7 +56,7 @@ Following the rotation A1 → B1 → C1 → A2 → … :
 depends on B3 → B2 → B1. Whole B-stream blocks C1. C1 also depends on **#25**
 (operator channels) which is open and reviewable but not yet merged.
 
-A sandbox repo `Kstkoda/cowire-test-sandbox` is referenced in the brief; needs
+A sandbox repo `stenlund/stavr-test-sandbox` is referenced in the brief; needs
 to be created before C1's integration tests can land.
 
 ### A2 — Pairing-code authentication
@@ -65,11 +65,11 @@ to be created before C1's integration tests can land.
 A2 → A3/A4 sequence is the natural next stride in stream A and would be the
 right move for a second session focused on stream A only:
 
-1. Add `keytar` dep with file fallback for `~/.cowire/devices.json`.
+1. Add `keytar` dep with file fallback for `~/.stavr/devices.json`.
 2. New `devices` table in persistence (schema migration in src/persistence.ts).
-3. `cowire pair --bootstrap` + `cowire pair --remote-host <addr>` CLI.
+3. `stavr pair --bootstrap` + `stavr pair --remote-host <addr>` CLI.
 4. New events `device_paired` / `device_revoked` in `src/event-types.ts`.
-5. `cowire devices list / revoke / show` subcommands.
+5. `stavr devices list / revoke / show` subcommands.
 6. HTTP middleware in `transports.ts` that constant-time-compares Bearer token
    against `devices.token_hash`. Returns 401 for non-`/healthz` requests
    without a valid token.
@@ -90,7 +90,7 @@ right move for a second session focused on stream A only:
 - The chained-PR pattern means a future C-stream PR that touches both repos
   ought to pre-flight that both upstream PRs are still open and that no
   base-ref renames happened.
-- `cowire`'s logger writes to **stderr** in both text and json modes. Tests
+- `stavr`'s logger writes to **stderr** in both text and json modes. Tests
   that want JSON parsing of CLI output must use `--log-format json` and grep
   stderr (or merged stderr+stdout). The federation/bind.test.ts scans the
   merged buffer.

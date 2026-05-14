@@ -1,6 +1,6 @@
 # Writing a spec with a trust scope
 
-This is the playbook for batched, plan-driven work in Cowire after spec 46.
+This is the playbook for batched, plan-driven work in Stavr after spec 46.
 Use it whenever an agent (Co, CC, another future agent) is about to do
 something repetitive enough that approving each call separately stops making
 sense — bug-migrations, multi-PR roll-outs, label sweeps, dependency bumps
@@ -34,7 +34,7 @@ Use the old per-action `await_decision` when:
 
 ## 2. Draft the spec
 
-Write the spec the way you'd write any other Cowire spec, plus one section:
+Write the spec the way you'd write any other Stavr spec, plus one section:
 **Scope shape**. Be concrete. Example, for migrating `BUGS.md` to GitHub
 issues:
 

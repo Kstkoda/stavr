@@ -1,12 +1,12 @@
 /**
- * Cowire configuration (spec 52 — Mode 1 federation).
+ * Stavr configuration (spec 52 — Mode 1 federation).
  *
  * Local-first remains the default (ADR-006): `network.bind` is `localhost` and the
  * daemon binds to 127.0.0.1 unless the operator opts in. Non-loopback binds require
  * the auth gate (pairing tokens — spec 52 A2) to be configured, or an explicit
  * `require_auth_when_non_local: false` escape hatch for known-trusted networks.
  *
- * Config file location: `$COWIRE_HOME/cowire.yaml` (default `~/.cowire/cowire.yaml`).
+ * Config file location: `$STAVR_HOME/stavr.yaml` (default `~/.stavr/stavr.yaml`).
  * Missing file is fine — defaults apply.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -37,7 +37,7 @@ const experimentalSchema = z
   })
   .default({ planner: false });
 
-export const CowireConfigSchema = z
+export const StavrConfigSchema = z
   .object({
     network: networkSchema,
     experimental: experimentalSchema,
@@ -47,23 +47,23 @@ export const CowireConfigSchema = z
     experimental: { planner: false },
   });
 
-export type CowireConfig = z.infer<typeof CowireConfigSchema>;
+export type StavrConfig = z.infer<typeof StavrConfigSchema>;
 
-export const DEFAULT_CONFIG: CowireConfig = {
+export const DEFAULT_CONFIG: StavrConfig = {
   network: { bind: 'localhost', require_auth_when_non_local: true },
   experimental: { planner: false },
 };
 
-export function cowireHome(): string {
-  return process.env.COWIRE_HOME?.trim() || join(homedir(), '.cowire');
+export function stavrHome(): string {
+  return process.env.STAVR_HOME?.trim() || join(homedir(), '.stavr');
 }
 
 export function defaultConfigPath(): string {
-  return join(cowireHome(), 'cowire.yaml');
+  return join(stavrHome(), 'stavr.yaml');
 }
 
 export interface LoadConfigResult {
-  config: CowireConfig;
+  config: StavrConfig;
   source: 'file' | 'defaults';
   path: string;
 }
@@ -77,20 +77,20 @@ export function loadConfig(path?: string): LoadConfigResult {
   try {
     raw = readFileSync(resolved, 'utf8');
   } catch (err) {
-    throw new Error(`cowire config: failed to read ${resolved}: ${(err as Error).message}`);
+    throw new Error(`stavr config: failed to read ${resolved}: ${(err as Error).message}`);
   }
   let parsed: unknown;
   try {
     parsed = parseYaml(raw) ?? {};
   } catch (err) {
-    throw new Error(`cowire config: YAML parse error in ${resolved}: ${(err as Error).message}`);
+    throw new Error(`stavr config: YAML parse error in ${resolved}: ${(err as Error).message}`);
   }
-  const result = CowireConfigSchema.safeParse(parsed);
+  const result = StavrConfigSchema.safeParse(parsed);
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  - ${i.path.join('.') || '<root>'}: ${i.message}`)
       .join('\n');
-    throw new Error(`cowire config: invalid config in ${resolved}\n${issues}`);
+    throw new Error(`stavr config: invalid config in ${resolved}\n${issues}`);
   }
   return { config: result.data, source: 'file', path: resolved };
 }
@@ -172,8 +172,8 @@ export function checkBindAuthGate(args: {
   if (!args.requireAuthWhenNonLocal) return null;
   if (args.authConfigured) return null;
   return (
-    'cowire daemon refusing to bind non-local without auth configured. ' +
-    'Run `cowire pair --bootstrap` first or set `network.require_auth_when_non_local: false` ' +
+    'stavr daemon refusing to bind non-local without auth configured. ' +
+    'Run `stavr pair --bootstrap` first or set `network.require_auth_when_non_local: false` ' +
     "if you know what you're doing."
   );
 }

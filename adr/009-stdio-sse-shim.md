@@ -26,7 +26,7 @@ Without a bridge, Cowork cannot connect to the daemon. Multi-agent topology (Co 
 
 ## Decision
 
-Ship a ~70-LOC stdio↔SSE proxy at `src/shim.ts` → `dist/shim.js`. Cowork spawns it as a stdio MCP server (`command: "node"`, `args: ["…/dist/shim.js"]`); the shim opens an SSE connection to the daemon and forwards JSON-RPC messages bidirectionally without inspection. The daemon URL is configurable via the `COWIRE_DAEMON_URL` env var (defaults to `http://127.0.0.1:7777/mcp/sse`) or a `--url` flag for direct invocation.
+Ship a ~70-LOC stdio↔SSE proxy at `src/shim.ts` → `dist/shim.js`. Cowork spawns it as a stdio MCP server (`command: "node"`, `args: ["…/dist/shim.js"]`); the shim opens an SSE connection to the daemon and forwards JSON-RPC messages bidirectionally without inspection. The daemon URL is configurable via the `STAVR_DAEMON_URL` env var (defaults to `http://127.0.0.1:7777/mcp/sse`) or a `--url` flag for direct invocation.
 
 The shim uses the MCP SDK's transports directly (`StdioServerTransport` + `SSEClientTransport`) rather than wrapping them in a `Client`/`Server` pair, so it stays byte-level: it does not parse messages, validate JSON-RPC envelopes, or maintain any per-request state.
 

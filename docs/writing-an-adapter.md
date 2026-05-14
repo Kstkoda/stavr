@@ -1,8 +1,8 @@
 # Writing an adapter
 
-This guide walks through adding a new adapter to Cowire, end-to-end, using a working **weather** example. By the end you'll have read enough code to add an adapter of your own and you'll have a copy-pasteable starting point in [`examples/weather/`](../examples/weather/).
+This guide walks through adding a new adapter to Stavr, end-to-end, using a working **weather** example. By the end you'll have read enough code to add an adapter of your own and you'll have a copy-pasteable starting point in [`examples/weather/`](../examples/weather/).
 
-An *adapter* is a file that exposes some external system (a CLI, an HTTP API, a piece of hardware) as one or more MCP tools. Adapters are the main extension point of Cowire — almost every new capability lands as either a new adapter or a new event kind.
+An *adapter* is a file that exposes some external system (a CLI, an HTTP API, a piece of hardware) as one or more MCP tools. Adapters are the main extension point of Stavr — almost every new capability lands as either a new adapter or a new event kind.
 
 Read this once end-to-end (~15 minutes) before starting. The full canonical example lives in [`src/adapters/github.ts`](../src/adapters/github.ts); the weather example in this guide is the minimal version.
 

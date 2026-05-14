@@ -10,15 +10,15 @@ import type { WorkerInstance, WorkerSpawner } from './types.js';
 /**
  * Unity worker — attaches to a Unity Editor (or launches one) and surfaces
  * compile errors, play-mode exceptions, and editor lifecycle events as
- * Cowire worker events.
+ * Stavr worker events.
  *
  * Design: the worker does NOT shell out to Unity to read state. Unity domain-
  * reloads on every script change, which kills any in-process TCP server the
  * Editor might have started. Instead the worker watches a file:
  *
- *   <UnityProject>/Logs/cowire-events.jsonl
+ *   <UnityProject>/Logs/stavr-events.jsonl
  *
- * The matching Editor-only C# script (Assets/Editor/Cowire/CowireBridge.cs,
+ * The matching Editor-only C# script (Assets/Editor/Stavr/StavrBridge.cs,
  * see docs/unity-worker.md) appends one JSON event per line as the Editor
  * compiles, reloads, and runs play mode. Line-oriented file I/O survives:
  *   - Unity Editor crashes (Mono panics, asset import hangs)
@@ -28,10 +28,10 @@ import type { WorkerInstance, WorkerSpawner } from './types.js';
  *
  * Worker lifecycle:
  *   1. Validate the project path is a Unity project (has Assets/ + ProjectSettings/).
- *   2. Ensure the bridge script is installed under Assets/Editor/Cowire/.
+ *   2. Ensure the bridge script is installed under Assets/Editor/Stavr/.
  *   3. If attach=false, spawn Unity with -projectPath; otherwise rely on a
  *      running Editor.
- *   4. Tail Logs/cowire-events.jsonl with chokidar (event-driven, no polling
+ *   4. Tail Logs/stavr-events.jsonl with chokidar (event-driven, no polling
  *      — ADR-012 invariant). Emit worker_progress per JSONL event,
  *      worker_metadata_changed when the compile pass finishes (errors/warnings
  *      counters), and a worker error for compile errors so the dashboard
@@ -53,7 +53,7 @@ export const UnitySpawnParams = z.object({
   batch_mode: z.boolean().optional().default(false),
   /** Extra args to pass to Unity when launching (attach=false). */
   unity_args: z.array(z.string()).optional().default([]),
-  /** Override the events file path. Default: <project>/Logs/cowire-events.jsonl. */
+  /** Override the events file path. Default: <project>/Logs/stavr-events.jsonl. */
   events_file: z.string().optional(),
   /**
    * If true, remove the events file at spawn so we don't replay history. The
@@ -77,7 +77,7 @@ export interface UnitySpawnerOptions {
   defaultUnityExecutable?: string;
 }
 
-/** One line of cowire-events.jsonl. The bridge script is the source of truth. */
+/** One line of stavr-events.jsonl. The bridge script is the source of truth. */
 export interface UnityEvent {
   type: string;
   timestamp?: string;
@@ -92,7 +92,7 @@ export function createUnitySpawner(opts: UnitySpawnerOptions = {}): WorkerSpawne
     type: 'unity',
     displayName: 'Unity Editor',
     description:
-      'Attach to a running Unity Editor (or launch one) and stream compile errors, play-mode exceptions, and editor lifecycle events back to Cowire. Requires the CowireBridge.cs Editor script installed in the Unity project (see docs/unity-worker.md).',
+      'Attach to a running Unity Editor (or launch one) and stream compile errors, play-mode exceptions, and editor lifecycle events back to Stavr. Requires the StavrBridge.cs Editor script installed in the Unity project (see docs/unity-worker.md).',
     tier: 'confirm',
     paramsSchema: UnitySpawnParams,
 
@@ -111,10 +111,10 @@ export function createUnitySpawner(opts: UnitySpawnerOptions = {}): WorkerSpawne
       mkdirSync(logsDir, { recursive: true });
       const eventsFile = params.events_file
         ? resolve(params.events_file)
-        : join(logsDir, 'cowire-events.jsonl');
+        : join(logsDir, 'stavr-events.jsonl');
 
       // Best-effort truncate so the first compile pass after spawn doesn't
-      // replay every event from the previous Cowire session. The bridge
+      // replay every event from the previous Stavr session. The bridge
       // tolerates a missing file (it creates it on first append).
       if (params.truncate_on_start) {
         try {
@@ -135,7 +135,7 @@ export function createUnitySpawner(opts: UnitySpawnerOptions = {}): WorkerSpawne
           unityExecutable:
             params.unity_executable ??
             opts.defaultUnityExecutable ??
-            process.env.COWIRE_UNITY_EXECUTABLE ??
+            process.env.STAVR_UNITY_EXECUTABLE ??
             defaultUnityExecutable(),
           projectPath,
           batchMode: params.batch_mode,
@@ -321,7 +321,7 @@ function createJsonlTailer(args: TailerArgs): Tailer {
 }
 
 // ---------------------------------------------------------------------------
-// Event handler — maps bridge events to Cowire worker events.
+// Event handler — maps bridge events to Stavr worker events.
 // ---------------------------------------------------------------------------
 
 function handleEvent(
@@ -453,7 +453,7 @@ interface LaunchUnityOpts {
 function launchUnity(spawnFn: Spawner, opts: LaunchUnityOpts): ChildProcess {
   if (!opts.unityExecutable) {
     throw new Error(
-      'unity_executable is required when attach=false (or set COWIRE_UNITY_EXECUTABLE)',
+      'unity_executable is required when attach=false (or set STAVR_UNITY_EXECUTABLE)',
     );
   }
   const args: string[] = [

@@ -61,8 +61,8 @@ describe('Spec 44 — chaos: decisions survive daemon kill', () => {
   let dbPath: string;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'cowire-chaos-'));
-    dbPath = join(tmp, 'cowire.db');
+    tmp = mkdtempSync(join(tmpdir(), 'stavr-chaos-'));
+    dbPath = join(tmp, 'runestone.db');
   });
 
   afterEach(() => {

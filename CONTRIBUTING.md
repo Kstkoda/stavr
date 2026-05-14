@@ -1,6 +1,6 @@
-# Contributing to Cowire
+# Contributing to Stavr
 
-This document is for someone making a change to Cowire — adding an adapter, adding an event kind, fixing a bug, or refactoring. If you only want to understand the architecture, read [`ARCHITECTURE.md`](./ARCHITECTURE.md) first.
+This document is for someone making a change to Stavr — adding an adapter, adding an event kind, fixing a bug, or refactoring. If you only want to understand the architecture, read [`ARCHITECTURE.md`](./ARCHITECTURE.md) first.
 
 ---
 
@@ -18,11 +18,11 @@ This document is for someone making a change to Cowire — adding an adapter, ad
 │   ├── adapters/                external-system integrations (github, ...)
 │   ├── tools/                   MCP tools that aren't tied to an external system
 │   ├── broker.ts                in-memory pub/sub router
-│   ├── cli.ts                   `cowire` CLI commands
+│   ├── cli.ts                   `stavr` CLI commands
 │   ├── connect-test.ts          smoke-test client for daemon mode
 │   ├── daemon.ts                long-running daemon: start/stop/status/restart + PID file
 │   ├── event-types.ts           Zod schemas for every event kind
-│   ├── paths.ts                 default file locations (~/.cowire/...)
+│   ├── paths.ts                 default file locations (~/.stavr/...)
 │   ├── persistence.ts           SQLite event/decision/session store
 │   ├── server.ts                MCP server assembly + core tool registration
 │   └── transports.ts            stdio + HTTP/SSE mounting

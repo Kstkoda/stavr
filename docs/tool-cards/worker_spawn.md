@@ -143,7 +143,7 @@ PER-SPAWNER — the tier comes from the spawner registration. Default for built-
     "type": "cc",
     "name": "my-cc",
     "params": {
-      "repo_path": "C:/dev/cowire",
+      "repo_path": "C:/dev/stavr",
       "branch": "feat/spec-X",
       "base": "main",
       "prompt": "Implement spec X"

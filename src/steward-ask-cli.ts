@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { readPidFile } from './daemon.js';
 
 /**
- * Spec 49 Layer 2 — `cowire ask "…"` CLI.
+ * Spec 49 Layer 2 — `stavr ask "…"` CLI.
  *
  * Posts a steward_prompt event to the running daemon, then either:
  *   - default:    waits up to 5 minutes for the matching steward_response and prints it
@@ -22,7 +22,7 @@ export function registerAskCli(program: Command): void {
     .action(async (text: string, opts: { stream?: boolean; json?: boolean; wait?: boolean; timeoutMs: number }) => {
       const pid = readPidFile();
       if (!pid || !pid.port) {
-        console.error('[cowire] daemon not running — start it with `cowire daemon start`.');
+        console.error('[stavr] daemon not running — start it with `stavr daemon start`.');
         process.exit(1);
       }
       const post = await fetch(`http://127.0.0.1:${pid.port}/dashboard/steward/prompt`, {
@@ -31,12 +31,12 @@ export function registerAskCli(program: Command): void {
         body: JSON.stringify({ text }),
       });
       if (!post.ok) {
-        console.error(`[cowire] prompt POST failed: HTTP ${post.status}`);
+        console.error(`[stavr] prompt POST failed: HTTP ${post.status}`);
         process.exit(1);
       }
       const body = (await post.json()) as { ok: boolean; correlation_id?: string; error?: string };
       if (!body.ok || !body.correlation_id) {
-        console.error(`[cowire] prompt rejected: ${body.error ?? 'unknown'}`);
+        console.error(`[stavr] prompt rejected: ${body.error ?? 'unknown'}`);
         process.exit(1);
       }
       const cid = body.correlation_id;
@@ -75,7 +75,7 @@ async function streamResponse(opts: StreamOpts): Promise<void> {
       signal: controller.signal,
     });
     if (!res.ok || !res.body) {
-      console.error(`[cowire] SSE failed: HTTP ${res.status}`);
+      console.error(`[stavr] SSE failed: HTTP ${res.status}`);
       process.exit(1);
     }
     const reader = res.body.getReader();
@@ -116,7 +116,7 @@ async function streamResponse(opts: StreamOpts): Promise<void> {
     const e = err as Error & { name?: string };
     if (e.name === 'AbortError' && answeredOk) return;
     if (e.name === 'AbortError') {
-      console.error(`[cowire] timed out after ${opts.timeoutMs}ms`);
+      console.error(`[stavr] timed out after ${opts.timeoutMs}ms`);
       process.exit(2);
     }
     throw err;

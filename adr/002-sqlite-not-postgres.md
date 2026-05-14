@@ -9,12 +9,12 @@ Switch needs durable storage for two things: the append-only event log and the d
 
 ## Decision
 
-Use SQLite via `better-sqlite3`, single file at `~/.cowire/cowire.db` (configurable with `--db`). WAL mode for concurrent readers. Schema is created idempotently with `CREATE TABLE IF NOT EXISTS` in `EventStore.init`.
+Use SQLite via `better-sqlite3`, single file at `~/.stavr/runestone.db` (configurable with `--db`). WAL mode for concurrent readers. Schema is created idempotently with `CREATE TABLE IF NOT EXISTS` in `EventStore.init`.
 
 ## Consequences
 
 - Zero operational surface: no "is the database up?" pre-flight, no users to provision, no port to expose.
-- Trivial to inspect: `sqlite3 ~/.cowire/cowire.db` and you have the whole world. Backups are `cp`.
+- Trivial to inspect: `sqlite3 ~/.stavr/runestone.db` and you have the whole world. Backups are `cp`.
 - Tests use `:memory:` and get full schema fidelity with no global state to clean up.
 - Single writer per process — fine because Switch is single-process. If we ever want multi-process Switch we have to rethink this.
 - No schema migrations system yet — schema changes are additive (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`). The day we need a destructive change, we add a migrations table; not before.

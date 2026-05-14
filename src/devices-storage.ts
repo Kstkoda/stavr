@@ -2,24 +2,24 @@
  * Spec 52 A2 — device-side token storage.
  *
  * Stores `{ daemon_url, device_id, token }` records on the remote device after
- * a successful `cowire pair --remote-host` exchange. The keychain integration
+ * a successful `stavr pair --remote-host` exchange. The keychain integration
  * (keytar) is deferred to a follow-up; this file-backed fallback is the path
  * that always works, on every platform, with no native-module compile.
  *
- * File: `$COWIRE_HOME/devices.json`, mode 0o600. Best-effort chmod on POSIX;
+ * File: `$STAVR_HOME/devices.json`, mode 0o600. Best-effort chmod on POSIX;
  * Windows ignores POSIX permission bits and relies on the per-user directory
- * (under `%USERPROFILE%\.cowire`) for confidentiality.
+ * (under `%USERPROFILE%\.stavr`) for confidentiality.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-function cowireHomeDir(): string {
-  return process.env.COWIRE_HOME?.trim() || join(homedir(), '.cowire');
+function stavrHomeDir(): string {
+  return process.env.STAVR_HOME?.trim() || join(homedir(), '.stavr');
 }
 
 export function devicesFilePath(): string {
-  return join(cowireHomeDir(), 'devices.json');
+  return join(stavrHomeDir(), 'devices.json');
 }
 
 export interface StoredDevicePairing {

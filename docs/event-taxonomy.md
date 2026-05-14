@@ -1,4 +1,4 @@
-# Cowire event taxonomy
+# Stavr event taxonomy
 
 Switch is an event bus. Every tool that mutates state, every decision, every
 worker lifecycle transition lands in the events table and fans out to
@@ -244,14 +244,14 @@ without a per-action `await_decision`. Every grant/revoke/extend lands here.
 ## Stream-JSON sub-taxonomy (CC workers)
 
 Claude Code emits a structured `--output-format=stream-json` stream when run
-non-interactively. Cowire's contract for surfacing this output:
+non-interactively. Stavr's contract for surfacing this output:
 
 - The CC worker process forwards each parsed line through a dedicated event
   `worker_log` (kind reserved; emit shape below). The `worker_progress` event
   remains the "user-facing summary" channel; `worker_log` is the raw stream.
-- One Cowire event per stream-json record. The `payload.format` field is
+- One Stavr event per stream-json record. The `payload.format` field is
   `'stream-json'` so subscribers can dispatch on it.
-- The original CC record is preserved verbatim under `payload.event`. Cowire
+- The original CC record is preserved verbatim under `payload.event`. Stavr
   does not lossy-transform it.
 
 ```ts

@@ -1,6 +1,6 @@
 # Configurable bind + auth gate (spec 52 A1)
 
-The cowire daemon binds to `127.0.0.1` by default. That posture — local-first, no
+The stavr daemon binds to `127.0.0.1` by default. That posture — local-first, no
 network exposure — is the safe path documented in ADR-006 and remains the default
 out of the box. Spec 52 introduces "Mode 1 federation": one daemon on a home NAS,
 paired devices (laptop, tablet) calling into it across a trusted network. To
@@ -10,7 +10,7 @@ non-loopback bind passes through an auth gate.
 
 ## Config file
 
-Default location: `~/.cowire/cowire.yaml` (override with `$COWIRE_HOME`). Missing
+Default location: `~/.stavr/stavr.yaml` (override with `$STAVR_HOME`). Missing
 file ⇒ defaults apply.
 
 ```yaml
@@ -36,7 +36,7 @@ network:
 ```
 
 The schema is enforced by Zod on every daemon start; type errors and unknown
-shapes surface with `cowire config: invalid config in <path>` and a list of the
+shapes surface with `stavr config: invalid config in <path>` and a list of the
 offending keys.
 
 ## The auth gate
@@ -57,12 +57,12 @@ lands, `authConfigured` becomes "there is at least one non-revoked row in the
 
 On refusal the daemon prints, then exits with code 1:
 
-> cowire daemon refusing to bind non-local without auth configured. Run
-> `cowire pair --bootstrap` first or set `network.require_auth_when_non_local:
+> stavr daemon refusing to bind non-local without auth configured. Run
+> `stavr pair --bootstrap` first or set `network.require_auth_when_non_local:
 > false` if you know what you're doing.
 
 The same check runs in two places:
-1. **`cowire daemon start` CLI** — pre-flight before forking the detached child.
+1. **`stavr daemon start` CLI** — pre-flight before forking the detached child.
    This is the path that gives the operator a clean exit message.
 2. **`mountTransports`** — defence in depth, in case a library consumer wires the
    transport layer directly without going through the CLI.
@@ -71,22 +71,22 @@ The same check runs in two places:
 
 ```sh
 # Inspect the effective config (no side effects).
-cowire config show
+stavr config show
 
 # What would happen if I bound this?
-cowire config show --bind-host 0.0.0.0
-cowire config show --bind-host 0.0.0.0 --allow-non-local-without-auth
+stavr config show --bind-host 0.0.0.0
+stavr config show --bind-host 0.0.0.0 --allow-non-local-without-auth
 
 # Start the daemon with a one-off override (still runs through the gate).
-cowire daemon start --bind-host lan
-cowire daemon start --bind-host 192.168.1.10 --allow-non-local-without-auth
+stavr daemon start --bind-host lan
+stavr daemon start --bind-host 192.168.1.10 --allow-non-local-without-auth
 ```
 
-The output of `cowire config show` is a single JSON object:
+The output of `stavr config show` is a single JSON object:
 
 ```json
 {
-  "config_path": "/home/k/.cowire/cowire.yaml",
+  "config_path": "/home/k/.stavr/stavr.yaml",
   "config_source": "defaults",
   "effective": {
     "network": { "bind": "0.0.0.0", "require_auth_when_non_local": true }
@@ -98,9 +98,9 @@ The output of `cowire config show` is a single JSON object:
   },
   "auth_gate": {
     "would_refuse": true,
-    "reason": "cowire daemon refusing to bind non-local without auth configured. …"
+    "reason": "stavr daemon refusing to bind non-local without auth configured. …"
   },
-  "default_config_path": "/home/k/.cowire/cowire.yaml"
+  "default_config_path": "/home/k/.stavr/stavr.yaml"
 }
 ```
 
@@ -108,11 +108,11 @@ The output of `cowire config show` is a single JSON object:
 
 Three options, in order of preference:
 
-1. **Edit `~/.cowire/cowire.yaml`** and set `network.bind: localhost`. The next
-   `cowire daemon start` (or restart) honours it.
-2. **Override on the command line**: `cowire daemon start --bind-host localhost`.
+1. **Edit `~/.stavr/stavr.yaml`** and set `network.bind: localhost`. The next
+   `stavr daemon start` (or restart) honours it.
+2. **Override on the command line**: `stavr daemon start --bind-host localhost`.
    This bypasses whatever is in the config file for this one invocation.
-3. **Delete the config file**: `rm ~/.cowire/cowire.yaml`. Defaults apply
+3. **Delete the config file**: `rm ~/.stavr/stavr.yaml`. Defaults apply
    (localhost + require_auth_when_non_local=true).
 
 Note that the auth gate already prevents the "I bound 0.0.0.0 and now anyone on
@@ -134,7 +134,7 @@ Two reasons:
 ## What's next in spec 52
 
 - **A2** — pairing-code authentication. Wires `authConfigured` to a real
-  `devices` table and adds the `cowire pair` CLI.
+  `devices` table and adds the `stavr pair` CLI.
 - **A3** — tailscale transport adapter. Resolves `bind: tailscale` to the
   tailnet IP and shells `tailscale ip --4` to discover it.
 - **A4** — self-signed cert fallback for operators who don't run tailscale.

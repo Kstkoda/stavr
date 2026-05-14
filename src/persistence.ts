@@ -11,8 +11,8 @@ import type {
   BomStatus,
   BomVersion,
   ProfileMode,
-} from './types/cowire-bom.js';
-import { DEFAULT_PROFILES } from './types/cowire-bom.js';
+} from './types/stavr-bom.js';
+import { DEFAULT_PROFILES } from './types/stavr-bom.js';
 
 export interface StoredEvent extends Event {
   id: string;
@@ -240,8 +240,8 @@ export class EventStore {
       CREATE INDEX IF NOT EXISTS idx_stewards_active
         ON stewards(claimed_at) WHERE released_at IS NULL;
 
-      -- One-shot tokens minted by 'cowire steward mint-token' (or cowire init).
-      -- 30-minute default TTL; redeemed exactly once by mcp__cowire__steward_claim.
+      -- One-shot tokens minted by 'stavr steward mint-token' (or stavr init).
+      -- 30-minute default TTL; redeemed exactly once by mcp__stavr__steward_claim.
       CREATE TABLE IF NOT EXISTS steward_claim_tokens (
         token         TEXT PRIMARY KEY,
         created_at    TEXT NOT NULL,
@@ -252,7 +252,7 @@ export class EventStore {
 
       -- Spec 48 Layer 2: encrypted credentials vault.
       -- AES-256-GCM-encrypted plaintext lives in encrypted_blob; key never
-      -- appears in the DB (OS keychain or ~/.cowire/master.key fallback).
+      -- appears in the DB (OS keychain or ~/.stavr/master.key fallback).
       CREATE TABLE IF NOT EXISTS credentials (
         id                              TEXT PRIMARY KEY,
         user_id                         TEXT NOT NULL,
@@ -271,7 +271,7 @@ export class EventStore {
         ON credentials(service) WHERE revoked_at IS NULL;
 
       -- Grants tie a credential to a specific Steward session. A credential
-      -- without an active grant is unusable to the Steward (mcp__cowire__credential_use
+      -- without an active grant is unusable to the Steward (mcp__stavr__credential_use
       -- returns CREDENTIAL_NOT_GRANTED).
       CREATE TABLE IF NOT EXISTS credential_grants (
         id                  TEXT PRIMARY KEY,

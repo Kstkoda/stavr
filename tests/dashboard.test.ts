@@ -44,7 +44,7 @@ describe('Spec 40 Phase 3 — dashboard HTTP', () => {
     expect(r.status).toBe(200);
     expect(r.headers.get('content-type')).toMatch(/text\/html/);
     const body = await r.text();
-    expect(body).toContain('Cowire — Audit Dashboard');
+    expect(body).toContain('Stavr — Audit Dashboard');
     expect(body).toContain('/dashboard/stream');
     expect(body).toContain('/dashboard/decisions');
   });
@@ -224,7 +224,7 @@ describe('Spec 40 Phase 3 — dashboard HTTP', () => {
     });
     const r = await fetch(`${h.base}/dashboard/export?format=json`);
     expect(r.status).toBe(200);
-    expect(r.headers.get('content-disposition')).toMatch(/cowire-audit-.*\.json/);
+    expect(r.headers.get('content-disposition')).toMatch(/stavr-audit-.*\.json/);
     const j = await r.json();
     expect(j.count).toBe(1);
     expect(j.events[0].kind).toBe('progress');

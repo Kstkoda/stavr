@@ -6,7 +6,7 @@
  * that code for a long-term token via `POST /pair/complete`.
  *
  * Pending codes live entirely in memory — they expire on restart, which is the
- * correct security posture (anyone with `cowire pair --bootstrap` access can
+ * correct security posture (anyone with `stavr pair --bootstrap` access can
  * always re-open a window). Issued tokens are persisted in the `devices` table
  * (token_hash only — see persistence.ts).
  */

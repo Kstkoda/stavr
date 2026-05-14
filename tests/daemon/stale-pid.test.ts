@@ -8,7 +8,7 @@ import { safeWrite } from '../../src/util/atomic.js';
 describe('Spec 51 — atomic write and stale PID detection', () => {
   let tmp: string;
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'cowire-resilience-'));
+    tmp = mkdtempSync(join(tmpdir(), 'stavr-resilience-'));
   });
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });

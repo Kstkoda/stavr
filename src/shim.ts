@@ -15,7 +15,7 @@
  * `started_at` changed since last seen, we log a `daemon restart detected`
  * line and emit a `shim_reconnected` event so subscribers see the gap.
  *
- * Config: COWIRE_DAEMON_URL env var (default http://127.0.0.1:7777/mcp/sse),
+ * Config: STAVR_DAEMON_URL env var (default http://127.0.0.1:7777/mcp/sse),
  * overridable per-invocation via `--url <url>`.
  */
 import { Readable, Writable } from 'node:stream';
@@ -57,7 +57,7 @@ function errMessage(err: unknown): string {
 function resolveUrl(argv: string[]): string {
   const i = argv.findIndex((a) => a === '--url' || a === '-u');
   if (i >= 0 && argv[i + 1]) return argv[i + 1]!;
-  return process.env.COWIRE_DAEMON_URL ?? DEFAULT_URL;
+  return process.env.STAVR_DAEMON_URL ?? DEFAULT_URL;
 }
 
 function deriveStatusUrl(sseUrl: string): string | undefined {
@@ -257,7 +257,7 @@ export async function runShim(opts: RunShimOptions): Promise<ShimHandle> {
         name: 'emit_event',
         arguments: {
           kind: 'progress',
-          source_agent: 'cowire-shim',
+          source_agent: 'stavr-shim',
           payload: {
             message: `shim_reconnected after ${outageMs}ms${daemonStartedAt ? ` (daemon started_at=${daemonStartedAt})` : ''}`,
           },

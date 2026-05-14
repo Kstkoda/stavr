@@ -1,10 +1,10 @@
 /**
- * OS-scheduler integration for the Cowire watchdog (ADR-020).
+ * OS-scheduler integration for the Stavr watchdog (ADR-020).
  *
  * Strategy: dispatch on `process.platform`.
  *   - win32  → schtasks (one ONSTART trigger, one ONLOGON trigger).
- *   - darwin → launchctl + ~/Library/LaunchAgents/com.cowire.watchdog.plist.
- *   - linux  → systemd --user + ~/.config/systemd/user/cowire-watchdog.service.
+ *   - darwin → launchctl + ~/Library/LaunchAgents/com.stavr.watchdog.plist.
+ *   - linux  → systemd --user + ~/.config/systemd/user/stavr-watchdog.service.
  *
  * Every operation is idempotent — re-running install just re-applies. We do
  * not require root; on Linux this means a user-mode systemd unit (lingering
@@ -25,10 +25,10 @@ import { fileURLToPath } from 'node:url';
 import { WATCHDOG_LOG_PATH, WATCHDOG_PID_PATH } from './watchdog.js';
 import { isProcessAlive } from './daemon.js';
 
-const TASK_NAME_WIN = 'CowireWatchdog';
-const TASK_NAME_WIN_LOGON = 'CowireWatchdogLogon';
-const LAUNCHD_LABEL = 'com.cowire.watchdog';
-const SYSTEMD_UNIT = 'cowire-watchdog.service';
+const TASK_NAME_WIN = 'StavrWatchdog';
+const TASK_NAME_WIN_LOGON = 'StavrWatchdogLogon';
+const LAUNCHD_LABEL = 'com.stavr.watchdog';
+const SYSTEMD_UNIT = 'stavr-watchdog.service';
 
 export interface InstallResult {
   ok: boolean;
@@ -292,7 +292,7 @@ async function installLinux(script: string): Promise<InstallResult> {
   const unitPath = systemdUnitPath();
   mkdirSync(dirname(unitPath), { recursive: true });
   const unit = `[Unit]
-Description=Cowire daemon watchdog
+Description=Stavr daemon watchdog
 After=network.target
 
 [Service]

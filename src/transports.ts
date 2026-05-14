@@ -18,16 +18,16 @@ import {
 
 /**
  * Transport modes:
- *  - 'stdio'  : stdio transport only (for direct CC spawn / `cowire run`).
+ *  - 'stdio'  : stdio transport only (for direct CC spawn / `stavr run`).
  *  - 'daemon' : HTTP/SSE only; binding the port is required (failure is fatal).
- *  - 'both'   : stdio + optional HTTP/SSE; EADDRINUSE falls back to stdio (back-compat for `cowire start`).
+ *  - 'both'   : stdio + optional HTTP/SSE; EADDRINUSE falls back to stdio (back-compat for `stavr start`).
  */
 export type TransportMode = 'stdio' | 'daemon' | 'both';
 
 export interface TransportOpts {
   mode?: TransportMode;
   port?: number;
-  /** Deprecated: prefer `mode`. Kept for `cowire start --stdio-only`. */
+  /** Deprecated: prefer `mode`. Kept for `stavr start --stdio-only`. */
   stdioOnly?: boolean;
   silent?: boolean;
   /**
@@ -66,7 +66,7 @@ export interface MountedTransports {
   sseSessionCount: () => number;
   /**
    * The pending-pairing registry the HTTP transport is using. Exposed so the
-   * `cowire pair --bootstrap` CLI (which runs in the same daemon process) can
+   * `stavr pair --bootstrap` CLI (which runs in the same daemon process) can
    * call `.open()` directly without an HTTP round-trip.
    */
   pairingRegistry: PendingPairingRegistry;
@@ -108,8 +108,8 @@ export async function mountTransports(
     const requireAuth = opts.requireAuthWhenNonLocal !== false;
     if (!isLoopback && requireAuth && !opts.authConfigured) {
       throw new Error(
-        'cowire daemon refusing to bind non-local without auth configured. ' +
-          'Run `cowire pair --bootstrap` first or set `network.require_auth_when_non_local: false` ' +
+        'stavr daemon refusing to bind non-local without auth configured. ' +
+          'Run `stavr pair --bootstrap` first or set `network.require_auth_when_non_local: false` ' +
           "if you know what you're doing.",
       );
     }
@@ -118,7 +118,7 @@ export async function mountTransports(
     app.use(express.json({ limit: '4mb' }));
 
     const daemonStartedAt = new Date();
-    const version = process.env.COWIRE_VERSION ?? '0.1.0';
+    const version = process.env.STAVR_VERSION ?? '0.1.0';
     const now = opts.now ?? Date.now;
 
     // Deep health endpoint (spec 44 §3). Anything that flips `ok` to false makes
@@ -157,7 +157,7 @@ export async function mountTransports(
     // ---- Spec 52 A2 — pairing endpoints (public for /pair/complete) ----
 
     // Loopback-only: opens a pairing window and returns the 6-digit code. The
-    // bootstrap operator runs `cowire pair --bootstrap` on the daemon machine,
+    // bootstrap operator runs `stavr pair --bootstrap` on the daemon machine,
     // which calls this. Non-loopback callers get 403 — the code goes back to
     // the operator who is standing in front of the daemon, never to the wire.
     app.post('/pair/initiate', (req: Request, res: Response) => {
@@ -205,7 +205,7 @@ export async function mountTransports(
       await broker.publish({
         kind: 'device_paired',
         at: pairedAt,
-        source_agent: 'cowire-daemon',
+        source_agent: 'stavr-daemon',
         payload: { device_id: deviceId, device_name: deviceName, paired_from_ip: pairedFromIp },
       });
       res.json({
@@ -301,7 +301,7 @@ export async function mountTransports(
       log(`SSE session ${transport.sessionId} connected`);
     });
 
-    // Raw SSE event stream for `cowire tail` and programmatic consumers.
+    // Raw SSE event stream for `stavr tail` and programmatic consumers.
     // Supports ?since_id=<event-id>, ?since_at=<ISO>, ?kind=a,b,c, ?source_agent=<name>.
     app.get('/events/sse', (req: Request, res: Response) => {
       const sinceId = req.query.since_id ? String(req.query.since_id) : undefined;
@@ -360,7 +360,7 @@ export async function mountTransports(
     });
 
     // Spec 49 / Stream C C1 — loopback-only event injection. The
-    // `cowire steward bug-fix` CLI uses this to emit trust_scope_proposed
+    // `stavr steward bug-fix` CLI uses this to emit trust_scope_proposed
     // and trust_scope_granted events through the broker (so subscribers see
     // them in the dashboard event tail and the audit log). The endpoint is
     // strictly local — it lets any caller on this machine publish arbitrary
@@ -422,7 +422,7 @@ export async function mountTransports(
           reject(err);
           return;
         }
-        // 'both' mode: legacy `cowire start` behaviour — degrade to stdio-only.
+        // 'both' mode: legacy `stavr start` behaviour — degrade to stdio-only.
         if (err.code === 'EADDRINUSE') {
           log(
             `port ${opts.port} already in use; continuing with stdio-only ` +
@@ -665,7 +665,7 @@ export function mountDashboardRoutes(
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     if (format === 'csv') {
       res.setHeader('content-type', 'text/csv; charset=utf-8');
-      res.setHeader('content-disposition', `attachment; filename="cowire-audit-${ts}.csv"`);
+      res.setHeader('content-disposition', `attachment; filename="stavr-audit-${ts}.csv"`);
       const cols = ['id', 'at', 'persisted_at', 'kind', 'source_agent', 'correlation_id', 'tenant_id', 'payload'];
       const csvEscape = (v: unknown) => {
         const s = v == null ? '' : typeof v === 'string' ? v : JSON.stringify(v);
@@ -693,7 +693,7 @@ export function mountDashboardRoutes(
       return;
     }
     res.setHeader('content-type', 'application/json; charset=utf-8');
-    res.setHeader('content-disposition', `attachment; filename="cowire-audit-${ts}.json"`);
+    res.setHeader('content-disposition', `attachment; filename="stavr-audit-${ts}.json"`);
     res.json({
       exported_at: new Date().toISOString(),
       count: events.length,

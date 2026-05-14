@@ -13,7 +13,7 @@
 //      dispatches workers per step under the scope
 //   4. Step failures trigger StewardPlanner.replan with failure context
 //
-// The module is gated by `experimental.planner` in the cowire config. The
+// The module is gated by `experimental.planner` in the stavr config. The
 // daemon should not instantiate this class when the flag is false.
 
 import { randomUUID } from 'node:crypto';
@@ -28,8 +28,8 @@ import type {
   ProfileConfig,
   ProfileMode,
   RiskClass,
-} from '../types/cowire-bom.js';
-import { DEFAULT_PROFILES } from '../types/cowire-bom.js';
+} from '../types/stavr-bom.js';
+import { DEFAULT_PROFILES } from '../types/stavr-bom.js';
 
 // ============================================================
 // DEPENDENCIES (kept minimal so the planner is unit-testable)
@@ -257,7 +257,7 @@ export class StewardPlanner {
     profile: ProfileConfig,
   ): Promise<{ steps: RawPlannerStep[]; cost: number }> {
     const system = [
-      'You are the cowire Steward planner. Given a goal and the available capabilities,',
+      'You are the stavr Steward planner. Given a goal and the available capabilities,',
       'produce a numbered Bill of Materials (BOM) of 1-12 steps. Each step has:',
       '  title (short), description (one sentence),',
       "  capability (one of: 'reading', 'cheap-classifier', 'code-execution', 'code-reasoning', 'long-context', 'multimodal-vision', 'multimodal-audio', 'tool-use-heavy', 'simple-summary', 'no-model'),",
@@ -296,7 +296,7 @@ export class StewardPlanner {
     profile: ProfileConfig;
   }): Promise<{ steps: RawPlannerStep[]; cost: number }> {
     const system = [
-      'You are the cowire Steward replanner. A step in an active BOM has failed.',
+      'You are the stavr Steward replanner. A step in an active BOM has failed.',
       'Produce a new plan that recovers. Prefer: promote model tier, retry with',
       "different tool, split the step. If recovery requires a risk class not in the",
       'original envelope, include it — the framework will ask for approval.',

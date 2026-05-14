@@ -4,7 +4,7 @@
  * These boot real subprocesses via `tsx src/cli.ts` so we exercise the full CLI
  * path (config load → resolveBind → auth gate → mountTransports → app.listen).
  *
- * Each test gets an isolated $COWIRE_HOME so PID files / config files / DBs
+ * Each test gets an isolated $STAVR_HOME so PID files / config files / DBs
  * don't collide between concurrent vitest workers. The success-path test uses
  * an ephemeral port chosen by the OS (via a probe `net.createServer`) so it is
  * safe to run in parallel.
@@ -99,16 +99,16 @@ async function shutdown(d: SpawnedDaemon): Promise<void> {
 
 describe('Spec 52 A1 — federation bind + auth gate', () => {
   let tmp: string;
-  let cowireHome: string;
+  let stavrHome: string;
   let dbPath: string;
   let configPath: string;
   let processes: SpawnedDaemon[] = [];
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'cowire-fed-'));
-    cowireHome = join(tmp, 'home');
-    dbPath = join(tmp, 'cowire.db');
-    configPath = join(tmp, 'cowire.yaml');
+    tmp = mkdtempSync(join(tmpdir(), 'stavr-fed-'));
+    stavrHome = join(tmp, 'home');
+    dbPath = join(tmp, 'runestone.db');
+    configPath = join(tmp, 'stavr.yaml');
     processes = [];
   });
 
@@ -143,7 +143,7 @@ describe('Spec 52 A1 — federation bind + auth gate', () => {
         '--log-format',
         'json',
       ],
-      { COWIRE_HOME: cowireHome },
+      { STAVR_HOME: stavrHome },
     );
     processes.push(d);
     const exit = await Promise.race([
@@ -171,7 +171,7 @@ describe('Spec 52 A1 — federation bind + auth gate', () => {
         '--log-format',
         'json',
       ],
-      { COWIRE_HOME: cowireHome },
+      { STAVR_HOME: stavrHome },
     );
     processes.push(d);
     // Wait for the "daemon ready" log line. We're already binding to localhost
@@ -207,7 +207,7 @@ describe('Spec 52 A1 — federation bind + auth gate', () => {
         '--log-format',
         'json',
       ],
-      { COWIRE_HOME: cowireHome },
+      { STAVR_HOME: stavrHome },
     );
     processes.push(d);
     await waitForLine(d, (line) => line.includes('"msg":"daemon ready"'), 30_000);
@@ -215,9 +215,9 @@ describe('Spec 52 A1 — federation bind + auth gate', () => {
     expect(res.status).toBe(200);
   }, 35_000);
 
-  it('cowire config show reports defaults and would_refuse for a risky bind', async () => {
+  it('stavr config show reports defaults and would_refuse for a risky bind', async () => {
     // No config file present — defaults apply (bind: localhost).
-    const d = spawnCli(['config', 'show', '--bind-host', '0.0.0.0'], { COWIRE_HOME: cowireHome });
+    const d = spawnCli(['config', 'show', '--bind-host', '0.0.0.0'], { STAVR_HOME: stavrHome });
     processes.push(d);
     const exit = await Promise.race([
       d.exited,
@@ -236,10 +236,10 @@ describe('Spec 52 A1 — federation bind + auth gate', () => {
     expect(parsed.auth_gate.reason).toMatch(/refusing to bind non-local/);
   }, 35_000);
 
-  it('cowire config show with --allow-non-local-without-auth flips the verdict', async () => {
+  it('stavr config show with --allow-non-local-without-auth flips the verdict', async () => {
     const d = spawnCli(
       ['config', 'show', '--bind-host', '0.0.0.0', '--allow-non-local-without-auth'],
-      { COWIRE_HOME: cowireHome },
+      { STAVR_HOME: stavrHome },
     );
     processes.push(d);
     const exit = await Promise.race([

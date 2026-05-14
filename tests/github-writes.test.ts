@@ -181,7 +181,7 @@ describe('GitHub write adapter — gated by await_decision', () => {
       harness = await makeWriteHarness((args) => {
         expect(args.slice(0, 2)).toEqual(['pr', 'create']);
         expect(args).toContain('--repo');
-        expect(args).toContain('Kstkoda/cowire');
+        expect(args).toContain('stenlund/stavr');
         expect(args).toContain('--head');
         expect(args).toContain('feat/test');
         expect(args).toContain('--base');
@@ -191,11 +191,11 @@ describe('GitHub write adapter — gated by await_decision', () => {
         expect(args).toContain('--body-file');
         expect(args).toContain('-');
         expect(args).toContain('--draft');
-        return { stdout: 'https://github.com/Kstkoda/cowire/pull/42\n' };
+        return { stdout: 'https://github.com/stenlund/stavr/pull/42\n' };
       });
 
       const pending = callTool(harness.client, 'github.create_pr', {
-        repo: 'Kstkoda/cowire',
+        repo: 'stenlund/stavr',
         head: 'feat/test',
         base: 'main',
         title: 'Phase B smoke',
@@ -209,7 +209,7 @@ describe('GitHub write adapter — gated by await_decision', () => {
       const { structured, isError } = await pending;
       expect(isError).toBe(false);
       expect(structured.ok).toBe(true);
-      expect(structured.pr_url).toBe('https://github.com/Kstkoda/cowire/pull/42');
+      expect(structured.pr_url).toBe('https://github.com/stenlund/stavr/pull/42');
       expect(structured.pr_number).toBe(42);
 
       // exec received the body via stdin (not on the command line)
@@ -223,7 +223,7 @@ describe('GitHub write adapter — gated by await_decision', () => {
       expect(reqIdx).toBeGreaterThanOrEqual(0);
       expect(openedIdx).toBeGreaterThan(reqIdx);
       const prOpened = harness.events[openedIdx];
-      expect((prOpened.payload as any).url).toBe('https://github.com/Kstkoda/cowire/pull/42');
+      expect((prOpened.payload as any).url).toBe('https://github.com/stenlund/stavr/pull/42');
       expect((prOpened.payload as any).title).toBe('Phase B smoke');
     });
 
@@ -231,7 +231,7 @@ describe('GitHub write adapter — gated by await_decision', () => {
       harness = await makeWriteHarness(() => ({ stdout: 'should-not-be-called' }));
 
       const pending = callTool(harness.client, 'github.create_pr', {
-        repo: 'Kstkoda/cowire',
+        repo: 'stenlund/stavr',
         head: 'feat/x',
         base: 'main',
         title: 'Should be rejected',
@@ -255,7 +255,7 @@ describe('GitHub write adapter — gated by await_decision', () => {
       );
 
       const { structured } = await callTool(harness.client, 'github.create_pr', {
-        repo: 'Kstkoda/cowire',
+        repo: 'stenlund/stavr',
         head: 'feat/x',
         base: 'main',
         title: 'Will time out',
@@ -298,7 +298,7 @@ describe('GitHub write adapter — gated by await_decision', () => {
       }));
 
       const pending = callTool(harness.client, 'github.create_pr', {
-        repo: 'Kstkoda/cowire',
+        repo: 'stenlund/stavr',
         head: 'feat/x',
         base: 'main',
         title: 'gh will fail',
@@ -336,7 +336,7 @@ describe('GitHub write adapter — gated by await_decision', () => {
       });
 
       const pending = callTool(harness.client, 'github.merge_pr', {
-        repo: 'Kstkoda/cowire',
+        repo: 'stenlund/stavr',
         number: 42,
       });
 
@@ -353,7 +353,7 @@ describe('GitHub write adapter — gated by await_decision', () => {
       harness = await makeWriteHarness(() => ({ stdout: '' }));
 
       const pending = callTool(harness.client, 'github.merge_pr', {
-        repo: 'Kstkoda/cowire',
+        repo: 'stenlund/stavr',
         number: 42,
       });
       const correlationId = await waitForPendingDecision(harness.broker);
@@ -368,7 +368,7 @@ describe('GitHub write adapter — gated by await_decision', () => {
     it('timeout path: no merge call', async () => {
       harness = await makeWriteHarness(() => ({ stdout: '' }), 1);
       const { structured } = await callTool(harness.client, 'github.merge_pr', {
-        repo: 'Kstkoda/cowire',
+        repo: 'stenlund/stavr',
         number: 42,
       });
       expect(structured.ok).toBe(false);
@@ -386,12 +386,12 @@ describe('GitHub write adapter — gated by await_decision', () => {
         expect(args).toContain('-');
         expect(input).toBe('LGTM — merge after CI passes.');
         return {
-          stdout: 'https://github.com/Kstkoda/cowire/pull/7#issuecomment-555\n',
+          stdout: 'https://github.com/stenlund/stavr/pull/7#issuecomment-555\n',
         };
       });
 
       const pending = callTool(harness.client, 'github.create_pr_comment', {
-        repo: 'Kstkoda/cowire',
+        repo: 'stenlund/stavr',
         number: 7,
         body: 'LGTM — merge after CI passes.',
       });
@@ -401,14 +401,14 @@ describe('GitHub write adapter — gated by await_decision', () => {
       const { structured } = await pending;
       expect(structured.ok).toBe(true);
       expect(structured.comment_url).toBe(
-        'https://github.com/Kstkoda/cowire/pull/7#issuecomment-555',
+        'https://github.com/stenlund/stavr/pull/7#issuecomment-555',
       );
     });
 
     it('reject path: no gh call', async () => {
       harness = await makeWriteHarness(() => ({ stdout: 'unreachable' }));
       const pending = callTool(harness.client, 'github.create_pr_comment', {
-        repo: 'Kstkoda/cowire',
+        repo: 'stenlund/stavr',
         number: 7,
         body: 'whatever',
       });

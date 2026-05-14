@@ -27,14 +27,14 @@ import {
   defaultConfigPath,
   loadConfig,
   resolveBind,
-  type CowireConfig,
+  type StavrConfig,
 } from './config.js';
 import { registerStewardBugFixCli } from './steward-bug-fix-cli.js';
 
 interface ResolvedCliBind {
   bindHost: string;
   requireAuthWhenNonLocal: boolean;
-  effectiveConfig: CowireConfig;
+  effectiveConfig: StavrConfig;
   configPath: string;
   configSource: 'file' | 'defaults';
 }
@@ -75,8 +75,8 @@ function resolveBindFromCli(args: {
 
 const program = new Command();
 program
-  .name('cowire')
-  .description('Cowire (Switch) — MCP-native broker between Co, CC, and user channels')
+  .name('stavr')
+  .description('Stavr (Switch) — MCP-native broker between Co, CC, and user channels')
   .version('0.1.0');
 
 program
@@ -86,7 +86,7 @@ program
   .option('--stdio-only', 'Disable HTTP/SSE transport.')
   .option('--db <path>', 'SQLite path', defaultDbPath())
   .option('--log-format <fmt>', 'Log format: text (default) or json (newline-delimited JSON to stderr).', 'text')
-  .option('--config <path>', 'Cowire config file (default ~/.cowire/cowire.yaml).')
+  .option('--config <path>', 'Stavr config file (default ~/.stavr/stavr.yaml).')
   .option('--bind-host <host>', 'Override network.bind from config (localhost|lan|tailscale|<host>[:port]).')
   .option(
     '--allow-non-local-without-auth',
@@ -121,7 +121,7 @@ program
           bindHost = resolved.bindHost;
           requireAuthWhenNonLocal = resolved.requireAuthWhenNonLocal;
         } catch (err) {
-          console.error(`[cowire] start failed: ${(err as Error).message}`);
+          console.error(`[stavr] start failed: ${(err as Error).message}`);
           process.exit(1);
         }
       }
@@ -144,12 +144,12 @@ program
     },
   );
 
-const config = program.command('config').description('Cowire configuration utilities.');
+const config = program.command('config').description('Stavr configuration utilities.');
 
 config
   .command('show')
-  .description('Print the effective cowire configuration (defaults merged with overrides).')
-  .option('--config <path>', 'Path to config file (default ~/.cowire/cowire.yaml).')
+  .description('Print the effective stavr configuration (defaults merged with overrides).')
+  .option('--config <path>', 'Path to config file (default ~/.stavr/stavr.yaml).')
   .option('--bind-host <host>', 'Override network.bind for this preview only.')
   .option('--allow-non-local-without-auth', 'Override network.require_auth_when_non_local.', false)
   .action((opts: { config?: string; bindHost?: string; allowNonLocalWithoutAuth?: boolean }) => {
@@ -188,7 +188,7 @@ config
       };
       console.log(JSON.stringify(out, null, 2));
     } catch (err) {
-      console.error(`[cowire] config show failed: ${(err as Error).message}`);
+      console.error(`[stavr] config show failed: ${(err as Error).message}`);
       process.exit(1);
     }
   });
@@ -235,13 +235,13 @@ const daemon = program.command('daemon').description('Manage the long-running Sw
 
 daemon
   .command('start')
-  .description('Start the Switch daemon. Bind defaults to 127.0.0.1 (ADR-006); override via ~/.cowire/cowire.yaml or --bind-host.')
+  .description('Start the Switch daemon. Bind defaults to 127.0.0.1 (ADR-006); override via ~/.stavr/stavr.yaml or --bind-host.')
   .option('-p, --port <port>', 'HTTP/SSE port', (v) => Number(v), 7777)
   .option('--db <path>', 'SQLite path', defaultDbPath())
   .option('--detach', 'Fork into background and return; otherwise run in foreground.', false)
   .option('--force', 'Override a stale or running PID file.', false)
   .option('--log-format <fmt>', 'Log format: text (default) or json (newline-delimited JSON to stderr).', 'text')
-  .option('--config <path>', 'Cowire config file (default ~/.cowire/cowire.yaml).')
+  .option('--config <path>', 'Stavr config file (default ~/.stavr/stavr.yaml).')
   .option('--bind-host <host>', 'Override network.bind from config (localhost|lan|tailscale|<host>[:port]).')
   .option(
     '--allow-non-local-without-auth',
@@ -297,7 +297,7 @@ daemon
         }
         // Foreground: startDaemon blocks; we won't reach here unless it returned synthetically.
       } catch (err) {
-        console.error(`[cowire] daemon start failed: ${(err as Error).message}`);
+        console.error(`[stavr] daemon start failed: ${(err as Error).message}`);
         process.exit(1);
       }
     },
@@ -309,11 +309,11 @@ daemon
   .action(async () => {
     const result = await stopDaemon();
     if (result.pid === 0) {
-      console.error('[cowire] no PID file found; nothing to stop');
+      console.error('[stavr] no PID file found; nothing to stop');
       process.exit(1);
     }
     if (!result.stopped) {
-      console.error(`[cowire] failed to stop daemon (pid ${result.pid})`);
+      console.error(`[stavr] failed to stop daemon (pid ${result.pid})`);
       process.exit(1);
     }
     console.log(JSON.stringify({ ok: true, stopped: true, pid: result.pid }, null, 2));
@@ -336,7 +336,7 @@ daemon
       const result = await installWatchdog();
       console.log(JSON.stringify(result, null, 2));
     } catch (err) {
-      console.error(`[cowire] daemon install failed: ${(err as Error).message}`);
+      console.error(`[stavr] daemon install failed: ${(err as Error).message}`);
       process.exit(1);
     }
   });
@@ -349,7 +349,7 @@ daemon
       const result = await uninstallWatchdog();
       console.log(JSON.stringify(result, null, 2));
     } catch (err) {
-      console.error(`[cowire] daemon uninstall failed: ${(err as Error).message}`);
+      console.error(`[stavr] daemon uninstall failed: ${(err as Error).message}`);
       process.exit(1);
     }
   });
@@ -362,7 +362,7 @@ daemon
       const result = await watchdogStatus();
       console.log(JSON.stringify(result, null, 2));
     } catch (err) {
-      console.error(`[cowire] watchdog-status failed: ${(err as Error).message}`);
+      console.error(`[stavr] watchdog-status failed: ${(err as Error).message}`);
       process.exit(1);
     }
   });
@@ -375,7 +375,7 @@ daemon
       const result = await restartDaemon();
       console.log(JSON.stringify({ ok: true, restarted: true, ...result }, null, 2));
     } catch (err) {
-      console.error(`[cowire] daemon restart failed: ${(err as Error).message}`);
+      console.error(`[stavr] daemon restart failed: ${(err as Error).message}`);
       process.exit(1);
     }
   });
@@ -390,7 +390,7 @@ registerStewardBugFixCli(program);
 program
   .command('tail')
   .description('Stream live events from the daemon, with optional replay and filtering.')
-  .option('-u, --url <url>', 'Daemon base URL', process.env.COWIRE_DAEMON_URL?.replace(/\/mcp\/sse.*$/, '') ?? 'http://127.0.0.1:7777')
+  .option('-u, --url <url>', 'Daemon base URL', process.env.STAVR_DAEMON_URL?.replace(/\/mcp\/sse.*$/, '') ?? 'http://127.0.0.1:7777')
   .option('--since <duration>', 'Replay events from the last duration (e.g. 5m, 1h, 30s).')
   .option('--since-id <id>', 'Replay events since this event ID.')
   .option('--kind <kinds>', 'Comma-separated event kinds to show (e.g. worker_log,worker_stuck).')
@@ -429,7 +429,7 @@ program
       );
     } catch (err) {
       if (!ac.signal.aborted) {
-        console.error(`[cowire] tail: ${(err as Error).message}`);
+        console.error(`[stavr] tail: ${(err as Error).message}`);
         process.exit(1);
       }
     }
@@ -441,7 +441,7 @@ program
   .option(
     '-u, --url <url>',
     'Daemon SSE URL',
-    process.env.COWIRE_DAEMON_URL ?? 'http://127.0.0.1:7777/mcp/sse',
+    process.env.STAVR_DAEMON_URL ?? 'http://127.0.0.1:7777/mcp/sse',
   )
   .action(async (opts: { url: string }) => {
     const { runShim } = await import('./shim.js');
@@ -458,7 +458,7 @@ program
       const result = await runConnectTest({ url: opts.url, waitMs: opts.waitMs });
       console.log(JSON.stringify(result, null, 2));
     } catch (err) {
-      console.error(`[cowire] connect-test failed: ${(err as Error).message}`);
+      console.error(`[stavr] connect-test failed: ${(err as Error).message}`);
       process.exit(1);
     }
   });
@@ -480,7 +480,7 @@ pair
       });
       if (!res.ok) {
         const txt = await res.text().catch(() => '');
-        console.error(`[cowire] pair bootstrap failed: ${res.status} ${txt}`);
+        console.error(`[stavr] pair bootstrap failed: ${res.status} ${txt}`);
         process.exit(1);
       }
       const body = (await res.json()) as { code: string; expires_at: string };
@@ -491,7 +491,7 @@ pair
             code: body.code,
             expires_at: body.expires_at,
             instructions:
-              'Run `cowire pair remote-host --daemon-url <addr> --code ' +
+              'Run `stavr pair remote-host --daemon-url <addr> --code ' +
               body.code +
               ' --name <device-name>` on the new device.',
           },
@@ -500,7 +500,7 @@ pair
         ),
       );
     } catch (err) {
-      console.error(`[cowire] pair bootstrap failed: ${(err as Error).message}`);
+      console.error(`[stavr] pair bootstrap failed: ${(err as Error).message}`);
       process.exit(1);
     }
   });
@@ -509,7 +509,7 @@ pair
   .command('remote-host')
   .description('On the new device: exchange the pairing code for a long-term token.')
   .requiredOption('-u, --daemon-url <url>', 'Daemon base URL the new device should reach (e.g. http://nas.local:7777).')
-  .requiredOption('-c, --code <code>', '6-digit code printed by `cowire pair bootstrap` on the daemon side.')
+  .requiredOption('-c, --code <code>', '6-digit code printed by `stavr pair bootstrap` on the daemon side.')
   .requiredOption('-n, --name <name>', 'Human-readable name for this device (e.g. kenneth-laptop).')
   .action(async (opts: { daemonUrl: string; code: string; name: string }) => {
     try {
@@ -522,7 +522,7 @@ pair
       });
       if (!res.ok) {
         const txt = await res.text().catch(() => '');
-        console.error(`[cowire] pair remote-host failed: ${res.status} ${txt}`);
+        console.error(`[stavr] pair remote-host failed: ${res.status} ${txt}`);
         process.exit(1);
       }
       const body = (await res.json()) as {
@@ -552,7 +552,7 @@ pair
         ),
       );
     } catch (err) {
-      console.error(`[cowire] pair remote-host failed: ${(err as Error).message}`);
+      console.error(`[stavr] pair remote-host failed: ${(err as Error).message}`);
       process.exit(1);
     }
   });
@@ -594,7 +594,7 @@ devices
     try {
       const d = store.getDevice(id);
       if (!d) {
-        console.error(`[cowire] no device with id ${id}`);
+        console.error(`[stavr] no device with id ${id}`);
         process.exit(1);
       }
       console.log(
@@ -625,17 +625,17 @@ devices
     try {
       const before = store.getDevice(id);
       if (!before) {
-        console.error(`[cowire] no device with id ${id}`);
+        console.error(`[stavr] no device with id ${id}`);
         process.exit(1);
       }
       if (before.revoked_at) {
-        console.error(`[cowire] device ${id} already revoked at ${before.revoked_at}`);
+        console.error(`[stavr] device ${id} already revoked at ${before.revoked_at}`);
         process.exit(1);
       }
       const revokedAt = new Date().toISOString();
       const changed = store.revokeDevice(id, revokedAt);
       if (!changed) {
-        console.error(`[cowire] failed to revoke device ${id}`);
+        console.error(`[stavr] failed to revoke device ${id}`);
         process.exit(1);
       }
       // Best-effort event emission — the CLI is talking to the DB directly,
@@ -645,7 +645,7 @@ devices
         await broker.publish({
           kind: 'device_revoked',
           at: revokedAt,
-          source_agent: 'cowire-cli',
+          source_agent: 'stavr-cli',
           payload: { device_id: id, device_name: before.name },
         });
       } catch {

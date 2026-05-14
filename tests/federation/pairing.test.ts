@@ -1,15 +1,15 @@
 /**
  * Spec 52 A2 — pairing end-to-end integration test.
  *
- * Spawns two real cowire daemon subprocesses ("nas" and "device") via tsx with
- * isolated $COWIRE_HOME each. Both bind loopback so we don't need real network
+ * Spawns two real stavr daemon subprocesses ("nas" and "device") via tsx with
+ * isolated $STAVR_HOME each. Both bind loopback so we don't need real network
  * interfaces. The test exercises the full flow:
  *
  *  1. pair --bootstrap (against NAS, loopback) → 6-digit code.
  *  2. NAS reconfigured with bind=0.0.0.0 (escape-hatch=false because we have a
  *     paired device — but for the first pairing run we use loopback only).
  *  3. pair --remote-host (against NAS) with the code → token returned + saved
- *     to the device's $COWIRE_HOME/devices.json.
+ *     to the device's $STAVR_HOME/devices.json.
  *  4. With the token: authorised GET /status from outside loopback succeeds.
  *  5. Without the token: 401.
  *  6. Revoke the device. Subsequent calls with the now-stale token: 401.
@@ -111,7 +111,7 @@ describe('Spec 52 A2 — pairing end-to-end', () => {
   let nasPort = 0;
 
   beforeEach(async () => {
-    tmp = mkdtempSync(join(tmpdir(), 'cowire-a2-'));
+    tmp = mkdtempSync(join(tmpdir(), 'stavr-a2-'));
     nasHome = join(tmp, 'nas');
     deviceHome = join(tmp, 'device');
     nasDb = join(tmp, 'nas.db');
@@ -132,21 +132,21 @@ describe('Spec 52 A2 — pairing end-to-end', () => {
     // 1. Start NAS daemon, loopback bind, no auth configured yet.
     const nas = spawnDaemon(
       ['daemon', 'start', '--port', String(nasPort), '--db', nasDb, '--log-format', 'json'],
-      { COWIRE_HOME: nasHome },
+      { STAVR_HOME: nasHome },
     );
     processes.push(nas);
     await waitForHealthz(nasPort, 20_000);
 
-    // 2. cowire pair bootstrap on the NAS side (loopback POST /pair/initiate).
+    // 2. stavr pair bootstrap on the NAS side (loopback POST /pair/initiate).
     const bootstrap = runCli(
       ['pair', 'bootstrap', '--daemon-url', `http://127.0.0.1:${nasPort}`],
-      { COWIRE_HOME: nasHome },
+      { STAVR_HOME: nasHome },
     );
     expect(bootstrap.status).toBe(0);
     const bootstrapBody = JSON.parse(bootstrap.stdout) as { code: string };
     expect(bootstrapBody.code).toMatch(/^\d{6}$/);
 
-    // 3. cowire pair remote-host (simulates the new device side).
+    // 3. stavr pair remote-host (simulates the new device side).
     const remote = runCli(
       [
         'pair',
@@ -158,7 +158,7 @@ describe('Spec 52 A2 — pairing end-to-end', () => {
         '--name',
         'test-laptop',
       ],
-      { COWIRE_HOME: deviceHome },
+      { STAVR_HOME: deviceHome },
     );
     expect(remote.status).toBe(0);
     const remoteBody = JSON.parse(remote.stdout) as { device_id: string; device_name: string };
@@ -176,7 +176,7 @@ describe('Spec 52 A2 — pairing end-to-end', () => {
     expect(token).toMatch(/^[0-9a-f]{48}$/);
 
     // 4. Devices CLI: list shows the new device.
-    const list = runCli(['devices', 'list', '--db', nasDb], { COWIRE_HOME: nasHome });
+    const list = runCli(['devices', 'list', '--db', nasDb], { STAVR_HOME: nasHome });
     expect(list.status).toBe(0);
     const listBody = JSON.parse(list.stdout) as { devices: Array<{ id: string; name: string }> };
     expect(listBody.devices).toHaveLength(1);
@@ -185,17 +185,17 @@ describe('Spec 52 A2 — pairing end-to-end', () => {
 
     // 5. Revoke the device.
     const revoke = runCli(['devices', 'revoke', remoteBody.device_id, '--db', nasDb], {
-      COWIRE_HOME: nasHome,
+      STAVR_HOME: nasHome,
     });
     expect(revoke.status).toBe(0);
 
     // 6. Active-only list now empty; --include-revoked shows the revoked row.
-    const listAfter = runCli(['devices', 'list', '--db', nasDb], { COWIRE_HOME: nasHome });
+    const listAfter = runCli(['devices', 'list', '--db', nasDb], { STAVR_HOME: nasHome });
     expect(JSON.parse(listAfter.stdout).devices).toHaveLength(0);
 
     const listWithRevoked = runCli(
       ['devices', 'list', '--include-revoked', '--db', nasDb],
-      { COWIRE_HOME: nasHome },
+      { STAVR_HOME: nasHome },
     );
     const revokedBody = JSON.parse(listWithRevoked.stdout) as {
       devices: Array<{ id: string; revoked_at?: string }>;
@@ -220,7 +220,7 @@ describe('Spec 52 A2 — pairing end-to-end', () => {
         '0.0.0.0',
         '--allow-non-local-without-auth',
       ],
-      { COWIRE_HOME: nasHome },
+      { STAVR_HOME: nasHome },
     );
     processes.push(nas);
     await waitForHealthz(nasPort, 20_000);
@@ -257,7 +257,7 @@ describe('Spec 52 A2 — pairing end-to-end', () => {
   it('rejects an invalid code at /pair/complete with 401 invalid_code', async () => {
     const nas = spawnDaemon(
       ['daemon', 'start', '--port', String(nasPort), '--db', nasDb, '--log-format', 'json'],
-      { COWIRE_HOME: nasHome },
+      { STAVR_HOME: nasHome },
     );
     processes.push(nas);
     await waitForHealthz(nasPort, 20_000);
@@ -276,14 +276,14 @@ describe('Spec 52 A2 — pairing end-to-end', () => {
     // First boot: loopback, pair a device.
     const nas1 = spawnDaemon(
       ['daemon', 'start', '--port', String(nasPort), '--db', nasDb, '--log-format', 'json'],
-      { COWIRE_HOME: nasHome },
+      { STAVR_HOME: nasHome },
     );
     processes.push(nas1);
     await waitForHealthz(nasPort, 20_000);
 
     const bootstrap = runCli(
       ['pair', 'bootstrap', '--daemon-url', `http://127.0.0.1:${nasPort}`],
-      { COWIRE_HOME: nasHome },
+      { STAVR_HOME: nasHome },
     );
     const code = (JSON.parse(bootstrap.stdout) as { code: string }).code;
     const remote = runCli(
@@ -297,7 +297,7 @@ describe('Spec 52 A2 — pairing end-to-end', () => {
         '--name',
         'laptop',
       ],
-      { COWIRE_HOME: deviceHome },
+      { STAVR_HOME: deviceHome },
     );
     expect(remote.status).toBe(0);
 
@@ -323,7 +323,7 @@ describe('Spec 52 A2 — pairing end-to-end', () => {
         '0.0.0.0',
         '--force',
       ],
-      { COWIRE_HOME: nasHome },
+      { STAVR_HOME: nasHome },
     );
     processes.push(nas2);
     await waitForHealthz(nas2Port, 20_000);

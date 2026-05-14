@@ -72,7 +72,7 @@ export function start(
       await broker.publish({
         kind: 'worker_stuck',
         at: new Date().toISOString(),
-        source_agent: 'cowire-watchdog',
+        source_agent: 'stavr-watchdog',
         payload: {
           worker_id: w.id,
           worker_name: w.name,

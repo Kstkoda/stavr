@@ -19,7 +19,7 @@ const execFileP = promisify(execFile);
  * underlying token.
  *
  * `request_signature` is a free-text label (logged in the event stream) that
- * answers "what call is this?" — e.g. "github_api:GET /repos/Kstkoda/cowire".
+ * answers "what call is this?" — e.g. "github_api:GET /repos/stenlund/stavr".
  * It also doubles as the spec's "verify the request matches the credential's
  * intended service shape" check: a github credential rejects a non-github
  * request_signature unless the User explicitly opted in via metadata.

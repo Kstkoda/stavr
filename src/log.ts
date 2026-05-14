@@ -1,6 +1,6 @@
 /**
  * Tiny structured logger. Two modes:
- *  - 'text': legacy `[cowire] <msg>` to stderr (backward-compatible default).
+ *  - 'text': legacy `[stavr] <msg>` to stderr (backward-compatible default).
  *  - 'json': newline-delimited JSON `{ts, level, msg, ...metadata}` to stderr.
  *
  * Process-wide singleton, configurable once at startup via `configureLogger`.
@@ -17,7 +17,7 @@ export interface Logger {
 
 export interface LoggerOptions {
   format: LogFormat;
-  /** Defaults to 'cowire'. Used as the `[prefix]` in text mode and the `component` field in JSON. */
+  /** Defaults to 'stavr'. Used as the `[prefix]` in text mode and the `component` field in JSON. */
   component?: string;
   /** Defaults to process.stderr.write. Test seam. */
   sink?: (line: string) => void;
@@ -38,7 +38,7 @@ function format(opts: Required<Pick<LoggerOptions, 'format' | 'component'>>, lev
     if (metadata && Object.keys(metadata).length > 0) record.metadata = metadata;
     return JSON.stringify(record);
   }
-  // text mode: preserve legacy `[cowire] ...` shape; warn/error get a hint.
+  // text mode: preserve legacy `[stavr] ...` shape; warn/error get a hint.
   const tag = level === 'info' ? '' : level.toUpperCase() + ': ';
   const meta = metadata && Object.keys(metadata).length > 0 ? ` ${safeJson(metadata)}` : '';
   return `[${opts.component}] ${tag}${msg}${meta}`;
@@ -53,7 +53,7 @@ function safeJson(v: unknown): string {
 }
 
 export function makeLogger(opts: LoggerOptions): Logger {
-  const cfg = { format: opts.format, component: opts.component ?? 'cowire' };
+  const cfg = { format: opts.format, component: opts.component ?? 'stavr' };
   const sink = opts.sink ?? defaultSink;
   return {
     info: (msg, metadata) => sink(format(cfg, 'info', msg, metadata)),

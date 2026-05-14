@@ -2,20 +2,20 @@
 //
 // Extension interface for "orange brick" connectors. Anything external that
 // isn't already an MCP server (Wiser, Unifi, Roblox, Unity, SMTP, webhooks,
-// custom scripts, vendor APIs) implements this interface. cowire treats them
+// custom scripts, vendor APIs) implements this interface. stavr treats them
 // uniformly: register, configure, expose capabilities, route through the
 // no-go list, audit every exec.
 //
 // Each concrete connector lives in src/connectors/{name}.ts.
 
-import type { CapabilityTag, RiskClass } from '../types/cowire-bom.js';
+import type { CapabilityTag, RiskClass } from '../types/stavr-bom.js';
 
 // ============================================================
 // CONNECTOR INTERFACE
 // ============================================================
 
 export interface Connector {
-  /** Unique id within cowire, e.g. 'wiser', 'unifi-main', 'webhook-stripe'. */
+  /** Unique id within stavr, e.g. 'wiser', 'unifi-main', 'webhook-stripe'. */
   id: string;
 
   /** Kind groups instances. Two wiser homes share kind='wiser'. */

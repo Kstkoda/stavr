@@ -32,7 +32,7 @@ function parseText(res: { content: unknown }): { parsed: any; raw: string } {
   return { parsed, raw: text };
 }
 
-describe('Spec 49 Layer 2 — mcp__cowire__steward_ask', () => {
+describe('Spec 49 Layer 2 — mcp__stavr__steward_ask', () => {
   let h: Awaited<ReturnType<typeof harness>>;
   beforeEach(async () => {
     h = await harness();

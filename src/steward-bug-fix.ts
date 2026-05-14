@@ -6,7 +6,7 @@
  * (3) proposes a narrowly-scoped trust scope (github.create_pr +
  * github.create_pr_comment for the issue's repo only), (4) optionally
  * auto-grants the scope when the operator has pre-consented via the
- * COWIRE_AUTO_APPROVE_BUG_FIXES env var, and (5) sends the brief to the
+ * STAVR_AUTO_APPROVE_BUG_FIXES env var, and (5) sends the brief to the
  * daemon-hosted Steward via the existing /dashboard/steward/prompt route
  * (spec 49 Layer 2).
  *
@@ -93,7 +93,7 @@ export type GhExec = (
 /**
  * Production `gh` executor — wraps the real `execFile`. Tests pass a stub.
  *
- * `COWIRE_GH_BIN` overrides the binary path — used by integration tests so they
+ * `STAVR_GH_BIN` overrides the binary path — used by integration tests so they
  * can point at a fake shim by absolute path (PATH-prepending a shim doesn't
  * always win on Windows because execFile honours PATHEXT in subtly different
  * ways than `cmd /c`). Production users never need to set this.
@@ -103,7 +103,7 @@ export type GhExec = (
  * Node yields `spawn EINVAL`.
  */
 export const defaultGhExec: GhExec = (file, args, options) => {
-  const bin = process.env.COWIRE_GH_BIN || file;
+  const bin = process.env.STAVR_GH_BIN || file;
   const needShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin);
   return execFileP(bin, args, { ...options, shell: needShell });
 };
@@ -237,7 +237,7 @@ export function buildScopeProposal(args: ScopeProposalArgs): ScopeProposal {
     title: `bug-fix: ${args.ref.repo_full}#${args.ref.number}`,
     description:
       `Scope for the Steward to open a fix PR against ${args.ref.repo_full} for issue #${args.ref.number}. ` +
-      'Auto-proposed by `cowire steward bug-fix`. Allows PR creation and PR commentary; ' +
+      'Auto-proposed by `stavr steward bug-fix`. Allows PR creation and PR commentary; ' +
       'forbids merge / close / branch deletion. Action cap covers PR open plus a small number of follow-up comments.',
     allowed_actions: [
       {
@@ -272,16 +272,16 @@ export interface AutoApprovalDecision {
 }
 
 /**
- * Centralises the COWIRE_AUTO_APPROVE_BUG_FIXES env-var check. Returns a
+ * Centralises the STAVR_AUTO_APPROVE_BUG_FIXES env-var check. Returns a
  * decision record (not just a boolean) so the CLI can log *why* it auto-
  * approved or didn't — important for the audit log.
  */
 export function decideAutoApproval(env: NodeJS.ProcessEnv = process.env): AutoApprovalDecision {
-  const raw = (env.COWIRE_AUTO_APPROVE_BUG_FIXES ?? '').trim();
+  const raw = (env.STAVR_AUTO_APPROVE_BUG_FIXES ?? '').trim();
   if (raw === '1' || raw.toLowerCase() === 'true') {
-    return { granted: true, reason: 'COWIRE_AUTO_APPROVE_BUG_FIXES=1 in env' };
+    return { granted: true, reason: 'STAVR_AUTO_APPROVE_BUG_FIXES=1 in env' };
   }
-  return { granted: false, reason: 'no COWIRE_AUTO_APPROVE_BUG_FIXES env var set' };
+  return { granted: false, reason: 'no STAVR_AUTO_APPROVE_BUG_FIXES env var set' };
 }
 
 /** Brief identifier — short and human-readable. */

@@ -1,10 +1,10 @@
 # External brick sources
 
-Lets users add bricks to the Toolkit shelf from outside cowire's built-in catalog — GitHub repos, npm packages, URLs, local folders. Same shelf, same drag-to-canvas UX, just sourced from anywhere.
+Lets users add bricks to the Toolkit shelf from outside stavr's built-in catalog — GitHub repos, npm packages, URLs, local folders. Same shelf, same drag-to-canvas UX, just sourced from anywhere.
 
 ## Mental model
 
-Cowire ships with a built-in catalog (Wiser, Unifi, GitHub MCP, Files, Terminal, etc.). That catalog is just the default `Source` — a list of bricks at a known location. The user can add more sources. All sources contribute bricks to the same shelf; each brick carries a provenance badge ("from `github.com/Kstkoda/wiser-brick`") so you can always tell where a piece came from.
+Stavr ships with a built-in catalog (Wiser, Unifi, GitHub MCP, Files, Terminal, etc.). That catalog is just the default `Source` — a list of bricks at a known location. The user can add more sources. All sources contribute bricks to the same shelf; each brick carries a provenance badge ("from `github.com/Kstkoda/wiser-brick`") so you can always tell where a piece came from.
 
 This is the VS Code Extensions / Home Assistant HACS / Chrome Web Store pattern — uniform install surface, pluggable origin.
 
@@ -13,7 +13,7 @@ This is the VS Code Extensions / Home Assistant HACS / Chrome Web Store pattern 
 A brick is a folder (local) or repo (remote) with a single manifest at root:
 
 ```json
-// cowire-brick.json
+// stavr-brick.json
 {
   "schema_version": 1,
   "id": "wiser-schneider",
@@ -64,40 +64,40 @@ The `kind` is a free-form sub-type that lets multiple instances of the same bric
 
 ### 1. Built-in catalog (default)
 
-Curated list shipped with cowire. Just a static `Source` registered at boot. Bricks here are pre-blessed — no install-time consent prompt, just the standard per-brick config flow.
+Curated list shipped with stavr. Just a static `Source` registered at boot. Bricks here are pre-blessed — no install-time consent prompt, just the standard per-brick config flow.
 
 Location: `src/bricks/built-in/` — each subfolder is a brick package.
 
 ### 2. GitHub repo
 
-Most common external case. User pastes a `github.com/owner/repo` URL (or just `owner/repo`). Cowire:
+Most common external case. User pastes a `github.com/owner/repo` URL (or just `owner/repo`). Stavr:
 
-1. Fetches `cowire-brick.json` from the repo root (raw URL or via API).
+1. Fetches `stavr-brick.json` from the repo root (raw URL or via API).
 2. Validates the manifest schema.
 3. Shows a preview card: name, what it does, capabilities, permissions requested, source link.
-4. On confirm: clones the repo to `~/.cowire/bricks/<id>/` and installs (`npm install` if there's a `package.json`).
+4. On confirm: clones the repo to `~/.stavr/bricks/<id>/` and installs (`npm install` if there's a `package.json`).
 5. Adds the brick to the Shelf with a small `gh` provenance badge.
 
 Updates are explicit: a "Check for updates" button on the brick's inspector pulls the latest commit and shows a diff of what changed (manifest deltas, new capabilities, new permissions). User decides.
 
 ### 3. npm package
 
-For bricks distributed as npm packages. Convention: any package with the keyword `cowire-brick` and a `cowire-brick.json` in its root is installable.
+For bricks distributed as npm packages. Convention: any package with the keyword `stavr-brick` and a `stavr-brick.json` in its root is installable.
 
 ```sh
 # Equivalent of pasting "@scope/wiser-brick" in the UI
-cowire brick install @scope/wiser-brick
+stavr brick install @scope/wiser-brick
 ```
 
-Same flow as GitHub: fetch manifest, preview, install to `~/.cowire/bricks/<id>/`.
+Same flow as GitHub: fetch manifest, preview, install to `~/.stavr/bricks/<id>/`.
 
 ### 4. URL (direct manifest)
 
-Paste a URL pointing at a raw `cowire-brick.json`. Cowire downloads the manifest and the entry file(s) referenced. Useful for private hosting (S3, internal artifactory) without a full git repo.
+Paste a URL pointing at a raw `stavr-brick.json`. Stavr downloads the manifest and the entry file(s) referenced. Useful for private hosting (S3, internal artifactory) without a full git repo.
 
 ### 5. Local folder
 
-For developing your own brick. Point cowire at a local path; it loads from disk and live-reloads on file change. Marked with a `dev` badge — you can publish it to GitHub or npm when ready.
+For developing your own brick. Point stavr at a local path; it loads from disk and live-reloads on file change. Marked with a `dev` badge — you can publish it to GitHub or npm when ready.
 
 ## Trust + sandboxing
 
@@ -109,11 +109,11 @@ External code runs on the user's machine — this is the security surface. Three
 - No filesystem access except its own brick directory and any paths in `permissions_requested`
 - No network except hosts declared in `permissions_requested`
 - No process spawning (no child_process)
-- No access to cowire's database or event log directly — only via the `BrickContext` API the daemon passes in
+- No access to stavr's database or event log directly — only via the `BrickContext` API the daemon passes in
 
 Implemented via the `worker_threads` `resourceLimits` plus a wrapped require. v1 can punt on filesystem isolation if it complicates Windows support — declared permissions + audit log give us a usable v1 even without hard sandboxing.
 
-**Layer 3: No-go list applies.** Every capability the brick declares carries a `risk_class`. The framework's no-go list still gates destructive actions before they fire — the brick can't bypass it because cowire owns the gate, not the brick.
+**Layer 3: No-go list applies.** Every capability the brick declares carries a `risk_class`. The framework's no-go list still gates destructive actions before they fire — the brick can't bypass it because stavr owns the gate, not the brick.
 
 ## UX flow (Add Source → Browse → Install → Use)
 
@@ -130,14 +130,14 @@ Implemented via the `worker_threads` `resourceLimits` plus a wrapped require. v1
 Same operations available via CLI for scripting:
 
 ```sh
-cowire brick search gh:owner/repo        # preview manifest
-cowire brick install gh:owner/repo       # install
-cowire brick install npm:@scope/name     # install from npm
-cowire brick install ./path/to/folder    # install from local
-cowire brick list                        # show installed
-cowire brick update <id>                 # check for updates
-cowire brick remove <id>                 # uninstall
-cowire brick disable <id>                # keep installed, hide from shelf
+stavr brick search gh:owner/repo        # preview manifest
+stavr brick install gh:owner/repo       # install
+stavr brick install npm:@scope/name     # install from npm
+stavr brick install ./path/to/folder    # install from local
+stavr brick list                        # show installed
+stavr brick update <id>                 # check for updates
+stavr brick remove <id>                 # uninstall
+stavr brick disable <id>                # keep installed, hide from shelf
 ```
 
 ## Manifest validation
@@ -158,7 +158,7 @@ Reject with a clear error message; never partially install.
 
 Out of scope for v1: a hosted public registry. v1 supports point-to-source install only. Discovery is "find a GitHub repo and paste it."
 
-v2 candidate: an optional registry at `registry.cowire.dev` (or hosted in the cowire GitHub org) that aggregates publicly-listed bricks. Opt-in to publish. Search by capability ("show me all bricks that handle home-automation"). Each listing still links to its actual source repo — the registry is just a catalog index, not the runtime origin.
+v2 candidate: an optional registry at `registry.stavr.dev` (or hosted in the stavr GitHub org) that aggregates publicly-listed bricks. Opt-in to publish. Search by capability ("show me all bricks that handle home-automation"). Each listing still links to its actual source repo — the registry is just a catalog index, not the runtime origin.
 
 ## What this adds to the existing design
 
@@ -172,7 +172,7 @@ v2 candidate: an optional registry at `registry.cowire.dev` (or hosted in the co
 
 ## Open questions
 
-1. **Update policy** — should cowire auto-check for updates? Recommendation: weekly check, notification badge, never auto-install. User decides when to pull.
+1. **Update policy** — should stavr auto-check for updates? Recommendation: weekly check, notification badge, never auto-install. User decides when to pull.
 
 2. **Signature / verification** — should we require signed brick packages? Out of scope for v1; revisit if there's a real attack vector. For now, "the user explicitly approved this source URL" is the trust model.
 
@@ -180,7 +180,7 @@ v2 candidate: an optional registry at `registry.cowire.dev` (or hosted in the co
 
 4. **What happens to in-flight workers when a brick is removed/updated?** Recommendation: removed brick's capabilities become unavailable mid-job → BOM step fails → steward replans. Update: brick is hot-swappable for new invocations; in-flight workers keep using the old version until they finish.
 
-5. **MCP servers as a special case** — a `type: "mcp"` brick is just a pointer to an MCP server (executable + args). The brick manifest can be very thin — name, MCP server command, transport. Cowire spawns the MCP server as a child process and proxies its tools. Means the "external brick sources" pattern subsumes both custom code AND existing MCP ecosystem. Big win for v0.2.
+5. **MCP servers as a special case** — a `type: "mcp"` brick is just a pointer to an MCP server (executable + args). The brick manifest can be very thin — name, MCP server command, transport. Stavr spawns the MCP server as a child process and proxies its tools. Means the "external brick sources" pattern subsumes both custom code AND existing MCP ecosystem. Big win for v0.2.
 
 ## Land order
 

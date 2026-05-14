@@ -1,6 +1,6 @@
 # Weather adapter (reference example)
 
-A minimal Cowire adapter that exposes one MCP tool, `weather.current`, backed by OpenWeather's HTTP API. This is the worked example referenced by [`docs/writing-an-adapter.md`](../../docs/writing-an-adapter.md).
+A minimal Stavr adapter that exposes one MCP tool, `weather.current`, backed by OpenWeather's HTTP API. This is the worked example referenced by [`docs/writing-an-adapter.md`](../../docs/writing-an-adapter.md).
 
 This adapter is **not registered in `src/server.ts`** — it exists purely as reference code. To use it, copy `weather-adapter.ts` to `src/adapters/weather.ts` and add an import in `createSwitchServer`.
 

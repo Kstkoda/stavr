@@ -81,7 +81,7 @@ export function getCredentialStore(broker: Broker): CredentialStore | undefined 
 
 export function createSwitchServer(broker: Broker): SwitchServerHandle {
   const sessionId = newSessionId();
-  const server = new McpServer({ name: 'cowire-switch', version: '0.1.0' });
+  const server = new McpServer({ name: 'stavr-switch', version: '0.1.0' });
   broker.registerSession(sessionId, server);
 
   const trustStore = getOrCreateTrustStore(broker);

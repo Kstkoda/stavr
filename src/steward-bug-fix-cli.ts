@@ -1,5 +1,5 @@
 /**
- * Spec 49 / Stream C C1 — `cowire steward bug-fix` CLI.
+ * Spec 49 / Stream C C1 — `stavr steward bug-fix` CLI.
  *
  * End-to-end on the operator's machine:
  *  1. Parse the --issue ref.
@@ -7,14 +7,14 @@
  *  3. Compose a markdown brief.
  *  4. Build a narrowly-scoped trust-scope proposal.
  *  5. Emit `trust_scope_proposed` (+ `trust_scope_granted` if
- *     COWIRE_AUTO_APPROVE_BUG_FIXES=1).
+ *     STAVR_AUTO_APPROVE_BUG_FIXES=1).
  *  6. POST the brief as a `steward_prompt` to the daemon's existing
  *     /dashboard/steward/prompt route (spec 49 Layer 2).
  *  7. Print the correlation_id; optionally wait for the steward_response.
  *
  * Talks to the running daemon via HTTP — never bypasses the transport. That
  * keeps every emitted event visible to subscribers (dashboard, MCP clients,
- * `cowire tail`) and makes the flow auditable end-to-end.
+ * `stavr tail`) and makes the flow auditable end-to-end.
  */
 import { Command } from 'commander';
 import { readPidFile } from './daemon.js';
@@ -90,7 +90,7 @@ export async function runStewardBugFix(
       payload: {
         scope_id: scope.scope_id,
         title: scope.title,
-        granted_by: 'cowire-steward-bug-fix-cli',
+        granted_by: 'stavr-steward-bug-fix-cli',
         granted_at: new Date().toISOString(),
         expires_at: scope.expires_at,
         expires_after_actions: scope.expires_after_actions,
@@ -127,7 +127,7 @@ function resolveDaemonUrl(override?: string): string {
   if (pid && pid.port) return `http://127.0.0.1:${pid.port}`;
   throw new Error(
     'steward bug-fix: daemon not running and no --daemon-url supplied. ' +
-      'Start the daemon with `cowire daemon start` or pass --daemon-url <http://...>.',
+      'Start the daemon with `stavr daemon start` or pass --daemon-url <http://...>.',
   );
 }
 
@@ -163,7 +163,7 @@ async function emitEvent(
       body: JSON.stringify({
         kind,
         at: new Date().toISOString(),
-        source_agent: 'cowire-steward-bug-fix-cli',
+        source_agent: 'stavr-steward-bug-fix-cli',
         correlation_id: args.correlation_id,
         payload: args.payload,
       }),
@@ -173,13 +173,13 @@ async function emitEvent(
       // Surface as a warning, not an error — the flow continues.
       if (res.status !== 404) {
         console.warn(
-          `[cowire] emit ${kind} returned HTTP ${res.status}; event not persisted via this route`,
+          `[stavr] emit ${kind} returned HTTP ${res.status}; event not persisted via this route`,
         );
       }
     }
   } catch (err) {
     // Network failures are not fatal for the orchestration flow.
-    console.warn(`[cowire] emit ${kind} failed: ${(err as Error).message}`);
+    console.warn(`[stavr] emit ${kind} failed: ${(err as Error).message}`);
   }
 }
 
@@ -248,7 +248,7 @@ export function registerStewardBugFixCli(program: Command): void {
           console.log(JSON.stringify({ ok: true, ...result }, null, 2));
         }
       } catch (err) {
-        console.error(`[cowire] steward bug-fix failed: ${(err as Error).message}`);
+        console.error(`[stavr] steward bug-fix failed: ${(err as Error).message}`);
         process.exit(1);
       }
     });

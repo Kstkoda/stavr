@@ -70,7 +70,7 @@ describe('trust scope — grant itself gates on await_decision', () => {
 
     // Wrong repo: gates.
     const outPromise = callTool(h.client, 'github.create_issue', {
-      repo: 'Kstkoda/cowire',
+      repo: 'stenlund/stavr',
       title: 'out',
       body: 'x',
     });

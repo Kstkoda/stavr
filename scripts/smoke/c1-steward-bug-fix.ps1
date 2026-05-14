@@ -1,4 +1,4 @@
-# Smoke test for stream C C1 - cowire steward bug-fix (Windows / pwsh).
+# Smoke test for stream C C1 - stavr steward bug-fix (Windows / pwsh).
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $cliJs = Join-Path $root 'dist\cli.js'
@@ -7,7 +7,7 @@ if (-not (Test-Path $cliJs)) {
     exit 2
 }
 
-$tmp = Join-Path $env:TEMP ("cowire-c1-smoke-" + [Guid]::NewGuid().ToString('N'))
+$tmp = Join-Path $env:TEMP ("stavr-c1-smoke-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $bin = Join-Path $tmp 'bin'
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
@@ -22,7 +22,7 @@ if (args[0] === 'issue' && args[1] === 'view') {
     body: 'Synthetic.',
     state: 'open',
     labels: [{ name: 'bug' }],
-    url: 'https://github.com/Kstkoda/cowire-test-sandbox/issues/1',
+    url: 'https://github.com/stenlund/stavr-test-sandbox/issues/1',
   }));
   process.exit(0);
 }
@@ -33,9 +33,9 @@ $ghCmd = Join-Path $bin 'gh.cmd'
 $ghJsForCmd = $ghJs -replace '\\', '\\'
 "@echo off`r`nnode `"$ghJsForCmd`" %*`r`n" | Set-Content -Path $ghCmd -Encoding ascii
 
-$env:COWIRE_GH_BIN = $ghCmd
-$env:COWIRE_HOME = Join-Path $tmp 'home'
-New-Item -ItemType Directory -Force -Path $env:COWIRE_HOME | Out-Null
+$env:STAVR_GH_BIN = $ghCmd
+$env:STAVR_HOME = Join-Path $tmp 'home'
+New-Item -ItemType Directory -Force -Path $env:STAVR_HOME | Out-Null
 
 function Run-CliCapture {
     param([string[]]$NodeArgs)
@@ -53,8 +53,8 @@ function Run-CliCapture {
 
 try {
     Write-Host '==> 1/2: --dry-run with auto-approve set'
-    $env:COWIRE_AUTO_APPROVE_BUG_FIXES = '1'
-    $r1 = Run-CliCapture @($cliJs, 'steward', 'bug-fix', '--issue', 'Kstkoda/cowire-test-sandbox#1', '--dry-run')
+    $env:STAVR_AUTO_APPROVE_BUG_FIXES = '1'
+    $r1 = Run-CliCapture @($cliJs, 'steward', 'bug-fix', '--issue', 'stenlund/stavr-test-sandbox#1', '--dry-run')
     if ($r1.ExitCode -ne 0) {
         Write-Host "FAIL: dry-run exit $($r1.ExitCode)"
         Write-Host $r1.Stderr
@@ -78,8 +78,8 @@ try {
     Write-Host '    dry-run reports auto_approved=true, allowed_actions contain github.create_pr'
 
     Write-Host '==> 2/2: --dry-run without auto-approve env var'
-    Remove-Item Env:\COWIRE_AUTO_APPROVE_BUG_FIXES -ErrorAction SilentlyContinue
-    $r2 = Run-CliCapture @($cliJs, 'steward', 'bug-fix', '--issue', 'Kstkoda/cowire-test-sandbox#1', '--dry-run')
+    Remove-Item Env:\STAVR_AUTO_APPROVE_BUG_FIXES -ErrorAction SilentlyContinue
+    $r2 = Run-CliCapture @($cliJs, 'steward', 'bug-fix', '--issue', 'stenlund/stavr-test-sandbox#1', '--dry-run')
     if ($r2.ExitCode -ne 0) {
         Write-Host "FAIL: dry-run exit $($r2.ExitCode)"
         Write-Host $r2.Stderr

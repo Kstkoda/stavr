@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Smoke test for stream C C1 — cowire steward bug-fix.
+# Smoke test for stream C C1 — stavr steward bug-fix.
 #
 # Exercises the --dry-run path against a stubbed `gh` (Node script shim
-# pointed at via COWIRE_GH_BIN). Verifies:
+# pointed at via STAVR_GH_BIN). Verifies:
 #   1. --dry-run exits 0 and emits valid JSON.
 #   2. The JSON includes the scope id, the brief preview, and the
-#      auto-approval decision matching COWIRE_AUTO_APPROVE_BUG_FIXES.
+#      auto-approval decision matching STAVR_AUTO_APPROVE_BUG_FIXES.
 #
 # Run after `npm run build`. Idempotent.
 
@@ -19,7 +19,7 @@ if [[ ! -f "$ROOT/dist/cli.js" ]]; then
   exit 2
 fi
 
-TMP="$(mktemp -d 2>/dev/null || mktemp -d -t cowire-c1-smoke)"
+TMP="$(mktemp -d 2>/dev/null || mktemp -d -t stavr-c1-smoke)"
 trap 'rm -rf "$TMP"' EXIT
 
 # Node-script gh shim.
@@ -33,7 +33,7 @@ if (args[0] === 'issue' && args[1] === 'view') {
     body: 'Synthetic.',
     state: 'open',
     labels: [{ name: 'bug' }],
-    url: 'https://github.com/Kstkoda/cowire-test-sandbox/issues/1',
+    url: 'https://github.com/stenlund/stavr-test-sandbox/issues/1',
   }));
   process.exit(0);
 }
@@ -44,13 +44,13 @@ cat > "$TMP/bin/gh" <<EOF
 exec node "$TMP/bin/gh-fake.js" "\$@"
 EOF
 chmod +x "$TMP/bin/gh"
-export COWIRE_GH_BIN="$TMP/bin/gh"
-export COWIRE_HOME="$TMP/home"
-mkdir -p "$COWIRE_HOME"
+export STAVR_GH_BIN="$TMP/bin/gh"
+export STAVR_HOME="$TMP/home"
+mkdir -p "$STAVR_HOME"
 
 echo "==> 1/2: --dry-run with auto-approve set"
-OUT=$(COWIRE_AUTO_APPROVE_BUG_FIXES=1 $CLI steward bug-fix \
-  --issue Kstkoda/cowire-test-sandbox#1 --dry-run)
+OUT=$(STAVR_AUTO_APPROVE_BUG_FIXES=1 $CLI steward bug-fix \
+  --issue stenlund/stavr-test-sandbox#1 --dry-run)
 echo "$OUT" | grep -q '"dry_run": true' \
   || { echo "FAIL: missing dry_run flag"; echo "$OUT"; exit 1; }
 echo "$OUT" | grep -q '"granted": true' \
@@ -60,7 +60,7 @@ echo "$OUT" | grep -q '"github.create_pr"' \
 echo "    dry-run reports auto_approved=true, allowed_actions contain github.create_pr"
 
 echo "==> 2/2: --dry-run without auto-approve env var"
-OUT=$($CLI steward bug-fix --issue Kstkoda/cowire-test-sandbox#1 --dry-run)
+OUT=$($CLI steward bug-fix --issue stenlund/stavr-test-sandbox#1 --dry-run)
 echo "$OUT" | grep -q '"granted": false' \
   || { echo "FAIL: auto-approval should not be granted without env var"; echo "$OUT"; exit 1; }
 echo "    dry-run reports auto_approved=false"

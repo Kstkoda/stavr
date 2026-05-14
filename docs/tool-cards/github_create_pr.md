@@ -120,7 +120,7 @@ CONFIRM — opens an `await_decision` first. Only proceeds on approve. On reject
 ```json
 {
   "args": {
-    "repo": "Kstkoda/cowire",
+    "repo": "stenlund/stavr",
     "head": "feat/foo",
     "base": "main",
     "title": "feat: add foo",
@@ -129,7 +129,7 @@ CONFIRM — opens an `await_decision` first. Only proceeds on approve. On reject
   "result": {
     "ok": true,
     "correlation_id": "cor_...",
-    "pr_url": "https://github.com/Kstkoda/cowire/pull/42",
+    "pr_url": "https://github.com/stenlund/stavr/pull/42",
     "pr_number": 42
   }
 }

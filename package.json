@@ -1,10 +1,10 @@
 {
-  "name": "cowire",
+  "name": "stavr",
   "version": "0.1.0",
-  "description": "Cowire — MCP-native broker (Switch) between Co, CC, and user channels.",
+  "description": "Stavr — local-first authority and audit layer for AI agents. Carved into your machine.",
   "type": "module",
   "bin": {
-    "cowire": "./dist/cli.js"
+    "stavr": "./dist/cli.js"
   },
   "main": "./dist/server.js",
   "scripts": {
@@ -49,12 +49,12 @@
   "author": "Kenneth Stenlund <stenlund@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Kstkoda/cowire.git"
+    "url": "https://github.com/stenlund/stavr.git"
   },
   "bugs": {
-    "url": "https://github.com/Kstkoda/cowire/issues"
+    "url": "https://github.com/stenlund/stavr/issues"
   },
-  "homepage": "https://github.com/Kstkoda/cowire#readme",
+  "homepage": "https://github.com/stenlund/stavr#readme",
   "keywords": [
     "mcp",
     "claude",
@@ -64,6 +64,8 @@
     "audit",
     "trust",
     "local-first",
-    "sandbox"
+    "sandbox",
+    "runestone",
+    "append-only"
   ]
 }

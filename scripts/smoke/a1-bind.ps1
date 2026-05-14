@@ -3,20 +3,20 @@
 # Same arms as scripts/smoke/a1-bind.sh:
 #   1. Refusal: non-loopback bind without auth exits 1 with the documented msg.
 #   2. Success: localhost bind comes up, /healthz returns 200.
-#   3. cowire config show flags would_refuse=true for a risky bind.
+#   3. stavr config show flags would_refuse=true for a risky bind.
 #
 # Run after npm run build. Idempotent. Pure-ASCII text; no Stop pref so that
 # Node's stderr (where the refusal message lands) doesn't terminate the script.
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$tmp = Join-Path $env:TEMP ("cowire-smoke-" + [Guid]::NewGuid().ToString('N'))
+$tmp = Join-Path $env:TEMP ("stavr-smoke-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-$env:COWIRE_HOME = Join-Path $tmp 'home'
-New-Item -ItemType Directory -Force -Path $env:COWIRE_HOME | Out-Null
+$env:STAVR_HOME = Join-Path $tmp 'home'
+New-Item -ItemType Directory -Force -Path $env:STAVR_HOME | Out-Null
 
 $port = if ($env:PORT) { $env:PORT } else { '17777' }
-$configPath = Join-Path $tmp 'cowire.yaml'
-$dbPath = Join-Path $tmp 'cowire.db'
+$configPath = Join-Path $tmp 'stavr.yaml'
+$dbPath = Join-Path $tmp 'runestone.db'
 
 $cliJs = Join-Path $root 'dist\cli.js'
 if (-not (Test-Path $cliJs)) {
@@ -98,7 +98,7 @@ if (-not $up) {
 }
 Write-Host "    /healthz reachable on 127.0.0.1:$port"
 
-Write-Host '==> 3/3: cowire config show reports auth-gate verdict'
+Write-Host '==> 3/3: stavr config show reports auth-gate verdict'
 $verdictOutFile = Join-Path $tmp 'verdict.out'
 $verdictErrFile = Join-Path $tmp 'verdict.err'
 $verdictExit = Run-Node `
