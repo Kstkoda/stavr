@@ -283,7 +283,19 @@ export class BomExecutor {
         throw new Error(`no connector registered for brick_id '${step.brick_id}'`);
       }
       const argsRaw = (step as unknown as { args?: Record<string, unknown> }).args;
-      result = await connector.exec(step.capability, argsRaw ?? {}, ctx);
+      const explicitCapId = (step as unknown as { capability_id?: string }).capability_id;
+      const capabilities = connector.capabilities();
+      // Resolve the connector capability id: explicit field wins, else match
+      // by capabilityTag, else fall back to the first capability.
+      let capabilityId = explicitCapId;
+      if (!capabilityId) {
+        const matched = capabilities.find((c) => c.capabilityTag === step.capability);
+        capabilityId = matched?.id ?? capabilities[0]?.id;
+      }
+      if (!capabilityId) {
+        throw new Error(`connector '${step.brick_id}' exposes no capabilities`);
+      }
+      result = await connector.exec(capabilityId, argsRaw ?? {}, ctx);
     } catch (err) {
       result = {
         ok: false,
