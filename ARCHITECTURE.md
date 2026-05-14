@@ -436,6 +436,20 @@ The `worker_*` event taxonomy is treated as a public API — see [ADR-015](./adr
 
 ---
 
+## v0.2 — BOM planning + executor + connector bus
+
+Layered on top of the v0.1 daemon. Default-off until `experimental.planner` is flipped in `stavr.yaml`.
+
+- **Planner** (`src/steward/planner.ts`): turns a goal + available capabilities + active profile into a `Bom` with numbered steps. Each step carries a `CapabilityTag`, a `RiskClass`, a `brick_id`, and a model assigned from the profile's routing table. Re-plans on failure via `replan()`.
+- **Executor** (`src/steward/executor.ts`): subscribes to `bom_approved`, creates a trust scope from the BOM's `risk_envelope`, walks steps topologically under the scope, dispatches each via the connector registry, persists `bom_step_*` events. Replans on retry-exhaustion; pauses when a replan would escalate the envelope. Resumes `bom.status='running'` rows on daemon restart.
+- **Connector bus** (`src/connectors/`): `Connector` interface + `ConnectorRegistry`. Every brick exposes a config schema, a list of capabilities (each tagged with capabilityTag + riskClass), and `exec()`. First concrete impl: `WebhookConnector` (`src/connectors/webhook.ts`).
+- **Brick installer** (`src/bricks/`): local-source path. Reads `stavr-brick.json`, validates with Zod, copies the brick into `~/.stavr/bricks/<id>/`, persists the row in `installed_bricks`, dynamically imports the entry, and registers the returned Connector. `rehydrate()` re-loads everything on boot.
+- **Risk envelope + no-go**: `RiskClass` is the canonical "what kind of action is this" axis (`src/types/stavr-bom.ts`); `matchNoGo()` in `src/policy/nogo.ts` is the matcher; the `no_go_list` table seeds 12 defaults.
+- **Wiring**: `src/steward/v02-wiring.ts` instantiates everything behind a `V02SubsystemHandle` reachable via `getV02Subsystem(broker)`. Tools that need the planner/connectors (`propose_plan`) only register when the handle is present.
+- **Dashboard**: `/dashboard/plans` (`src/dashboard-plans-html.ts`) renders the food-label approval card and pushes live updates from `/dashboard/stream`.
+
+Full release notes: [`docs/release-notes-v0.2.0.md`](./docs/release-notes-v0.2.0.md). Design artifacts: [`proposed/`](./proposed/).
+
 ## Cross-references
 
 Stavr is the reference implementation; the design docs that drove it live in the sibling `privacy tracker/specs/` directory. This repo is self-contained — you do not need those specs to contribute. They are useful when you want the *why*:

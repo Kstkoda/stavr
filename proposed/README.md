@@ -60,15 +60,19 @@ The trust-scope-plus-audit primitive that stavr uses to make plans safely execut
 
 ## File index
 
-| File | Purpose |
-|------|---------|
-| `POSITIONING.md` | One-pager — what stavr IS and IS NOT |
-| `README.md` | This file — overview + land order |
-| `sse-heartbeat-fix.md` | Stability win — apply first |
-| `001_bom_schema.sql` | DB migration for BOMs, connectors, no-go, profiles |
-| `types.ts` | Risk, events, profiles, no-go, capability tags |
-| `connector.ts` | Extension interface for orange bricks |
-| `steward-planner.ts` | Planning loop skeleton |
+| File | Status | Purpose |
+|------|--------|---------|
+| `POSITIONING.md` | reference | One-pager — what stavr IS and IS NOT |
+| `README.md` | reference | This file — overview + land order |
+| `sse-heartbeat-fix.md` | LANDED (PR #33) | Stability win — applied to `src/transports.ts` |
+| `001_bom_schema.sql` | LANDED (PR #33) | Schema lives in `src/persistence.ts` init block; seeds in same file |
+| `types.ts` | LANDED (PR #33) | Split into `src/types/stavr-bom.ts`, `src/event-types.ts`, `src/policy/nogo.ts` |
+| `connector.ts` | LANDED (PR #33) | Lives at `src/connectors/connector.ts`; registry at `src/connectors/index.ts` |
+| `steward-planner.ts` | LANDED (PR #33) | Production module at `src/steward/planner.ts`; wired by `src/steward/v02-wiring.ts` |
+| `v0.2-foundation-bom.md` | LANDED (PR #33) | Sub-spec for the foundation step (Step 1 of the full BOM) |
+| `v0.2-full-opus-bom.md` | LANDED (PR #33) | The approved 8-hour autonomous plan |
+| `sample-brick-webhook/` | LANDED (PR #33) | Sample local brick used by the installer + smoke test |
+| `external-brick-sources.md` | follow-up | Design for GitHub + npm brick sources — not in this PR |
 
 ## Open questions to validate before merging
 
