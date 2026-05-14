@@ -224,7 +224,7 @@ export class WebhookConnector implements Connector {
     const method = this.cfg.method ?? 'POST';
     const baseHeaders = this.buildHeaders(args.headers as Record<string, string> | undefined);
 
-    let body: BodyInit | undefined;
+    let body: string | undefined;
     if (args.body !== undefined && method !== 'GET' && method !== 'DELETE') {
       body = typeof args.body === 'string' ? args.body : JSON.stringify(args.body);
       if (!baseHeaders['content-type']) baseHeaders['content-type'] = 'application/json';

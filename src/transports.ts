@@ -9,6 +9,7 @@ import type { StoredEvent } from './persistence.js';
 import { startupDecisionSweep } from './tools/decisions.js';
 import { getLogger } from './log.js';
 import { DASHBOARD_HTML } from './dashboard-html.js';
+import { DASHBOARD_PLANS_HTML } from './dashboard-plans-html.js';
 import { computeUsage, fetchAnthropicBalance, type ComputeUsageOpts } from './usage.js';
 import {
   PendingPairingRegistry,
@@ -524,6 +525,80 @@ export function mountDashboardRoutes(
     res.setHeader('content-type', 'text/html; charset=utf-8');
     res.setHeader('cache-control', 'no-store');
     res.send(DASHBOARD_HTML);
+  });
+
+  // v0.2 — Plans page (food-label approval card for BOMs).
+  app.get('/dashboard/plans', (_req, res) => {
+    res.setHeader('content-type', 'text/html; charset=utf-8');
+    res.setHeader('cache-control', 'no-store');
+    res.send(DASHBOARD_PLANS_HTML);
+  });
+
+  app.get('/dashboard/plans/list', (req, res) => {
+    const statusParam = (req.query.status as string | undefined) ?? undefined;
+    const allowed = new Set(['proposed','approved','running','done','failed','cancelled','rejected']);
+    const status = statusParam && allowed.has(statusParam)
+      ? (statusParam as 'proposed' | 'approved' | 'running' | 'done' | 'failed' | 'cancelled' | 'rejected')
+      : undefined;
+    const boms = status ? broker.store.listBoms({ status }) : broker.store.listBoms();
+    res.json({ boms });
+  });
+
+  app.get('/dashboard/plans/:bomId', (req, res) => {
+    const bom = broker.store.getBom(req.params.bomId);
+    if (!bom) {
+      res.status(404).json({ error: 'not_found' });
+      return;
+    }
+    const steps = broker.store.listBomSteps(bom.id, bom.active_version);
+    res.json({ bom, steps });
+  });
+
+  app.post('/dashboard/plans/:bomId/respond', async (req, res) => {
+    const bomId = req.params.bomId;
+    const verdict = (req.body?.verdict as 'approve' | 'reject' | undefined) ?? undefined;
+    if (verdict !== 'approve' && verdict !== 'reject') {
+      res.status(400).json({ error: "body { verdict: 'approve' | 'reject' } required" });
+      return;
+    }
+    const bom = broker.store.getBom(bomId);
+    if (!bom) {
+      res.status(404).json({ error: 'not_found' });
+      return;
+    }
+    if (bom.status !== 'proposed') {
+      res.status(409).json({ error: `bom status is ${bom.status}, cannot respond` });
+      return;
+    }
+    const at = new Date().toISOString();
+    if (verdict === 'reject') {
+      broker.store.updateBomStatus(bomId, { status: 'rejected', ended_at: at });
+      await broker.publish({
+        kind: 'bom_rejected',
+        at,
+        correlation_id: bom.correlation_id,
+        source_agent: 'dashboard',
+        payload: { bom_id: bomId, version: bom.active_version, rejected_by: 'dashboard-user' },
+      });
+      res.json({ ok: true, status: 'rejected' });
+      return;
+    }
+    // Approve: mark status, fan out bom_approved. The executor's subscription
+    // picks it up and creates the trust scope + runs the steps.
+    broker.store.updateBomStatus(bomId, { status: 'approved', approved_at: at });
+    await broker.publish({
+      kind: 'bom_approved',
+      at,
+      correlation_id: bom.correlation_id,
+      source_agent: 'dashboard',
+      payload: {
+        bom_id: bomId,
+        version: bom.active_version,
+        scope_id: '', // executor will create + persist it
+        approver: 'dashboard-user',
+      },
+    });
+    res.json({ ok: true, status: 'approved' });
   });
 
   app.get('/dashboard/status', (_req, res) => {
