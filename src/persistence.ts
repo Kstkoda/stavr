@@ -9,6 +9,7 @@ import type {
   Bom,
   BomStep,
   BomStatus,
+  BomStepStatus,
   BomVersion,
   ProfileMode,
 } from './types/stavr-bom.js';
@@ -1203,7 +1204,7 @@ export class EventStore {
       .run(...params);
   }
 
-  listBomSteps(bomId: string, version: number): Array<BomStep & { status: string; cost_actual: number; tokens_in: number; tokens_out: number; worker_id?: string; error_message?: string; retry_count: number; started_at?: string; ended_at?: string }> {
+  listBomSteps(bomId: string, version: number): Array<BomStep & { status: BomStepStatus; cost_actual: number; tokens_in: number; tokens_out: number; worker_id?: string; error_message?: string; retry_count: number; started_at?: string; ended_at?: string }> {
     const rows = this.db
       .prepare(`SELECT * FROM bom_steps WHERE bom_id = ? AND version = ? ORDER BY step_no ASC`)
       .all(bomId, version) as BomStepRow[];

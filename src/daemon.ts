@@ -25,6 +25,8 @@ import {
   type NoGoEntry,
 } from './trust/no-go-list.js';
 import { start as startWorkerWatchdog } from './workers/watchdog.js';
+import { loadConfig } from './config.js';
+import { wireV02Subsystem, type V02SubsystemHandle } from './steward/v02-wiring.js';
 
 export interface DaemonOptions {
   port: number;
@@ -277,6 +279,25 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
 
   const workerWatchdog = startWorkerWatchdog(broker, store);
 
+  // v0.2 — planner + executor + connector registry. Gated by experimental.planner.
+  // When the flag is off, this whole subsystem stays dormant.
+  let v02: V02SubsystemHandle | undefined;
+  try {
+    const cfg = loadConfig();
+    if (cfg.config.experimental?.planner) {
+      v02 = wireV02Subsystem({ broker, store });
+    } else {
+      logger.info('experimental.planner is false; v0.2 subsystem dormant', {
+        source: cfg.source,
+        path: cfg.path,
+      });
+    }
+  } catch (err) {
+    logger.error('failed to wire v0.2 subsystem; daemon continues without it', {
+      error: (err as Error).message,
+    });
+  }
+
   let shuttingDown = false;
   const shutdown = async (sig: string) => {
     if (shuttingDown) return;
@@ -290,6 +311,9 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
       }
     }
     workerWatchdog.stop();
+    if (v02) {
+      try { v02.stop(); } catch { /* best effort */ }
+    }
     await transports.shutdown();
     removePidFile();
     process.exit(0);
