@@ -22,16 +22,36 @@ const networkSchema = z
   })
   .default({ bind: 'localhost', require_auth_when_non_local: true });
 
+/**
+ * v0.2 — experimental feature flags. Default-off so adding a feature to
+ * `experimental` doesn't change behaviour for existing deployments. Flags
+ * graduate to top-level config once stable.
+ *
+ * `planner`: when true, the daemon instantiates the StewardPlanner and
+ * registers the `propose_plan` MCP tool. The reactive Steward loop is
+ * unaffected either way.
+ */
+const experimentalSchema = z
+  .object({
+    planner: z.boolean().default(false),
+  })
+  .default({ planner: false });
+
 export const CowireConfigSchema = z
   .object({
     network: networkSchema,
+    experimental: experimentalSchema,
   })
-  .default({ network: { bind: 'localhost', require_auth_when_non_local: true } });
+  .default({
+    network: { bind: 'localhost', require_auth_when_non_local: true },
+    experimental: { planner: false },
+  });
 
 export type CowireConfig = z.infer<typeof CowireConfigSchema>;
 
 export const DEFAULT_CONFIG: CowireConfig = {
   network: { bind: 'localhost', require_auth_when_non_local: true },
+  experimental: { planner: false },
 };
 
 export function cowireHome(): string {

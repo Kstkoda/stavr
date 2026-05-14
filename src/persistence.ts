@@ -5,6 +5,14 @@ import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { DecisionOption, Event, EventKindT } from './event-types.js';
 import { getLogger } from './log.js';
+import type {
+  Bom,
+  BomStep,
+  BomStatus,
+  BomVersion,
+  ProfileMode,
+} from './types/cowire-bom.js';
+import { DEFAULT_PROFILES } from './types/cowire-bom.js';
 
 export interface StoredEvent extends Event {
   id: string;
@@ -292,7 +300,171 @@ export class EventStore {
       CREATE INDEX IF NOT EXISTS idx_devices_token_hash ON devices(token_hash);
       CREATE INDEX IF NOT EXISTS idx_devices_active
         ON devices(revoked_at) WHERE revoked_at IS NULL;
+
+      -- ====================================================================
+      -- v0.2 — BOM planning + executor substrate (proposed/001_bom_schema.sql)
+      -- ====================================================================
+
+      CREATE TABLE IF NOT EXISTS boms (
+        id              TEXT PRIMARY KEY,
+        goal            TEXT NOT NULL,
+        requester       TEXT NOT NULL,
+        correlation_id  TEXT NOT NULL,
+        status          TEXT NOT NULL CHECK (status IN ('proposed','approved','running','done','failed','cancelled','rejected')),
+        active_version  INTEGER NOT NULL DEFAULT 1,
+        cost_estimate   REAL NOT NULL DEFAULT 0,
+        cost_max        REAL NOT NULL DEFAULT 0,
+        duration_sec    INTEGER NOT NULL DEFAULT 0,
+        cost_actual     REAL NOT NULL DEFAULT 0,
+        steps_done      INTEGER NOT NULL DEFAULT 0,
+        steps_total     INTEGER NOT NULL DEFAULT 0,
+        profile_mode    TEXT NOT NULL DEFAULT 'balanced',
+        scope_id        TEXT,
+        risk_envelope   TEXT NOT NULL DEFAULT '[]',
+        proposed_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        approved_at     TEXT,
+        started_at      TEXT,
+        ended_at        TEXT,
+        is_draft        INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_boms_status ON boms(status);
+      CREATE INDEX IF NOT EXISTS idx_boms_requester ON boms(requester);
+      CREATE INDEX IF NOT EXISTS idx_boms_correlation ON boms(correlation_id);
+      CREATE INDEX IF NOT EXISTS idx_boms_scope ON boms(scope_id);
+      CREATE INDEX IF NOT EXISTS idx_boms_proposed_at ON boms(proposed_at);
+
+      CREATE TABLE IF NOT EXISTS bom_versions (
+        bom_id          TEXT NOT NULL REFERENCES boms(id) ON DELETE CASCADE,
+        version         INTEGER NOT NULL,
+        reason          TEXT NOT NULL,
+        replan_trigger_step INTEGER,
+        steps_json      TEXT NOT NULL,
+        planner_model   TEXT NOT NULL,
+        planner_cost    REAL NOT NULL DEFAULT 0,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (bom_id, version)
+      );
+
+      CREATE TABLE IF NOT EXISTS bom_steps (
+        bom_id          TEXT NOT NULL REFERENCES boms(id) ON DELETE CASCADE,
+        version         INTEGER NOT NULL,
+        step_no         INTEGER NOT NULL,
+        title           TEXT NOT NULL,
+        description     TEXT,
+        capability      TEXT NOT NULL,
+        risk_class      TEXT NOT NULL,
+        brick_id        TEXT,
+        model           TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','done','failed','skipped')),
+        cost_estimate   REAL NOT NULL DEFAULT 0,
+        duration_sec_est INTEGER NOT NULL DEFAULT 0,
+        cost_actual     REAL NOT NULL DEFAULT 0,
+        tokens_in       INTEGER NOT NULL DEFAULT 0,
+        tokens_out      INTEGER NOT NULL DEFAULT 0,
+        depends_on      TEXT NOT NULL DEFAULT '[]',
+        worker_id       TEXT,
+        error_message   TEXT,
+        retry_count     INTEGER NOT NULL DEFAULT 0,
+        started_at      TEXT,
+        ended_at        TEXT,
+        PRIMARY KEY (bom_id, version, step_no)
+      );
+      CREATE INDEX IF NOT EXISTS idx_bom_steps_status ON bom_steps(status);
+      CREATE INDEX IF NOT EXISTS idx_bom_steps_worker ON bom_steps(worker_id);
+
+      CREATE TABLE IF NOT EXISTS no_go_list (
+        id              TEXT PRIMARY KEY,
+        action_pattern  TEXT NOT NULL,
+        risk_class      TEXT NOT NULL,
+        reason          TEXT NOT NULL,
+        source          TEXT NOT NULL DEFAULT 'default' CHECK (source IN ('default','user','organization')),
+        enabled         INTEGER NOT NULL DEFAULT 1,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_no_go_enabled ON no_go_list(enabled);
+
+      CREATE TABLE IF NOT EXISTS connectors (
+        id              TEXT PRIMARY KEY,
+        display_name    TEXT NOT NULL,
+        kind            TEXT NOT NULL,
+        position        TEXT NOT NULL CHECK (position IN ('above','below')),
+        config_encrypted BLOB,
+        status          TEXT NOT NULL DEFAULT 'needs_setup' CHECK (status IN ('ok','needs_setup','error','disabled')),
+        status_detail   TEXT,
+        last_checked_at TEXT,
+        capabilities    TEXT NOT NULL DEFAULT '[]',
+        enabled_tools   TEXT NOT NULL DEFAULT '[]',
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_connectors_kind ON connectors(kind);
+      CREATE INDEX IF NOT EXISTS idx_connectors_status ON connectors(status);
+
+      CREATE TABLE IF NOT EXISTS installed_bricks (
+        id              TEXT PRIMARY KEY,
+        kind            TEXT NOT NULL,
+        display_name    TEXT NOT NULL,
+        source_type     TEXT NOT NULL CHECK (source_type IN ('local','github','npm')),
+        source_path     TEXT NOT NULL,
+        install_path    TEXT NOT NULL,
+        manifest_json   TEXT NOT NULL,
+        entry_point     TEXT NOT NULL,
+        installed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        enabled         INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE INDEX IF NOT EXISTS idx_installed_bricks_kind ON installed_bricks(kind);
+      CREATE INDEX IF NOT EXISTS idx_installed_bricks_enabled ON installed_bricks(enabled);
+
+      CREATE TABLE IF NOT EXISTS profile_config (
+        mode            TEXT PRIMARY KEY CHECK (mode IN ('turbo','balanced','eco')),
+        config_json     TEXT NOT NULL,
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS profile_state (
+        id              INTEGER PRIMARY KEY CHECK (id = 1),
+        active_mode     TEXT NOT NULL DEFAULT 'balanced' CHECK (active_mode IN ('turbo','balanced','eco')),
+        switched_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        switched_by     TEXT NOT NULL DEFAULT 'system'
+      );
     `);
+
+    // Seed no-go defaults (idempotent via INSERT OR IGNORE).
+    const noGoSeeds: Array<[string, string, string, string]> = [
+      ['ng_force_push',        'git push --force*',            'destructive',  'Force-push rewrites branch history'],
+      ['ng_force_with_lease',  'git push --force-with-lease*', 'destructive',  'Force-push variants still rewrite history'],
+      ['ng_rm_rf',             '*rm -rf*',                     'destructive',  'Recursive delete outside designated scratch'],
+      ['ng_drop_table',        '*DROP TABLE*',                 'destructive',  'Schema-destructive SQL'],
+      ['ng_drop_database',     '*DROP DATABASE*',              'destructive',  'Whole-database drop'],
+      ['ng_delete_no_where',   '*DELETE FROM*',                'destructive',  'DELETE without WHERE clause needs review'],
+      ['ng_external_email',    'send_email*',                  'external-comm','Sending email to non-team requires approval'],
+      ['ng_payment',           'charge_*',                     'financial',    'Any charging / payment action'],
+      ['ng_subscription',      '*subscription*',               'financial',    'Subscription create/modify needs approval'],
+      ['ng_credential_rotate', 'rotate_credential*',           'credential',   'Credential rotation must be explicit'],
+      ['ng_credential_revoke', 'revoke_credential*',           'credential',   'Credential revocation must be explicit'],
+      ['ng_prod_deploy',       'deploy_production*',           'destructive',  'Production deploys need explicit approval'],
+    ];
+    const insertNoGo = this.db.prepare(
+      `INSERT OR IGNORE INTO no_go_list (id, action_pattern, risk_class, reason, source) VALUES (?, ?, ?, ?, 'default')`,
+    );
+    for (const [id, pattern, risk, reason] of noGoSeeds) {
+      insertNoGo.run(id, pattern, risk, reason);
+    }
+
+    // Seed profile configs (idempotent).
+    const insertProfile = this.db.prepare(
+      `INSERT OR IGNORE INTO profile_config (mode, config_json) VALUES (?, ?)`,
+    );
+    for (const mode of ['turbo', 'balanced', 'eco'] as const) {
+      insertProfile.run(mode, JSON.stringify(DEFAULT_PROFILES[mode]));
+    }
+
+    // Seed singleton profile_state row.
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO profile_state (id, active_mode, switched_by) VALUES (1, 'balanced', 'system')`,
+      )
+      .run();
   }
 
   /** Raw DB handle for the TrustStore sibling. Avoids reopening the SQLite file. */
@@ -799,6 +971,503 @@ export class EventStore {
       .get() as { n: number };
     return row.n;
   }
+
+  // ============================================================
+  // v0.2 — BOM persistence (planner + executor backing store)
+  // ============================================================
+
+  saveBom(bom: Bom): void {
+    this.db
+      .prepare(
+        `INSERT INTO boms
+           (id, goal, requester, correlation_id, status, active_version,
+            cost_estimate, cost_max, duration_sec, cost_actual, steps_done, steps_total,
+            profile_mode, scope_id, risk_envelope, proposed_at, approved_at,
+            started_at, ended_at, is_draft)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           goal = excluded.goal,
+           status = excluded.status,
+           active_version = excluded.active_version,
+           cost_estimate = excluded.cost_estimate,
+           cost_max = excluded.cost_max,
+           duration_sec = excluded.duration_sec,
+           cost_actual = excluded.cost_actual,
+           steps_done = excluded.steps_done,
+           steps_total = excluded.steps_total,
+           profile_mode = excluded.profile_mode,
+           scope_id = excluded.scope_id,
+           risk_envelope = excluded.risk_envelope,
+           approved_at = excluded.approved_at,
+           started_at = excluded.started_at,
+           ended_at = excluded.ended_at,
+           is_draft = excluded.is_draft`,
+      )
+      .run(
+        bom.id,
+        bom.goal,
+        bom.requester,
+        bom.correlation_id,
+        bom.status,
+        bom.active_version,
+        bom.cost_estimate,
+        bom.cost_max,
+        bom.duration_sec,
+        bom.cost_actual,
+        bom.steps_done,
+        bom.steps_total,
+        bom.profile_mode,
+        bom.scope_id ?? null,
+        JSON.stringify(bom.risk_envelope),
+        bom.proposed_at,
+        bom.approved_at ?? null,
+        bom.started_at ?? null,
+        bom.ended_at ?? null,
+        bom.is_draft ? 1 : 0,
+      );
+  }
+
+  saveBomVersion(version: BomVersion): void {
+    this.db
+      .prepare(
+        `INSERT INTO bom_versions
+           (bom_id, version, reason, replan_trigger_step, steps_json,
+            planner_model, planner_cost, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(bom_id, version) DO UPDATE SET
+           reason = excluded.reason,
+           replan_trigger_step = excluded.replan_trigger_step,
+           steps_json = excluded.steps_json,
+           planner_model = excluded.planner_model,
+           planner_cost = excluded.planner_cost`,
+      )
+      .run(
+        version.bom_id,
+        version.version,
+        version.reason,
+        version.replan_trigger_step ?? null,
+        JSON.stringify(version.steps),
+        version.planner_model,
+        version.planner_cost,
+        version.created_at,
+      );
+  }
+
+  saveBomSteps(bomId: string, version: number, steps: BomStep[]): void {
+    const stmt = this.db.prepare(
+      `INSERT INTO bom_steps
+         (bom_id, version, step_no, title, description, capability, risk_class,
+          brick_id, model, status, cost_estimate, duration_sec_est, depends_on)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+       ON CONFLICT(bom_id, version, step_no) DO UPDATE SET
+         title = excluded.title,
+         description = excluded.description,
+         capability = excluded.capability,
+         risk_class = excluded.risk_class,
+         brick_id = excluded.brick_id,
+         model = excluded.model,
+         cost_estimate = excluded.cost_estimate,
+         duration_sec_est = excluded.duration_sec_est,
+         depends_on = excluded.depends_on`,
+    );
+    const tx = this.db.transaction((rows: BomStep[]) => {
+      for (const s of rows) {
+        stmt.run(
+          bomId,
+          version,
+          s.step_no,
+          s.title,
+          s.description ?? null,
+          s.capability,
+          s.risk_class,
+          s.brick_id,
+          s.model,
+          s.cost_estimate,
+          s.duration_sec_est,
+          JSON.stringify(s.depends_on),
+        );
+      }
+    });
+    tx(steps);
+  }
+
+  getBom(id: string): Bom | undefined {
+    const row = this.db.prepare(`SELECT * FROM boms WHERE id = ?`).get(id) as BomRow | undefined;
+    return row ? bomRowToRecord(row) : undefined;
+  }
+
+  listBoms(filter?: { status?: BomStatus; limit?: number }): Bom[] {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter?.status) {
+      where.push(`status = ?`);
+      params.push(filter.status);
+    }
+    const limit = Math.min(filter?.limit ?? 200, 2000);
+    const sql = `SELECT * FROM boms ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY proposed_at DESC LIMIT ?`;
+    params.push(limit);
+    const rows = this.db.prepare(sql).all(...params) as BomRow[];
+    return rows.map(bomRowToRecord);
+  }
+
+  getActiveVersion(bomId: string): BomVersion | undefined {
+    const bom = this.getBom(bomId);
+    if (!bom) return undefined;
+    return this.getBomVersion(bomId, bom.active_version);
+  }
+
+  getBomVersion(bomId: string, version: number): BomVersion | undefined {
+    const row = this.db
+      .prepare(`SELECT * FROM bom_versions WHERE bom_id = ? AND version = ?`)
+      .get(bomId, version) as BomVersionRow | undefined;
+    return row ? bomVersionRowToRecord(row) : undefined;
+  }
+
+  setActiveVersion(bomId: string, version: number): void {
+    this.db.prepare(`UPDATE boms SET active_version = ? WHERE id = ?`).run(version, bomId);
+  }
+
+  updateBomStatus(bomId: string, patch: Partial<Bom>): void {
+    const fields: string[] = [];
+    const params: unknown[] = [];
+    if (patch.status !== undefined) {
+      fields.push('status = ?');
+      params.push(patch.status);
+    }
+    if (patch.scope_id !== undefined) {
+      fields.push('scope_id = ?');
+      params.push(patch.scope_id ?? null);
+    }
+    if (patch.approved_at !== undefined) {
+      fields.push('approved_at = ?');
+      params.push(patch.approved_at ?? null);
+    }
+    if (patch.started_at !== undefined) {
+      fields.push('started_at = ?');
+      params.push(patch.started_at ?? null);
+    }
+    if (patch.ended_at !== undefined) {
+      fields.push('ended_at = ?');
+      params.push(patch.ended_at ?? null);
+    }
+    if (patch.cost_actual !== undefined) {
+      fields.push('cost_actual = ?');
+      params.push(patch.cost_actual);
+    }
+    if (patch.steps_done !== undefined) {
+      fields.push('steps_done = ?');
+      params.push(patch.steps_done);
+    }
+    if (patch.steps_total !== undefined) {
+      fields.push('steps_total = ?');
+      params.push(patch.steps_total);
+    }
+    if (patch.duration_sec !== undefined) {
+      fields.push('duration_sec = ?');
+      params.push(patch.duration_sec);
+    }
+    if (fields.length === 0) return;
+    params.push(bomId);
+    this.db.prepare(`UPDATE boms SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+  }
+
+  updateBomStep(
+    bomId: string,
+    version: number,
+    stepNo: number,
+    patch: {
+      status?: BomStep['capability'] extends never ? never : 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+      cost_actual?: number;
+      tokens_in?: number;
+      tokens_out?: number;
+      worker_id?: string | null;
+      error_message?: string | null;
+      retry_count?: number;
+      started_at?: string | null;
+      ended_at?: string | null;
+    },
+  ): void {
+    const fields: string[] = [];
+    const params: unknown[] = [];
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) continue;
+      fields.push(`${k} = ?`);
+      params.push(v);
+    }
+    if (fields.length === 0) return;
+    params.push(bomId, version, stepNo);
+    this.db
+      .prepare(
+        `UPDATE bom_steps SET ${fields.join(', ')} WHERE bom_id = ? AND version = ? AND step_no = ?`,
+      )
+      .run(...params);
+  }
+
+  listBomSteps(bomId: string, version: number): Array<BomStep & { status: string; cost_actual: number; tokens_in: number; tokens_out: number; worker_id?: string; error_message?: string; retry_count: number; started_at?: string; ended_at?: string }> {
+    const rows = this.db
+      .prepare(`SELECT * FROM bom_steps WHERE bom_id = ? AND version = ? ORDER BY step_no ASC`)
+      .all(bomId, version) as BomStepRow[];
+    return rows.map(bomStepRowToRecord);
+  }
+
+  getActiveProfileMode(): ProfileMode {
+    const row = this.db.prepare(`SELECT active_mode FROM profile_state WHERE id = 1`).get() as
+      | { active_mode: ProfileMode }
+      | undefined;
+    return row?.active_mode ?? 'balanced';
+  }
+
+  setActiveProfileMode(mode: ProfileMode, switchedBy: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO profile_state (id, active_mode, switched_at, switched_by) VALUES (1, ?, datetime('now'), ?)
+         ON CONFLICT(id) DO UPDATE SET active_mode=excluded.active_mode, switched_at=datetime('now'), switched_by=excluded.switched_by`,
+      )
+      .run(mode, switchedBy);
+  }
+
+  // ---- No-go list ----
+
+  listNoGoRules(): Array<{
+    id: string;
+    action_pattern: string;
+    risk_class: string;
+    reason: string;
+    source: 'default' | 'user' | 'organization';
+    enabled: boolean;
+  }> {
+    const rows = this.db
+      .prepare(`SELECT id, action_pattern, risk_class, reason, source, enabled FROM no_go_list`)
+      .all() as Array<{
+        id: string;
+        action_pattern: string;
+        risk_class: string;
+        reason: string;
+        source: 'default' | 'user' | 'organization';
+        enabled: number;
+      }>;
+    return rows.map((r) => ({
+      id: r.id,
+      action_pattern: r.action_pattern,
+      risk_class: r.risk_class,
+      reason: r.reason,
+      source: r.source,
+      enabled: !!r.enabled,
+    }));
+  }
+
+  noGoCount(): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM no_go_list`).get() as { n: number }).n;
+  }
+
+  // ---- Installed bricks ----
+
+  saveInstalledBrick(record: {
+    id: string;
+    kind: string;
+    display_name: string;
+    source_type: 'local' | 'github' | 'npm';
+    source_path: string;
+    install_path: string;
+    manifest_json: string;
+    entry_point: string;
+    enabled?: boolean;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO installed_bricks
+           (id, kind, display_name, source_type, source_path, install_path,
+            manifest_json, entry_point, enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           kind = excluded.kind,
+           display_name = excluded.display_name,
+           source_path = excluded.source_path,
+           install_path = excluded.install_path,
+           manifest_json = excluded.manifest_json,
+           entry_point = excluded.entry_point,
+           enabled = excluded.enabled`,
+      )
+      .run(
+        record.id,
+        record.kind,
+        record.display_name,
+        record.source_type,
+        record.source_path,
+        record.install_path,
+        record.manifest_json,
+        record.entry_point,
+        record.enabled === false ? 0 : 1,
+      );
+  }
+
+  deleteInstalledBrick(id: string): boolean {
+    const r = this.db.prepare(`DELETE FROM installed_bricks WHERE id = ?`).run(id);
+    return r.changes > 0;
+  }
+
+  listInstalledBricks(): Array<{
+    id: string;
+    kind: string;
+    display_name: string;
+    source_type: 'local' | 'github' | 'npm';
+    source_path: string;
+    install_path: string;
+    manifest_json: string;
+    entry_point: string;
+    installed_at: string;
+    enabled: boolean;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, kind, display_name, source_type, source_path, install_path,
+                manifest_json, entry_point, installed_at, enabled
+         FROM installed_bricks ORDER BY installed_at ASC`,
+      )
+      .all() as Array<{
+        id: string;
+        kind: string;
+        display_name: string;
+        source_type: 'local' | 'github' | 'npm';
+        source_path: string;
+        install_path: string;
+        manifest_json: string;
+        entry_point: string;
+        installed_at: string;
+        enabled: number;
+      }>;
+    return rows.map((r) => ({ ...r, enabled: !!r.enabled }));
+  }
+}
+
+interface BomRow {
+  id: string;
+  goal: string;
+  requester: string;
+  correlation_id: string;
+  status: BomStatus;
+  active_version: number;
+  cost_estimate: number;
+  cost_max: number;
+  duration_sec: number;
+  cost_actual: number;
+  steps_done: number;
+  steps_total: number;
+  profile_mode: ProfileMode;
+  scope_id: string | null;
+  risk_envelope: string;
+  proposed_at: string;
+  approved_at: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  is_draft: number;
+}
+
+function bomRowToRecord(row: BomRow): Bom {
+  return {
+    id: row.id,
+    goal: row.goal,
+    requester: row.requester,
+    correlation_id: row.correlation_id,
+    status: row.status,
+    active_version: row.active_version,
+    cost_estimate: row.cost_estimate,
+    cost_max: row.cost_max,
+    duration_sec: row.duration_sec,
+    cost_actual: row.cost_actual,
+    steps_done: row.steps_done,
+    steps_total: row.steps_total,
+    profile_mode: row.profile_mode,
+    scope_id: row.scope_id ?? undefined,
+    risk_envelope: JSON.parse(row.risk_envelope) as Bom['risk_envelope'],
+    proposed_at: row.proposed_at,
+    approved_at: row.approved_at ?? undefined,
+    started_at: row.started_at ?? undefined,
+    ended_at: row.ended_at ?? undefined,
+    is_draft: !!row.is_draft,
+  };
+}
+
+interface BomVersionRow {
+  bom_id: string;
+  version: number;
+  reason: BomVersion['reason'];
+  replan_trigger_step: number | null;
+  steps_json: string;
+  planner_model: string;
+  planner_cost: number;
+  created_at: string;
+}
+
+function bomVersionRowToRecord(row: BomVersionRow): BomVersion {
+  return {
+    bom_id: row.bom_id,
+    version: row.version,
+    reason: row.reason,
+    replan_trigger_step: row.replan_trigger_step ?? undefined,
+    steps: JSON.parse(row.steps_json) as BomStep[],
+    planner_model: row.planner_model,
+    planner_cost: row.planner_cost,
+    created_at: row.created_at,
+  };
+}
+
+interface BomStepRow {
+  bom_id: string;
+  version: number;
+  step_no: number;
+  title: string;
+  description: string | null;
+  capability: string;
+  risk_class: string;
+  brick_id: string | null;
+  model: string;
+  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+  cost_estimate: number;
+  duration_sec_est: number;
+  cost_actual: number;
+  tokens_in: number;
+  tokens_out: number;
+  depends_on: string;
+  worker_id: string | null;
+  error_message: string | null;
+  retry_count: number;
+  started_at: string | null;
+  ended_at: string | null;
+}
+
+function bomStepRowToRecord(row: BomStepRow): BomStep & {
+  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+  cost_actual: number;
+  tokens_in: number;
+  tokens_out: number;
+  worker_id?: string;
+  error_message?: string;
+  retry_count: number;
+  started_at?: string;
+  ended_at?: string;
+} {
+  return {
+    step_no: row.step_no,
+    title: row.title,
+    description: row.description ?? undefined,
+    capability: row.capability as BomStep['capability'],
+    risk_class: row.risk_class as BomStep['risk_class'],
+    brick_id: row.brick_id ?? '',
+    model: row.model,
+    cost_estimate: row.cost_estimate,
+    duration_sec_est: row.duration_sec_est,
+    depends_on: JSON.parse(row.depends_on) as number[],
+    status: row.status,
+    cost_actual: row.cost_actual,
+    tokens_in: row.tokens_in,
+    tokens_out: row.tokens_out,
+    worker_id: row.worker_id ?? undefined,
+    error_message: row.error_message ?? undefined,
+    retry_count: row.retry_count,
+    started_at: row.started_at ?? undefined,
+    ended_at: row.ended_at ?? undefined,
+  };
 }
 
 export interface DeviceRecord {

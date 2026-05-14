@@ -66,6 +66,22 @@ export const EventKind = z.enum([
   // Spec 52 A2 — pairing tokens
   'device_paired',
   'device_revoked',
+  // v0.2 — BOM planning + executor lifecycle
+  'bom_proposed',
+  'bom_approved',
+  'bom_rejected',
+  'bom_cancelled',
+  'bom_completed',
+  'bom_failed',
+  'bom_replanned',
+  'bom_edited',
+  'bom_step_started',
+  'bom_step_progress',
+  'bom_step_completed',
+  'bom_step_failed',
+  'bom_step_skipped',
+  'bom_step_promoted',
+  'profile_mode_switched',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -481,6 +497,161 @@ export const WorkerStuckPayload = z.object({
   hint: z.string(),
 });
 
+// v0.2 — BOM planning + executor payloads
+
+const RiskClassEnum = z.enum([
+  'read-only',
+  'write-local',
+  'write-remote',
+  'execute',
+  'external-comm',
+  'financial',
+  'credential',
+  'destructive',
+]);
+
+const CapabilityTagEnum = z.enum([
+  'reading',
+  'cheap-classifier',
+  'code-execution',
+  'code-reasoning',
+  'long-context',
+  'multimodal-vision',
+  'multimodal-audio',
+  'tool-use-heavy',
+  'simple-summary',
+  'no-model',
+]);
+
+const ProfileModeEnum = z.enum(['turbo', 'balanced', 'eco']);
+
+const BomVersionReasonEnum = z.enum([
+  'initial',
+  'replan_on_failure',
+  'manual_edit',
+  'capability_escalation',
+]);
+
+export const BomProposedPayload = z.object({
+  bom_id: z.string(),
+  version: z.number().int().positive(),
+  goal: z.string(),
+  steps_count: z.number().int().nonnegative(),
+  cost_estimate: z.number().nonnegative(),
+  cost_max: z.number().nonnegative(),
+  duration_sec_est: z.number().nonnegative(),
+  risk_envelope: z.array(RiskClassEnum),
+  profile_mode: ProfileModeEnum,
+  planner_model: z.string(),
+});
+
+export const BomApprovedPayload = z.object({
+  bom_id: z.string(),
+  version: z.number().int().positive(),
+  scope_id: z.string(),
+  approver: z.string(),
+});
+
+export const BomRejectedPayload = z.object({
+  bom_id: z.string(),
+  version: z.number().int().positive(),
+  rejected_by: z.string(),
+  reason: z.string().optional(),
+});
+
+export const BomCancelledPayload = z.object({
+  bom_id: z.string(),
+  cancelled_by: z.string(),
+  reason: z.string().optional(),
+});
+
+export const BomCompletedPayload = z.object({
+  bom_id: z.string(),
+  version: z.number().int().positive(),
+  cost_actual: z.number().nonnegative(),
+  steps_done: z.number().int().nonnegative(),
+  duration_sec: z.number().nonnegative(),
+  ended_at: z.string(),
+});
+
+export const BomFailedPayload = z.object({
+  bom_id: z.string(),
+  version: z.number().int().positive(),
+  reason: z.string(),
+  last_step_no: z.number().int().nonnegative().optional(),
+});
+
+export const BomReplannedPayload = z.object({
+  bom_id: z.string(),
+  from_version: z.number().int().positive(),
+  to_version: z.number().int().positive(),
+  reason: BomVersionReasonEnum,
+  trigger_step: z.number().int().positive().optional(),
+});
+
+export const BomEditedPayload = z.object({
+  bom_id: z.string(),
+  version: z.number().int().positive(),
+  edited_by: z.string(),
+});
+
+export const BomStepStartedPayload = z.object({
+  bom_id: z.string(),
+  version: z.number().int().positive(),
+  step_no: z.number().int().positive(),
+  worker_id: z.string(),
+  model: z.string(),
+});
+
+export const BomStepProgressPayload = z.object({
+  bom_id: z.string(),
+  version: z.number().int().positive(),
+  step_no: z.number().int().positive(),
+  message: z.string(),
+});
+
+export const BomStepCompletedPayload = z.object({
+  bom_id: z.string(),
+  version: z.number().int().positive(),
+  step_no: z.number().int().positive(),
+  cost_actual: z.number().nonnegative(),
+  tokens_in: z.number().int().nonnegative(),
+  tokens_out: z.number().int().nonnegative(),
+  duration_sec: z.number().nonnegative(),
+});
+
+export const BomStepFailedPayload = z.object({
+  bom_id: z.string(),
+  version: z.number().int().positive(),
+  step_no: z.number().int().positive(),
+  error_message: z.string(),
+  retry_count: z.number().int().nonnegative(),
+  will_replan: z.boolean(),
+});
+
+export const BomStepSkippedPayload = z.object({
+  bom_id: z.string(),
+  version: z.number().int().positive(),
+  step_no: z.number().int().positive(),
+  reason: z.string(),
+});
+
+export const BomStepPromotedPayload = z.object({
+  bom_id: z.string(),
+  version: z.number().int().positive(),
+  step_no: z.number().int().positive(),
+  from_model: z.string(),
+  to_model: z.string(),
+  reason: z.string(),
+});
+
+export const ProfileModeSwitchedPayload = z.object({
+  from_mode: ProfileModeEnum,
+  to_mode: ProfileModeEnum,
+  switched_by: z.string(),
+  reason: z.string().optional(),
+});
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -549,6 +720,21 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     steward_usage: StewardUsagePayload,
     worker_log: WorkerLogPayload,
     worker_stuck: WorkerStuckPayload,
+    bom_proposed: BomProposedPayload,
+    bom_approved: BomApprovedPayload,
+    bom_rejected: BomRejectedPayload,
+    bom_cancelled: BomCancelledPayload,
+    bom_completed: BomCompletedPayload,
+    bom_failed: BomFailedPayload,
+    bom_replanned: BomReplannedPayload,
+    bom_edited: BomEditedPayload,
+    bom_step_started: BomStepStartedPayload,
+    bom_step_progress: BomStepProgressPayload,
+    bom_step_completed: BomStepCompletedPayload,
+    bom_step_failed: BomStepFailedPayload,
+    bom_step_skipped: BomStepSkippedPayload,
+    bom_step_promoted: BomStepPromotedPayload,
+    profile_mode_switched: ProfileModeSwitchedPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);

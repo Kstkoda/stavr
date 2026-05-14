@@ -282,7 +282,18 @@ export async function mountTransports(
       const transport = new SSEServerTransport('/mcp/messages', res);
       const handle = createSwitchServer(broker);
       sseSessions.set(transport.sessionId, transport);
+      // Heartbeat — write an SSE comment every 25s so undici's default 300s
+      // bodyTimeout on the client side never fires on an idle session. SSE
+      // comments are spec-compliant and the MCP SDK's SSEClientTransport
+      // ignores them.
+      const heartbeat = setInterval(() => {
+        if (!res.writableEnded) {
+          try { res.write(`: heartbeat ${Date.now()}\n\n`); } catch { /* socket gone */ }
+        }
+      }, 25_000);
+      heartbeat.unref?.();
       res.on('close', () => {
+        clearInterval(heartbeat);
         sseSessions.delete(transport.sessionId);
         broker.removeSession(handle.sessionId);
       });
@@ -302,8 +313,15 @@ export async function mountTransports(
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
       });
       res.write(':ok\n\n');
+      const heartbeat = setInterval(() => {
+        if (!res.writableEnded) {
+          try { res.write(`: heartbeat ${Date.now()}\n\n`); } catch { /* socket gone */ }
+        }
+      }, 25_000);
+      heartbeat.unref?.();
 
       const kindSet = kinds && !kinds.includes('*') ? new Set(kinds) : null;
       const shouldSend = (ev: StoredEvent): boolean => {
@@ -328,7 +346,7 @@ export async function mountTransports(
 
       // Subscribe to live events
       const off = broker.onRawEvent(send);
-      req.on('close', () => { off(); });
+      req.on('close', () => { off(); clearInterval(heartbeat); });
     });
 
     app.post('/mcp/messages', async (req: Request, res: Response) => {
