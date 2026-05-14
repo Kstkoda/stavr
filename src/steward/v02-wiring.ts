@@ -19,11 +19,15 @@ import {
   type PlannerLlmResult,
 } from './planner.js';
 import { TrustStore } from '../trust/store.js';
+import { createBrickInstaller, defaultBricksRoot, type BrickInstaller } from '../bricks/installer.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 export interface V02SubsystemHandle {
   planner: StewardPlanner;
   executor: BomExecutor;
   connectors: ConnectorRegistry;
+  bricks: BrickInstaller;
   stop(): void;
 }
 
@@ -47,6 +51,13 @@ export interface V02WiringOpts {
   stepConcurrency?: number;
   /** Override for tests. */
   trustStore?: TrustStore;
+  /** Override the directory where installed bricks live. Defaults to ~/.stavr/bricks. */
+  bricksRoot?: string;
+  /**
+   * Skip rehydrating installed bricks at startup. Tests use this to avoid
+   * spawning module loads against ephemeral file systems.
+   */
+  skipBrickRehydrate?: boolean;
 }
 
 /**
@@ -134,6 +145,26 @@ export function wireV02Subsystem(opts: V02WiringOpts): V02SubsystemHandle {
     { stepConcurrency: opts.stepConcurrency ?? 1 },
   );
 
+  // Brick installer + re-hydration of previously installed local bricks.
+  const stavrHome = process.env.STAVR_HOME?.trim() || join(homedir(), '.stavr');
+  const bricksRoot = opts.bricksRoot ?? defaultBricksRoot(stavrHome);
+  const bricks = createBrickInstaller({ store, registry: connectors, bricksRoot });
+  if (!opts.skipBrickRehydrate) {
+    void bricks
+      .rehydrate()
+      .then(({ loaded, failed }) => {
+        if (loaded > 0 || failed.length > 0) {
+          getLogger().info('brick rehydration complete', { loaded, failed: failed.length });
+        }
+        for (const f of failed) {
+          getLogger().warn('brick rehydrate failed', { id: f.id, error: f.error });
+        }
+      })
+      .catch((err) => {
+        getLogger().error('brick rehydration crashed', { error: (err as Error).message });
+      });
+  }
+
   executor.start();
   getLogger().info('v0.2 subsystem wired (planner + executor)', {
     connectors: connectors.list().length,
@@ -143,6 +174,7 @@ export function wireV02Subsystem(opts: V02WiringOpts): V02SubsystemHandle {
     planner,
     executor,
     connectors,
+    bricks,
     stop: () => {
       executor.stop();
       handlesByBroker.delete(broker);
