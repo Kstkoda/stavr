@@ -1,0 +1,34 @@
+{
+  "id": "webhook-sample",
+  "kind": "webhook",
+  "display_name": "Sample Webhook",
+  "position": "above",
+  "entry": "index.mjs",
+  "version": "0.1.0",
+  "config_schema": [
+    { "key": "url", "label": "Target URL", "kind": "url", "required": true },
+    {
+      "key": "method",
+      "label": "Method",
+      "kind": "select",
+      "default": "POST",
+      "options": [
+        { "value": "GET", "label": "GET" },
+        { "value": "POST", "label": "POST" },
+        { "value": "PUT", "label": "PUT" }
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "webhook_fire",
+      "description": "POST a JSON body to the configured endpoint and return the response.",
+      "capability_tag": "no-model",
+      "risk_class": "external-comm",
+      "args_schema": [
+        { "key": "body", "label": "Body", "kind": "json" },
+        { "key": "query", "label": "Query", "kind": "json" }
+      ]
+    }
+  ]
+}
