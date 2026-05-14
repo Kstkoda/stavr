@@ -22,6 +22,8 @@ import { registerStewardTools } from './steward/tools.js';
 import { CredentialStore } from './credentials/store.js';
 import { registerCredentialTools } from './credentials/tools.js';
 import { registerStewardAskTool } from './steward-ask-tool.js';
+import { registerProposePlanTool } from './tools/propose-plan.js';
+import { getV02Subsystem } from './steward/v02-wiring.js';
 
 export interface SwitchServerHandle {
   server: McpServer;
@@ -103,6 +105,14 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
     registerCredentialTools(server, broker, credentialStore);
   }
   registerStewardAskTool(server, broker);
+  // v0.2 — propose_plan only when the experimental subsystem is wired up.
+  const v02 = getV02Subsystem(broker);
+  if (v02) {
+    registerProposePlanTool(server, {
+      planner: v02.planner,
+      connectors: v02.connectors,
+    });
+  }
   return { server, sessionId, orchestrator };
 }
 

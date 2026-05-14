@@ -27,6 +27,17 @@ export interface V02SubsystemHandle {
   stop(): void;
 }
 
+const handlesByBroker = new WeakMap<Broker, V02SubsystemHandle>();
+
+/**
+ * Retrieve the v0.2 subsystem handle for a broker, or undefined if the
+ * flag is off / wiring hasn't been called. Used by createSwitchServer
+ * to register the `propose_plan` tool only when planner is on.
+ */
+export function getV02Subsystem(broker: Broker): V02SubsystemHandle | undefined {
+  return handlesByBroker.get(broker);
+}
+
 export interface V02WiringOpts {
   broker: Broker;
   store: EventStore;
@@ -128,12 +139,17 @@ export function wireV02Subsystem(opts: V02WiringOpts): V02SubsystemHandle {
     connectors: connectors.list().length,
   });
 
-  return {
+  const handle: V02SubsystemHandle = {
     planner,
     executor,
     connectors,
-    stop: () => executor.stop(),
+    stop: () => {
+      executor.stop();
+      handlesByBroker.delete(broker);
+    },
   };
+  handlesByBroker.set(broker, handle);
+  return handle;
 }
 
 /**
