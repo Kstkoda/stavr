@@ -341,6 +341,51 @@ export async function mountTransports(
       await transport.handlePostMessage(req, res, req.body);
     });
 
+    // Spec 49 / Stream C C1 — loopback-only event injection. The
+    // `cowire steward bug-fix` CLI uses this to emit trust_scope_proposed
+    // and trust_scope_granted events through the broker (so subscribers see
+    // them in the dashboard event tail and the audit log). The endpoint is
+    // strictly local — it lets any caller on this machine publish arbitrary
+    // events, which is fine when the bind is 127.0.0.1 and the kernel
+    // gates non-local access, but would be unsafe otherwise. We refuse
+    // non-loopback callers explicitly.
+    app.post('/internal/emit', async (req: Request, res: Response) => {
+      const ra = req.socket.remoteAddress ?? '';
+      const ip = ra.replace(/^::ffff:/, '');
+      const isLoop = ip === '127.0.0.1' || ip === '::1' || ip === '';
+      if (!isLoop) {
+        res.status(403).json({ ok: false, error: 'loopback only' });
+        return;
+      }
+      const body = (req.body ?? {}) as {
+        kind?: string;
+        at?: string;
+        source_agent?: string;
+        correlation_id?: string;
+        payload?: unknown;
+      };
+      if (!body.kind || typeof body.kind !== 'string') {
+        res.status(400).json({ ok: false, error: 'kind required' });
+        return;
+      }
+      if (!body.source_agent || typeof body.source_agent !== 'string') {
+        res.status(400).json({ ok: false, error: 'source_agent required' });
+        return;
+      }
+      try {
+        await broker.publish({
+          kind: body.kind as Parameters<typeof broker.publish>[0]['kind'],
+          at: body.at ?? new Date().toISOString(),
+          source_agent: body.source_agent,
+          correlation_id: body.correlation_id,
+          payload: body.payload,
+        });
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(400).json({ ok: false, error: (err as Error).message });
+      }
+    });
+
     mountDashboardRoutes(app, broker, {
       port: opts.port,
       startedAt: daemonStartedAt,

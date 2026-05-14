@@ -29,6 +29,7 @@ import {
   resolveBind,
   type CowireConfig,
 } from './config.js';
+import { registerStewardBugFixCli } from './steward-bug-fix-cli.js';
 
 interface ResolvedCliBind {
   bindHost: string;
@@ -384,6 +385,7 @@ registerCredentialsCli(program, defaultDbPath);
 registerDaemonStewardCli(program);
 registerUsageCli(program);
 registerAskCli(program);
+registerStewardBugFixCli(program);
 
 program
   .command('tail')
