@@ -8,7 +8,7 @@ Stavr is a small daemon that runs on your laptop and sits between any AI assista
 
 - **One human approves the plan, not every action.** Pre-grant a time-bounded, action-capped scope ("for the next hour, you may merge PRs in `Kstkoda/stavr` up to 10 times"), and the AI runs without asking again. Anything outside the scope still prompts. Anything on the no-go list always prompts, regardless of scope.
 - **Every action lives in an audit log you own.** Append-only SQLite database on your disk — your runestone. Replayable, exportable, queryable, never leaves your machine. If you ever need to answer "what did the AI do at 3 p.m. on Tuesday?", the answer is one query away.
-- **Many agents, one mission control.** Spawn parallel Claude Code workers, each in an isolated git worktree on its own branch. Watch them all in a single live dashboard at `http://127.0.0.1:7777/dashboard`. Stop or steer any of them from one place.
+- **Many agents, one mission control.** Spawn parallel Claude Code workers, each in an isolated git worktree on its own branch. Watch them all in the live multi-page dashboard at `http://127.0.0.1:7777/dashboard`. Stop or steer any of them from one place.
 
 Stavr binds to `127.0.0.1` only. No cloud, no telemetry, no third-party server. The architecture is fully described in [`ARCHITECTURE.md`](ARCHITECTURE.md) and the [`adr/`](adr/) decision records.
 
@@ -65,7 +65,7 @@ Node 20+ required. Currently developed and tested on Windows, macOS, and Linux e
 - **Trust scopes** — pre-approved bundles of actions with time and action-count caps. The pattern lives in `src/trust/`.
 - **Worker orchestration via git worktrees.** Each spawned Claude Code worker gets its own branch, its own working tree, its own MCP session. Parallel workers in the same repo never collide.
 - **GitHub write adapters** — `github_create_pr`, `github_merge_pr`, `github_create_issue`, `github_add_labels`, and the rest. Gated by tier-and-scope. See [`docs/tool-cards/`](docs/tool-cards/).
-- **Audit dashboard** at `http://127.0.0.1:7777/dashboard` — live event tail, worker drill-in, inline decision approval, JSON/CSV export.
+- **Operations dashboard** at `http://127.0.0.1:7777/dashboard` — eight pages built on the Dark 2.0 design system: Home (daemon health + active BOMs + recent decisions), Topology (SVG ops control center with time scrubber), Streams (multi-pane terminal view), Plans (food-label approval cards), Decide (decision cards with countdown), Toolkit (ESB bus + brick editor), Capabilities (Lego baseplate per profile mode), Settings (profile / scopes / no-go / bricks). See [`docs/dashboard.md`](docs/dashboard.md).
 - **`stavr tail` CLI** for terminal-pane live monitoring with filter chips for kind, worker, source-agent. Color-coded, exponential-backoff reconnect.
 - **Stuck-worker watchdog** — daemon emits `worker_stuck` events when a worker goes silent past a configurable threshold.
 - **Machine-readable contracts** — JSON Schemas for every tool, an event taxonomy doc at [`docs/event-taxonomy.md`](docs/event-taxonomy.md), and a regenerable tool catalogue at [`docs/tool-catalogue.json`](docs/tool-catalogue.json).
