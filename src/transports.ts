@@ -699,7 +699,130 @@ export function mountDashboardRoutes(
     return { activeMode: broker.store.getActiveProfileMode() };
   }
 
-  mountDashboardPages(app, { homeData, plansData, decideData, topologyData, streamsData, toolkitData, capabilitiesData });
+  // Settings page snapshot — active profile, full scopes list, no-go
+  // list, installed bricks. Read once per page load; writes happen via
+  // dedicated POST endpoints below.
+  function settingsData(): import('./dashboard/pages/settings.js').SettingsData {
+    const all = trustStore.list();
+    return {
+      activeMode: broker.store.getActiveProfileMode(),
+      scopes: all.filter((s) => s.status === 'active' || s.status === 'proposed').map((s) => ({
+        id: s.id,
+        title: s.title,
+        status: s.status,
+        expires_at: s.expires_at ?? undefined,
+        actions_executed: s.actions_executed,
+        expires_after_actions: s.expires_after_actions ?? undefined,
+      })),
+      noGo: broker.store.listNoGoRules(),
+      bricks: broker.store.listInstalledBricks().map((b) => ({
+        id: b.id,
+        kind: b.kind,
+        display_name: b.display_name,
+        enabled: b.enabled,
+      })),
+    };
+  }
+
+  mountDashboardPages(app, { homeData, plansData, decideData, topologyData, streamsData, toolkitData, capabilitiesData, settingsData });
+
+  // ---- C9 Settings endpoints ----
+
+  app.post('/dashboard/settings/profile', async (req, res) => {
+    const body = (req.body ?? {}) as { mode?: string };
+    if (body.mode !== 'turbo' && body.mode !== 'balanced' && body.mode !== 'eco') {
+      res.status(400).json({ error: "body { mode: 'turbo' | 'balanced' | 'eco' } required" });
+      return;
+    }
+    broker.store.setActiveProfileMode(body.mode, 'dashboard-user');
+    await broker.publish({
+      kind: 'profile_mode_switched',
+      at: new Date().toISOString(),
+      source_agent: 'dashboard',
+      payload: { mode: body.mode, switched_by: 'dashboard-user' },
+    });
+    res.json({ ok: true, mode: body.mode });
+  });
+
+  app.post('/dashboard/settings/scopes/:id/revoke', async (req, res) => {
+    const scope = trustStore.revoke(req.params.id);
+    if (!scope) { res.status(404).json({ error: 'not_found' }); return; }
+    await broker.publish({
+      kind: 'trust_scope_revoked',
+      at: new Date().toISOString(),
+      correlation_id: scope.id,
+      source_agent: 'dashboard',
+      payload: { id: scope.id, revoked_by: 'dashboard-user' },
+    });
+    res.json({ ok: true, scope });
+  });
+
+  app.post('/dashboard/settings/scopes/:id/extend', async (req, res) => {
+    const body = (req.body ?? {}) as { new_expires_at?: string; new_expires_after_actions?: number };
+    if (!body.new_expires_at && body.new_expires_after_actions === undefined) {
+      res.status(400).json({ error: 'extend requires new_expires_at and/or new_expires_after_actions' });
+      return;
+    }
+    const updated = trustStore.extend(req.params.id, {
+      expires_at: body.new_expires_at,
+      expires_after_actions: body.new_expires_after_actions,
+    });
+    if (!updated) { res.status(404).json({ error: 'not_found' }); return; }
+    await broker.publish({
+      kind: 'trust_scope_extended',
+      at: new Date().toISOString(),
+      correlation_id: updated.id,
+      source_agent: 'dashboard',
+      payload: { id: updated.id, new_expires_at: updated.expires_at, extended_by: 'dashboard-user' },
+    });
+    res.json({ ok: true, scope: updated });
+  });
+
+  app.post('/dashboard/settings/nogo', (req, res) => {
+    const body = (req.body ?? {}) as { rule?: { id?: string; action_pattern?: string; risk_class?: string; reason?: string } };
+    const r = body.rule;
+    if (!r || !r.id || !r.action_pattern || !r.risk_class || !r.reason) {
+      res.status(400).json({ error: 'rule { id, action_pattern, risk_class, reason } required' });
+      return;
+    }
+    const result = broker.store.addNoGoRule({
+      id: r.id,
+      action_pattern: r.action_pattern,
+      risk_class: r.risk_class,
+      reason: r.reason,
+    });
+    if (!result.added) { res.status(409).json({ error: 'rule already exists' }); return; }
+    res.json({ ok: true });
+  });
+
+  app.post('/dashboard/settings/nogo/:id/toggle', (req, res) => {
+    const body = (req.body ?? {}) as { enabled?: boolean };
+    if (typeof body.enabled !== 'boolean') {
+      res.status(400).json({ error: 'body { enabled: boolean } required' });
+      return;
+    }
+    const r = broker.store.setNoGoRuleEnabled(req.params.id, body.enabled);
+    if (!r.changed) { res.status(404).json({ error: 'not_found_or_readonly' }); return; }
+    res.json({ ok: true });
+  });
+
+  app.post('/dashboard/settings/nogo/:id/delete', (req, res) => {
+    const r = broker.store.deleteNoGoRule(req.params.id);
+    if (!r.deleted) { res.status(404).json({ error: 'not_found_or_readonly' }); return; }
+    res.json({ ok: true });
+  });
+
+  app.post('/dashboard/bricks/:id/uninstall', async (req, res) => {
+    const sub = getV02Subsystem(broker);
+    if (!sub) { res.status(503).json({ error: 'connector subsystem not wired' }); return; }
+    try {
+      const ok = await sub.bricks.uninstall(req.params.id);
+      if (!ok) { res.status(404).json({ error: 'not_found' }); return; }
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
 
   // ---- C7 Toolkit endpoints ----
 

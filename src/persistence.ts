@@ -1261,6 +1261,42 @@ export class EventStore {
     return (this.db.prepare(`SELECT COUNT(*) AS n FROM no_go_list`).get() as { n: number }).n;
   }
 
+  /**
+   * Add a user-source no-go rule. v0.3 dashboard Settings editor calls
+   * this. Default rules are seeded at boot from STARTER_NO_GO_LIST and
+   * are not editable through this path.
+   */
+  addNoGoRule(rule: {
+    id: string;
+    action_pattern: string;
+    risk_class: string;
+    reason: string;
+  }): { added: boolean } {
+    const r = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO no_go_list (id, action_pattern, risk_class, reason, source, enabled)
+         VALUES (?, ?, ?, ?, 'user', 1)`,
+      )
+      .run(rule.id, rule.action_pattern, rule.risk_class, rule.reason);
+    return { added: r.changes > 0 };
+  }
+
+  /** Toggle enabled on a user-source rule. No-op for default-source rules. */
+  setNoGoRuleEnabled(id: string, enabled: boolean): { changed: boolean } {
+    const r = this.db
+      .prepare(`UPDATE no_go_list SET enabled = ? WHERE id = ? AND source = 'user'`)
+      .run(enabled ? 1 : 0, id);
+    return { changed: r.changes > 0 };
+  }
+
+  /** Delete a user-source rule. No-op for default-source rules. */
+  deleteNoGoRule(id: string): { deleted: boolean } {
+    const r = this.db
+      .prepare(`DELETE FROM no_go_list WHERE id = ? AND source = 'user'`)
+      .run(id);
+    return { deleted: r.changes > 0 };
+  }
+
   // ---- Installed bricks ----
 
   saveInstalledBrick(record: {

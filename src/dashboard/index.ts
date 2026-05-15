@@ -20,7 +20,7 @@ import { renderPlansPage, type PlansData } from './pages/plans.js';
 import { renderDecidePage, type DecideData } from './pages/decide.js';
 import { renderToolkitPage, type ToolkitData } from './pages/toolkit.js';
 import { renderCapabilitiesPage, type CapabilitiesData } from './pages/capabilities.js';
-import { renderSettingsPage } from './pages/settings.js';
+import { renderSettingsPage, type SettingsData } from './pages/settings.js';
 
 export interface DashboardPageDeps {
   /** Snapshot used for Home server-side initial paint. Optional — tests
@@ -39,6 +39,8 @@ export interface DashboardPageDeps {
   toolkitData?: () => ToolkitData;
   /** Snapshot used for Capabilities server-side initial paint (C8). */
   capabilitiesData?: () => CapabilitiesData;
+  /** Snapshot used for Settings server-side initial paint (C9). */
+  settingsData?: () => SettingsData;
 }
 
 function sendHtml(res: express.Response, body: string): void {
@@ -68,7 +70,7 @@ export function mountDashboardPages(
     decide:       () => renderDecidePage(deps.decideData?.()),
     toolkit:      () => renderToolkitPage(deps.toolkitData?.()),
     capabilities: () => renderCapabilitiesPage(deps.capabilitiesData?.()),
-    settings:     renderSettingsPage,
+    settings:     () => renderSettingsPage(deps.settingsData?.()),
   };
 
   for (const entry of NAV_ENTRIES) {
