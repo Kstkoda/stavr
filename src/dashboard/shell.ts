@@ -164,6 +164,93 @@ button { font: inherit; }
   color: var(--text-primary);
   font-size: 16px;
 }
+
+/* Skeleton loaders — pages drop these in while data is in flight. */
+.skeleton {
+  background: linear-gradient(90deg,
+    var(--bg-elevated) 0%,
+    var(--bg-hover)    50%,
+    var(--bg-elevated) 100%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s linear infinite;
+  border-radius: 4px;
+  min-height: 14px;
+}
+.skeleton-line { height: 14px; margin: 6px 0; }
+.skeleton-card { height: 80px; }
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Connection banner — surfaces SSE drops. Hidden by default; pages or
+ * the shell JS flip the data-state attribute. */
+.conn-banner {
+  position: fixed;
+  bottom: 18px;
+  right: 18px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--risk-medium);
+  border-radius: 7px;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-primary);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  z-index: 70;
+  display: none;
+  align-items: center;
+  gap: 10px;
+}
+.conn-banner[data-state="dropped"] {
+  display: flex;
+  border-left-color: var(--risk-high);
+}
+.conn-banner[data-state="reconnecting"] {
+  display: flex;
+  border-left-color: var(--risk-medium);
+}
+.conn-banner[data-state="ok"] {
+  display: flex;
+  border-left-color: var(--risk-low);
+  animation: conn-fadeout 2s 1s forwards;
+}
+@keyframes conn-fadeout {
+  to { opacity: 0; display: none; }
+}
+.conn-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--risk-medium);
+}
+.conn-banner[data-state="dropped"] .conn-banner-dot { background: var(--risk-high); }
+.conn-banner[data-state="ok"] .conn-banner-dot { background: var(--risk-low); }
+`;
+
+/**
+ * Shell-level connection banner that any page can drive without re-
+ * implementing the SSE plumbing. Pages set:
+ *   window.__stavrConn.set('dropped' | 'reconnecting' | 'ok', detail?)
+ * The banner shows in the bottom-right, colour-coded by state.
+ */
+const SHELL_CONN_JS = `
+(function() {
+  const banner = document.querySelector('[data-role="conn-banner"]');
+  if (!banner) return;
+  const msg = banner.querySelector('[data-role="conn-banner-msg"]');
+  window.__stavrConn = {
+    set: function(state, detail) {
+      banner.setAttribute('data-state', state);
+      if (msg) {
+        if (state === 'dropped') msg.textContent = 'Live updates disconnected — retrying…';
+        else if (state === 'reconnecting') msg.textContent = 'Reconnecting…';
+        else if (state === 'ok') msg.textContent = detail || 'Live updates restored.';
+      }
+    },
+    clear: function() { banner.removeAttribute('data-state'); },
+  };
+})();
 `;
 
 function escapeHtml(s: string): string {
@@ -212,7 +299,12 @@ export function renderShell(input: RenderShellInput): string {
     `</header>`,
     `<main class="page" role="main">${input.body}</main>`,
     renderInspectorPanel(),
+    `<div class="conn-banner" data-role="conn-banner" role="status" aria-live="polite">`,
+    `<span class="conn-banner-dot" aria-hidden="true"></span>`,
+    `<span data-role="conn-banner-msg">Live updates connected.</span>`,
+    `</div>`,
     `<script>${INSPECTOR_JS}</script>`,
+    `<script>${SHELL_CONN_JS}</script>`,
     script,
     `</body>`,
     `</html>`,
