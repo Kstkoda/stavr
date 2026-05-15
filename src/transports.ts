@@ -567,11 +567,24 @@ export function mountDashboardRoutes(
     };
   }
 
+  // Plans page snapshot — full list of BOMs plus per-status totals so
+  // the toolbar chips can show counts on first paint without a second
+  // round-trip. Shared with the JSON endpoint downstream.
+  function plansData() {
+    const boms = broker.store.listBoms();
+    const totals = {
+      proposed: 0, approved: 0, running: 0, done: 0,
+      failed: 0, cancelled: 0, rejected: 0,
+    } as Record<typeof boms[number]['status'], number>;
+    for (const b of boms) totals[b.status]++;
+    return { boms, totals };
+  }
+
   // v0.3 dashboard shell — /dashboard redirects to /dashboard/home; per-page
   // routes (home, topology, streams, plans, decide, toolkit, capabilities,
   // settings) render the shared shell. Must run BEFORE any /dashboard/<page>/*
   // JSON endpoints so Express dispatches the page route for bare GETs.
-  mountDashboardPages(app, { homeData });
+  mountDashboardPages(app, { homeData, plansData });
 
   app.get('/dashboard/plans/list', (req, res) => {
     const statusParam = (req.query.status as string | undefined) ?? undefined;
