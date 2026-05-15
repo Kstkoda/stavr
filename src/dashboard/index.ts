@@ -16,7 +16,7 @@ import { NAV_ENTRIES, type DashboardPageId } from './shell.js';
 import { renderHomePage, type HomeData } from './pages/home.js';
 import { renderTopologyPage } from './pages/topology.js';
 import { renderStreamsPage } from './pages/streams.js';
-import { renderPlansPage } from './pages/plans.js';
+import { renderPlansPage, type PlansData } from './pages/plans.js';
 import { renderDecidePage } from './pages/decide.js';
 import { renderToolkitPage } from './pages/toolkit.js';
 import { renderCapabilitiesPage } from './pages/capabilities.js';
@@ -27,6 +27,8 @@ export interface DashboardPageDeps {
    *  and pure-render contexts can omit it and the page renders with
    *  zeroed placeholders. */
   homeData?: () => HomeData;
+  /** Snapshot used for Plans server-side initial paint (C3). */
+  plansData?: () => PlansData;
 }
 
 function sendHtml(res: express.Response, body: string): void {
@@ -52,7 +54,7 @@ export function mountDashboardPages(
     home:         () => renderHomePage(deps.homeData?.()),
     topology:     renderTopologyPage,
     streams:      renderStreamsPage,
-    plans:        renderPlansPage,
+    plans:        () => renderPlansPage(deps.plansData?.()),
     decide:       renderDecidePage,
     toolkit:      renderToolkitPage,
     capabilities: renderCapabilitiesPage,

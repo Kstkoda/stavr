@@ -87,3 +87,40 @@ export function bomToFoodLabel(bom: Bom): FoodLabelInput {
     href: `/dashboard/plans#${encodeURIComponent(bom.id)}`,
   };
 }
+
+/**
+ * "Will ask first" set — risk classes that always open a fresh decision
+ * even within an approved scope. Destructive / financial / credential /
+ * external-comm cross the line where blanket pre-approval is unsafe.
+ * Read-only / write-local / execute / write-remote are auto-approved
+ * within the BOM's trust scope.
+ */
+export const WILL_ASK_RISKS: ReadonlySet<RiskClass> = new Set<RiskClass>([
+  'destructive',
+  'financial',
+  'credential',
+  'external-comm',
+]);
+
+export interface AllowedSplit {
+  allowed: RiskClass[];
+  willAsk: RiskClass[];
+}
+
+/**
+ * Split the envelope into classes pre-approved on scope creation vs those
+ * that re-prompt on each invocation. Used by the Plans Risk cell so the
+ * approver sees the difference between "I'm signing off on a scope" and
+ * "I'm pre-approving every action inside it".
+ */
+export function splitEnvelope(envelope: RiskClass[]): AllowedSplit {
+  const allowed: RiskClass[] = [];
+  const willAsk: RiskClass[] = [];
+  for (const r of envelope) {
+    if (WILL_ASK_RISKS.has(r)) willAsk.push(r);
+    else allowed.push(r);
+  }
+  return { allowed, willAsk };
+}
+
+export { RISK_BUCKET, MODEL_MIX };
