@@ -19,7 +19,7 @@ import { renderStreamsPage, type StreamsData } from './pages/streams.js';
 import { renderPlansPage, type PlansData } from './pages/plans.js';
 import { renderDecidePage, type DecideData } from './pages/decide.js';
 import { renderToolkitPage, type ToolkitData } from './pages/toolkit.js';
-import { renderCapabilitiesPage } from './pages/capabilities.js';
+import { renderCapabilitiesPage, type CapabilitiesData } from './pages/capabilities.js';
 import { renderSettingsPage } from './pages/settings.js';
 
 export interface DashboardPageDeps {
@@ -37,6 +37,8 @@ export interface DashboardPageDeps {
   streamsData?: () => StreamsData;
   /** Snapshot used for Toolkit server-side initial paint (C7). */
   toolkitData?: () => ToolkitData;
+  /** Snapshot used for Capabilities server-side initial paint (C8). */
+  capabilitiesData?: () => CapabilitiesData;
 }
 
 function sendHtml(res: express.Response, body: string): void {
@@ -65,7 +67,7 @@ export function mountDashboardPages(
     plans:        () => renderPlansPage(deps.plansData?.()),
     decide:       () => renderDecidePage(deps.decideData?.()),
     toolkit:      () => renderToolkitPage(deps.toolkitData?.()),
-    capabilities: renderCapabilitiesPage,
+    capabilities: () => renderCapabilitiesPage(deps.capabilitiesData?.()),
     settings:     renderSettingsPage,
   };
 
