@@ -41,7 +41,7 @@ After this your working directory is `C:\dev\stavr`.
 ### 4. Point the git remote at the new repo
 
 ```sh
-git remote set-url origin https://github.com/stenlund/stavr.git
+git remote set-url origin https://github.com/Kstkoda/stavr.git
 git remote -v
 ```
 
@@ -77,7 +77,7 @@ git push -u origin main
 
 ### 7. Verify the published surface
 
-After push, hit https://github.com/stenlund/stavr — the README should render with the wordmark and tagline. Then:
+After push, hit https://github.com/Kstkoda/stavr — the README should render with the wordmark and tagline. Then:
 
 ```sh
 npm install

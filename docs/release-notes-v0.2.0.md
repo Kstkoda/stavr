@@ -79,7 +79,7 @@ Process
 - Concrete connectors beyond Webhook (Wiser, Unifi, Roblox, Unity wait).
 - Topology / Streams / Decide / Kit / Home dashboard pages — only Plans is in scope.
 - Removal of the existing reactive steward loop — it stays parallel to the planner.
-- Repo move on GitHub (`Kstkoda/cowire` → `stenlund/stavr`) — see `REBRAND-NEXT-STEPS.md`.
+- Repo move on GitHub (`Kstkoda/cowire` → `Kstkoda/stavr`) — see `REBRAND-NEXT-STEPS.md`.
 
 ## Risk envelope honoured during the build
 

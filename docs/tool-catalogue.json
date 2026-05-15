@@ -741,7 +741,7 @@
       "card_path": "docs/tool-cards/github_create_pr.md",
       "example": {
         "args": {
-          "repo": "stenlund/stavr",
+          "repo": "Kstkoda/stavr",
           "head": "feat/foo",
           "base": "main",
           "title": "feat: add foo",
@@ -750,7 +750,7 @@
         "result": {
           "ok": true,
           "correlation_id": "cor_...",
-          "pr_url": "https://github.com/stenlund/stavr/pull/42",
+          "pr_url": "https://github.com/Kstkoda/stavr/pull/42",
           "pr_number": 42
         }
       }
@@ -1560,7 +1560,7 @@
       "card_path": "docs/tool-cards/github_read_pr.md",
       "example": {
         "args": {
-          "repo": "stenlund/stavr",
+          "repo": "Kstkoda/stavr",
           "number": 9
         },
         "result": {
@@ -3106,7 +3106,7 @@
             {
               "tool": "github_merge_pr",
               "param_constraints": {
-                "repo": "stenlund/stavr"
+                "repo": "Kstkoda/stavr"
               }
             }
           ],

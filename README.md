@@ -6,7 +6,7 @@ A local-first authority and audit layer for AI agents. Pre-approve a scope, spaw
 
 Stavr is a small daemon that runs on your laptop and sits between any AI assistant (Claude Code, Cowork chat, future tools) and the systems on your computer it's allowed to touch — your code, your shell, your GitHub. It gives you three things you do not get from cloud-hosted agent platforms:
 
-- **One human approves the plan, not every action.** Pre-grant a time-bounded, action-capped scope ("for the next hour, you may merge PRs in `stenlund/stavr` up to 10 times"), and the AI runs without asking again. Anything outside the scope still prompts. Anything on the no-go list always prompts, regardless of scope.
+- **One human approves the plan, not every action.** Pre-grant a time-bounded, action-capped scope ("for the next hour, you may merge PRs in `Kstkoda/stavr` up to 10 times"), and the AI runs without asking again. Anything outside the scope still prompts. Anything on the no-go list always prompts, regardless of scope.
 - **Every action lives in an audit log you own.** Append-only SQLite database on your disk — your runestone. Replayable, exportable, queryable, never leaves your machine. If you ever need to answer "what did the AI do at 3 p.m. on Tuesday?", the answer is one query away.
 - **Many agents, one mission control.** Spawn parallel Claude Code workers, each in an isolated git worktree on its own branch. Watch them all in a single live dashboard at `http://127.0.0.1:7777/dashboard`. Stop or steer any of them from one place.
 
@@ -50,7 +50,7 @@ The client now sees Stavr's tools: `worker_spawn`, `trust_scope_propose`, `githu
 ## Installation (until v0.1.0 hits npm)
 
 ```sh
-git clone https://github.com/stenlund/stavr
+git clone https://github.com/Kstkoda/stavr
 cd stavr
 npm install
 npm run build

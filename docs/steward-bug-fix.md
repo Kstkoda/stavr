@@ -165,7 +165,7 @@ on (unchanged by C1):
 
 - **#22 merge**: the Steward subprocess starts consuming `steward_prompt`
   events. The bug-fix CLI becomes end-to-end-autonomous.
-- **Real sandbox repo**: `stenlund/stavr-test-sandbox` referenced in the
+- **Real sandbox repo**: `Kstkoda/stavr-test-sandbox` referenced in the
   C-stream brief. Once it exists, the integration tests can run against
   real GitHub (gated on `GH_SANDBOX_LIVE=1`) instead of the fake shim.
 - **C2 reusable workflows + C3 benchmark** build on this glue.
