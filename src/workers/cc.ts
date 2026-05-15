@@ -27,7 +27,7 @@ export const CcSpawnParams = z.object({
   /** Directory under which to put the worktree. Default: <repo_path>/.stavr-worktrees */
   worktree_base: z.string().optional(),
   cleanup_on_terminate: z.boolean().optional().default(true),
-  /** Daemon URL the spawned CC will connect to. Defaults to env STAVR_DAEMON_URL or http://127.0.0.1:7777/mcp/sse. Note: /mcp/sse, not /sse — the daemon's MCP endpoint is under /mcp/. (Pre-spec-47 the spawner wrote the wrong path and every worker's MCP connection silently failed.) */
+  /** Daemon URL the spawned CC will connect to. Defaults to env STAVR_DAEMON_URL or http://127.0.0.1:7777/mcp. Streamable HTTP transport — single /mcp endpoint handles POST/GET/DELETE. (Pre-spec-47 the spawner wrote the wrong path and every worker's MCP connection silently failed; audit major #2 then collapsed this onto Streamable HTTP per MCP 2025-06-18.) */
   daemon_url: z.string().url().optional(),
 });
 
@@ -89,7 +89,7 @@ export function createCcSpawner(opts: CcSpawnerOptions = {}): WorkerSpawner<CcSp
 
       // 4. Write the MCP config. `git worktree add` creates the dir in prod; we
       // mkdir defensively so tests with a mocked git runner still succeed.
-      const daemonUrl = params.daemon_url ?? opts.defaultDaemonUrl ?? process.env.STAVR_DAEMON_URL ?? 'http://127.0.0.1:7777/mcp/sse';
+      const daemonUrl = params.daemon_url ?? opts.defaultDaemonUrl ?? process.env.STAVR_DAEMON_URL ?? 'http://127.0.0.1:7777/mcp';
       mkdirSync(worktreePath, { recursive: true });
       const mcpConfigPath = join(worktreePath, '.stavr-mcp.json');
       safeWrite(mcpConfigPath, buildMcpConfig(daemonUrl));
@@ -338,13 +338,14 @@ function launchClaude(spawnFn: Spawner, opts: LaunchOpts): ChildProcess {
 
 function buildMcpConfig(daemonUrl: string): string {
   // CC's mcp-config accepts an `mcpServers` map. We register Stavr's daemon
-  // under the key `stavr`. SSE transport is used directly; if the local CC
-  // doesn't speak SSE, the user wires the stdio<->SSE shim instead. Documented
-  // in ARCHITECTURE.md (Resolution of open question Q1).
+  // under the key `stavr` using Streamable HTTP (MCP spec 2025-06-18+).
+  // If the local CC version doesn't yet speak Streamable HTTP, the user
+  // wires the stdio<->HTTP shim (`stavr shim`) as a stdio entry instead.
+  // Documented in ARCHITECTURE.md (Resolution of open question Q1).
   const config = {
     mcpServers: {
       stavr: {
-        type: 'sse',
+        type: 'http',
         url: daemonUrl,
       },
     },

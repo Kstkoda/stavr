@@ -77,7 +77,7 @@ describe('Spec 40 Phase 1b — stdio↔SSE shim', () => {
     broker = new Broker(store);
     transports = await mountTransports(broker, { mode: 'daemon', port: 0, silent: true });
     const addr = transports.httpServer!.address() as AddressInfo;
-    daemonUrl = `http://127.0.0.1:${addr.port}/mcp/sse`;
+    daemonUrl = `http://127.0.0.1:${addr.port}/mcp`;
   });
 
   afterAll(async () => {
@@ -106,7 +106,7 @@ describe('Spec 40 Phase 1b — stdio↔SSE shim', () => {
     const res = await pending;
     expect(res.error, `unexpected error: ${JSON.stringify(res.error)}`).toBeUndefined();
     expect(res.result).toBeDefined();
-    expect(res.result.serverInfo?.name).toBe('stavr-switch');
+    expect(res.result.serverInfo?.name).toBe('stavr');
     expect(res.result.protocolVersion).toBeTruthy();
   }, 15_000);
 

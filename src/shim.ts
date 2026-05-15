@@ -15,20 +15,27 @@
  * `started_at` changed since last seen, we log a `daemon restart detected`
  * line and emit a `shim_reconnected` event so subscribers see the gap.
  *
- * Config: STAVR_DAEMON_URL env var (default http://127.0.0.1:7777/mcp/sse),
+ * Config: STAVR_DAEMON_URL env var (default http://127.0.0.1:7777/mcp),
  * overridable per-invocation via `--url <url>`.
  */
 import { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
-const DEFAULT_URL = 'http://127.0.0.1:7777/mcp/sse';
+const DEFAULT_URL = 'http://127.0.0.1:7777/mcp';
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
 const RESET_AFTER_CLEAN_MS = 30_000;
 const GIVE_UP_AFTER_MS = 60 * 60_000;
+
+// Streamable HTTP transport (MCP spec 2025-06-18+). Closes audit major #2
+// by removing the long-lived SSE body that earlier shims kept open: each
+// request gets its own short stream, so undici's bodyTimeout never fires
+// on an idle session, and there's no dispatcher-injection gymnastics.
+// The variable is still named `sse` for diff stability — Streamable HTTP
+// also uses SSE for the GET response framing, just not as a permanent stream.
 
 export interface RunShimOptions {
   url: string;
@@ -96,7 +103,7 @@ export async function runShim(opts: RunShimOptions): Promise<ShimHandle> {
 
   const stdio = new StdioServerTransport(opts.stdin, opts.stdout);
 
-  let sse: SSEClientTransport | undefined;
+  let sse: StreamableHTTPClientTransport | undefined;
   let closed = false;
   let reconnecting = false;
   let backoffMs = initialBackoffMs;
@@ -127,7 +134,7 @@ export async function runShim(opts: RunShimOptions): Promise<ShimHandle> {
     // naturally is sufficient.
   };
 
-  const wireSse = (transport: SSEClientTransport): void => {
+  const wireSse = (transport: StreamableHTTPClientTransport): void => {
     transport.onmessage = (msg: JSONRPCMessage) => {
       stdio.send(msg).catch((err) => {
         log(`forward sse→stdio failed: ${errMessage(err)}`);
@@ -150,7 +157,7 @@ export async function runShim(opts: RunShimOptions): Promise<ShimHandle> {
     if (closed) return;
     reconnecting = true;
     try {
-      const next = new SSEClientTransport(new URL(opts.url));
+      const next = new StreamableHTTPClientTransport(new URL(opts.url));
       wireSse(next);
       await next.start();
       // Close the old transport (if any) AFTER the new one is up so we never
@@ -283,7 +290,7 @@ export async function runShim(opts: RunShimOptions): Promise<ShimHandle> {
   // Initial connect must succeed — if the daemon isn't there at startup the
   // client sees a missing server rather than a server that silently swallows
   // requests.
-  sse = new SSEClientTransport(new URL(opts.url));
+  sse = new StreamableHTTPClientTransport(new URL(opts.url));
   wireSse(sse);
   await sse.start();
   log(`connected to ${opts.url}`);

@@ -122,7 +122,7 @@ describe('cc spawner', () => {
     const mcp = join(expectedWorktree, '.stavr-mcp.json');
     expect(existsSync(mcp)).toBe(true);
     const parsed = JSON.parse(readFileSync(mcp, 'utf8'));
-    expect(parsed.mcpServers.stavr.type).toBe('sse');
+    expect(parsed.mcpServers.stavr.type).toBe('http');
 
     const isWindows = process.platform === 'win32';
     expect(spawnArgs?.file).toBe(isWindows ? 'cmd.exe' : 'claude');

@@ -437,11 +437,11 @@ program
 
 program
   .command('shim')
-  .description('Stdio↔SSE proxy: speak stdio to an MCP client, SSE to the Switch daemon.')
+  .description('Stdio↔HTTP proxy: speak stdio to an MCP client, Streamable HTTP to the Switch daemon.')
   .option(
     '-u, --url <url>',
-    'Daemon SSE URL',
-    process.env.STAVR_DAEMON_URL ?? 'http://127.0.0.1:7777/mcp/sse',
+    'Daemon MCP URL',
+    process.env.STAVR_DAEMON_URL ?? 'http://127.0.0.1:7777/mcp',
   )
   .action(async (opts: { url: string }) => {
     const { runShim } = await import('./shim.js');
@@ -450,8 +450,8 @@ program
 
 program
   .command('connect-test')
-  .description('Smoke-test the daemon: connect via SSE, emit a test event, subscribe, print received notifications.')
-  .option('-u, --url <url>', 'Daemon SSE URL', 'http://127.0.0.1:7777/mcp/sse')
+  .description('Smoke-test the daemon: connect via Streamable HTTP, emit a test event, subscribe, print received notifications.')
+  .option('-u, --url <url>', 'Daemon MCP URL', 'http://127.0.0.1:7777/mcp')
   .option('-w, --wait-ms <n>', 'How long to wait for notifications after emit (ms)', (v) => Number(v), 2000)
   .action(async (opts: { url: string; waitMs: number }) => {
     try {

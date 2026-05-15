@@ -2,7 +2,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import type { Server as HttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createSwitchServer, getOrCreateTrustStore } from './server.js';
 import type { Broker } from './broker.js';
 import type { StoredEvent } from './persistence.js';
@@ -94,7 +94,16 @@ export async function mountTransports(
   }
 
   let httpServer: HttpServer | undefined;
-  const sseSessions = new Map<string, SSEServerTransport>();
+  // MCP sessions keyed by Mcp-Session-Id. Each session holds its own
+  // StreamableHTTPServerTransport instance and McpServer handle so the
+  // broker can route per-session subscriptions. Name kept as `sseSessions`
+  // because public surfaces (status JSON, dashboard) refer to it; the
+  // underlying transport is now Streamable HTTP (closes audit major #2).
+  type McpSession = {
+    transport: StreamableHTTPServerTransport;
+    handle: ReturnType<typeof createSwitchServer>;
+  };
+  const sseSessions = new Map<string, McpSession>();
   // Always create the registry — `pair --bootstrap` may run in this same
   // process even when HTTP isn't mounted (rare, but the shape is uniform).
   const pairingRegistry = opts.pairingRegistry ?? new PendingPairingRegistry();
@@ -278,27 +287,44 @@ export async function mountTransports(
       }
     });
 
-    app.get('/mcp/sse', async (_req: Request, res: Response) => {
-      const transport = new SSEServerTransport('/mcp/messages', res);
-      const handle = createSwitchServer(broker);
-      sseSessions.set(transport.sessionId, transport);
-      // Heartbeat — write an SSE comment every 25s so undici's default 300s
-      // bodyTimeout on the client side never fires on an idle session. SSE
-      // comments are spec-compliant and the MCP SDK's SSEClientTransport
-      // ignores them.
-      const heartbeat = setInterval(() => {
-        if (!res.writableEnded) {
-          try { res.write(`: heartbeat ${Date.now()}\n\n`); } catch { /* socket gone */ }
+    // MCP Streamable HTTP endpoint. Single route handles POST (client→server
+    // messages, including initialization), GET (server→client SSE stream),
+    // and DELETE (session termination). The transport closes the SSE stream
+    // between requests, so undici's bodyTimeout is never an issue — closes
+    // audit major #2 cleanly without client-side dispatcher overrides.
+    app.all('/mcp', async (req: Request, res: Response) => {
+      const incomingSid = req.header('mcp-session-id');
+      let session = incomingSid ? sseSessions.get(incomingSid) : undefined;
+      let isNew = false;
+
+      if (!session) {
+        // No existing session — for non-POST requests this is an error.
+        if (req.method !== 'POST') {
+          res.status(400).json({ ok: false, error: 'Mcp-Session-Id header required for non-POST requests' });
+          return;
         }
-      }, 25_000);
-      heartbeat.unref?.();
-      res.on('close', () => {
-        clearInterval(heartbeat);
-        sseSessions.delete(transport.sessionId);
-        broker.removeSession(handle.sessionId);
-      });
-      await handle.server.connect(transport);
-      log(`SSE session ${transport.sessionId} connected`);
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+        });
+        const handle = createSwitchServer(broker);
+        await handle.server.connect(transport);
+        transport.onclose = () => {
+          const tid = transport.sessionId;
+          if (tid) sseSessions.delete(tid);
+          broker.removeSession(handle.sessionId);
+        };
+        session = { transport, handle };
+        isNew = true;
+      }
+
+      await session.transport.handleRequest(req, res, req.body);
+
+      // After handleRequest, sessionId is populated on the first POST.
+      // Register so subsequent requests find the same session.
+      if (isNew && session.transport.sessionId) {
+        sseSessions.set(session.transport.sessionId, session);
+        log(`MCP session ${session.transport.sessionId} connected`);
+      }
     });
 
     // Raw SSE event stream for `stavr tail` and programmatic consumers.
@@ -347,16 +373,6 @@ export async function mountTransports(
       // Subscribe to live events
       const off = broker.onRawEvent(send);
       req.on('close', () => { off(); clearInterval(heartbeat); });
-    });
-
-    app.post('/mcp/messages', async (req: Request, res: Response) => {
-      const sessionId = String(req.query.sessionId ?? '');
-      const transport = sseSessions.get(sessionId);
-      if (!transport) {
-        res.status(404).json({ error: 'unknown session' });
-        return;
-      }
-      await transport.handlePostMessage(req, res, req.body);
     });
 
     // Spec 49 / Stream C C1 — loopback-only event injection. The
@@ -439,7 +455,7 @@ export async function mountTransports(
 
   const shutdown = async () => {
     if (httpServer) await new Promise<void>((r) => httpServer!.close(() => r()));
-    for (const t of sseSessions.values()) await t.close().catch(() => {});
+    for (const s of sseSessions.values()) await s.transport.close().catch(() => {});
     broker.store.close();
   };
 
@@ -501,7 +517,7 @@ interface DashboardCtx {
   port: number;
   startedAt: Date;
   version: string;
-  sseSessions: Map<string, SSEServerTransport>;
+  sseSessions: Map<string, { transport: StreamableHTTPServerTransport; handle: ReturnType<typeof createSwitchServer> }>;
 }
 
 /**
@@ -836,7 +852,7 @@ export function mountDashboardRoutes(
     res.on('close', onClose);
   });
 
-  // Live SSE tail for the browser. Distinct from /mcp/sse: this is plain
+  // Live SSE tail for the browser. Distinct from /mcp: this is plain
   // text/event-stream with raw event JSON; no MCP handshake required. Lives
   // and dies entirely on the broker's onEvent tap.
   app.get('/dashboard/stream', (_req: Request, res: Response) => {

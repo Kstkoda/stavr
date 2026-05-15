@@ -30,7 +30,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # Pinned to 20 to match package.json `engines` declaration and the
+          # dev environment. Node 22 bundles undici v6 which has different
+          # Streamable HTTP behavior; testing on 22 is a separate follow-up
+          # (forefront BOM checkpoint or its own PR).
+          node-version: '20'
           cache: 'npm'
 
       - name: Install dependencies
