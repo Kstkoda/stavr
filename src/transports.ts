@@ -9,6 +9,7 @@ import type { StoredEvent } from './persistence.js';
 import { startupDecisionSweep } from './tools/decisions.js';
 import { getLogger } from './log.js';
 import { mountDashboardPages } from './dashboard/index.js';
+import { getV02Subsystem } from './steward/v02-wiring.js';
 import { computeUsage, fetchAnthropicBalance, type ComputeUsageOpts } from './usage.js';
 import {
   PendingPairingRegistry,
@@ -656,7 +657,89 @@ export function mountDashboardRoutes(
     return { workers, recent };
   }
 
-  mountDashboardPages(app, { homeData, plansData, decideData, topologyData, streamsData });
+  // Toolkit page snapshot — every registered connector with its
+  // configSchema, position, and current status. When v0.2 subsystem
+  // isn't wired (legacy or test paths), bricks fall back to the bare
+  // installed-brick records minus the live config schema.
+  function toolkitData(): import('./dashboard/pages/toolkit.js').ToolkitData {
+    const sub = getV02Subsystem(broker);
+    const out: import('./dashboard/pages/toolkit.js').ToolkitData = { bricks: [] };
+    if (sub) {
+      for (const c of sub.connectors.list()) {
+        out.bricks.push({
+          id: c.id,
+          kind: c.kind,
+          displayName: c.displayName,
+          position: c.position,
+          configSchema: c.configSchema(),
+          status: c.status(),
+        });
+      }
+    } else {
+      for (const b of broker.store.listInstalledBricks()) {
+        out.bricks.push({
+          id: b.id,
+          kind: b.kind,
+          displayName: b.display_name,
+          position: 'above',
+          configSchema: [],
+          status: { kind: 'needs_setup', detail: 'subsystem not wired', lastChecked: new Date().toISOString() },
+        });
+      }
+    }
+    return out;
+  }
+
+  mountDashboardPages(app, { homeData, plansData, decideData, topologyData, streamsData, toolkitData });
+
+  // ---- C7 Toolkit endpoints ----
+
+  app.post('/dashboard/bricks/:id/test', async (req, res) => {
+    const sub = getV02Subsystem(broker);
+    if (!sub) { res.status(503).json({ error: 'connector subsystem not wired' }); return; }
+    const c = sub.connectors.get(req.params.id);
+    if (!c) { res.status(404).json({ error: 'not_found' }); return; }
+    try {
+      const status = await c.testConnection();
+      res.json(status);
+    } catch (err) {
+      res.status(500).json({ kind: 'error', detail: (err as Error).message });
+    }
+  });
+
+  app.post('/dashboard/bricks/:id/apply', async (req, res) => {
+    const sub = getV02Subsystem(broker);
+    if (!sub) { res.status(503).json({ error: 'connector subsystem not wired' }); return; }
+    const c = sub.connectors.get(req.params.id);
+    if (!c) { res.status(404).json({ error: 'not_found' }); return; }
+    const body = (req.body ?? {}) as { config?: Record<string, unknown> };
+    if (!body.config || typeof body.config !== 'object') {
+      res.status(400).json({ error: 'body { config: object } required' });
+      return;
+    }
+    try {
+      const status = await c.applyConfig(body.config);
+      res.json(status);
+    } catch (err) {
+      res.status(400).json({ kind: 'error', detail: (err as Error).message });
+    }
+  });
+
+  app.post('/dashboard/bricks/install', async (req, res) => {
+    const sub = getV02Subsystem(broker);
+    if (!sub) { res.status(503).json({ error: 'connector subsystem not wired' }); return; }
+    const body = (req.body ?? {}) as { source_path?: string };
+    if (!body.source_path || typeof body.source_path !== 'string') {
+      res.status(400).json({ error: 'body { source_path: string } required' });
+      return;
+    }
+    try {
+      const brick = await sub.bricks.installLocal(body.source_path);
+      res.json({ ok: true, brick });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
 
   app.get('/dashboard/plans/list', (req, res) => {
     const statusParam = (req.query.status as string | undefined) ?? undefined;
