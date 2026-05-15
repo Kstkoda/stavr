@@ -628,7 +628,35 @@ export function mountDashboardRoutes(
     return { workers, bricks, scopes, inFlightBoms };
   }
 
-  mountDashboardPages(app, { homeData, plansData, decideData, topologyData });
+  // Streams page snapshot — workers + last few events per worker.
+  // The page caps visible panes at 20 internally; we still hand it the
+  // full list so a search match outside the cap can highlight which
+  // worker isn't yet visible (future polish).
+  function streamsData() {
+    const workers = broker.store.listWorkers();
+    const recent: Record<string, StoredEvent[]> = {};
+    if (workers.length > 0) {
+      const allRecent = broker.store.getEvents({ limit: 500 }).events;
+      const idSet = new Set(workers.map((w) => w.id));
+      for (const ev of allRecent) {
+        const corr = ev.correlation_id;
+        const payloadId = (ev.payload as { id?: string } | null | undefined)?.id;
+        const targetId = corr && idSet.has(corr)
+          ? corr
+          : payloadId && idSet.has(payloadId)
+          ? payloadId
+          : undefined;
+        if (!targetId) continue;
+        (recent[targetId] ??= []).push(ev);
+      }
+      for (const id of Object.keys(recent)) {
+        recent[id] = recent[id].slice(-8);
+      }
+    }
+    return { workers, recent };
+  }
+
+  mountDashboardPages(app, { homeData, plansData, decideData, topologyData, streamsData });
 
   app.get('/dashboard/plans/list', (req, res) => {
     const statusParam = (req.query.status as string | undefined) ?? undefined;
