@@ -102,3 +102,11 @@ If you find a security issue, please email **stenlund@gmail.com** rather than op
 ## License
 
 Stavr is licensed under the Apache License, Version 2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+
+## Affiliations and prior art
+
+Stavr is an independent personal project. It is **not affiliated with, endorsed by, or sponsored by** Anthropic, the LEGO Group, the STAVR Team blockchain validator operation at [stavr.tech](https://stavr.tech), the [Tessera Protocol](https://github.com/tessera-protocol/tessera) project, Ubiquiti / Unifi, FlightRadar24, or any other entity sharing similar names or operating in adjacent domains.
+
+The trust-scope primitive in stavr was developed independently and shares conceptual ground with the Apache-2.0 [Tessera Protocol](https://github.com/tessera-protocol/tessera), which describes a capability-based authority layer for AI agents. Stavr positions itself around a broader scope (BOM planning, connector bus, cost routing, executor) of which trust scopes are one primitive among many. See [`NOTICE`](NOTICE) for full prior-art and design-influence acknowledgments.
+
+The name "stavr" derives from the Old Norse word for staff or rune-stave; it is used here for its evocative meaning, not as a claim of exclusive use.
