@@ -536,11 +536,42 @@ export function mountDashboardRoutes(
 ): void {
   const trustStore = getOrCreateTrustStore(broker);
 
+  // v0.3 dashboard Home aggregator — shared by the server-side initial
+  // paint and the JSON endpoint that drives live refresh.
+  function homeData() {
+    const active = trustStore.list({ status: 'active' });
+    const recentBoms = broker.store.listBoms({ limit: 3 });
+    const allDecisions = broker.store.listRecentDecisions(50);
+    const openDecisions = allDecisions.filter((d) => d.status === 'open');
+    return {
+      health: {
+        ok: true,
+        version: ctx.version,
+        port: ctx.port,
+        started_at: ctx.startedAt.toISOString(),
+        uptime_sec: Math.floor((Date.now() - ctx.startedAt.getTime()) / 1000),
+        connected_clients: ctx.sseSessions.size,
+        event_count: broker.store.eventCount(),
+        active_scopes: active.length,
+        profile_mode: broker.store.getActiveProfileMode(),
+      },
+      boms: {
+        recent: recentBoms,
+        total: broker.store.listBoms().length,
+        open: broker.store.listBoms({ status: 'proposed' }).length,
+      },
+      decisions: {
+        recent: allDecisions.slice(0, 5),
+        open: openDecisions.length,
+      },
+    };
+  }
+
   // v0.3 dashboard shell — /dashboard redirects to /dashboard/home; per-page
   // routes (home, topology, streams, plans, decide, toolkit, capabilities,
   // settings) render the shared shell. Must run BEFORE any /dashboard/<page>/*
   // JSON endpoints so Express dispatches the page route for bare GETs.
-  mountDashboardPages(app);
+  mountDashboardPages(app, { homeData });
 
   app.get('/dashboard/plans/list', (req, res) => {
     const statusParam = (req.query.status as string | undefined) ?? undefined;
@@ -629,6 +660,13 @@ export function mountDashboardRoutes(
         expires_after_actions: s.expires_after_actions,
       })),
     });
+  });
+
+  // v0.3 dashboard Home aggregator. One fetch returns everything the Home
+  // page needs: daemon health, recent BOMs, recent decisions. Single
+  // round-trip keeps page load fast; live updates come over /dashboard/stream.
+  app.get('/dashboard/home/data', (_req, res) => {
+    res.json(homeData());
   });
 
   app.get('/dashboard/workers', (_req, res) => {
