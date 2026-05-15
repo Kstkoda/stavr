@@ -1,7 +1,7 @@
 {
   "name": "stavr",
   "version": "0.1.0",
-  "description": "Stavr — local-first authority and audit layer for AI agents. Carved into your machine.",
+  "description": "stavR — local-first agent broker. BOM-driven planning, MCP-native connectors, cost-routed worker dispatch. Your machine.",
   "type": "module",
   "bin": {
     "stavr": "./dist/cli.js"
@@ -35,7 +35,7 @@
     "@types/node": "^20.17.10",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8",
+    "vitest": "^4.1.6",
     "zod-to-json-schema": "^3.25.2"
   },
   "optionalDependencies": {

@@ -1,99 +1,104 @@
-# Stavr
+<p align="center">
+  <img src="memory/stavr-header-wordmark.svg" alt="stavR" width="540" />
+</p>
 
-**Carved into your machine.**
+# stavR
 
-A local-first authority and audit layer for AI agents. Pre-approve a scope, spawn parallel workers, every action inscribed. No cloud, no telemetry — your runestone, your machine, your record.
+**Local-first agent broker.** Plans the work, dispatches it across MCP connectors, routes it to the right model under your cost budget, and ships it on your machine.
 
-Stavr is a small daemon that runs on your laptop and sits between any AI assistant (Claude Code, Cowork chat, future tools) and the systems on your computer it's allowed to touch — your code, your shell, your GitHub. It gives you three things you do not get from cloud-hosted agent platforms:
+`LOCAL-FIRST · MCP-NATIVE · YOUR MACHINE`
 
-- **One human approves the plan, not every action.** Pre-grant a time-bounded, action-capped scope ("for the next hour, you may merge PRs in `Kstkoda/stavr` up to 10 times"), and the AI runs without asking again. Anything outside the scope still prompts. Anything on the no-go list always prompts, regardless of scope.
-- **Every action lives in an audit log you own.** Append-only SQLite database on your disk — your runestone. Replayable, exportable, queryable, never leaves your machine. If you ever need to answer "what did the AI do at 3 p.m. on Tuesday?", the answer is one query away.
-- **Many agents, one mission control.** Spawn parallel Claude Code workers, each in an isolated git worktree on its own branch. Watch them all in the live multi-page dashboard at `http://127.0.0.1:7777/dashboard`. Stop or steer any of them from one place.
+---
 
-Stavr binds to `127.0.0.1` only. No cloud, no telemetry, no third-party server. The architecture is fully described in [`ARCHITECTURE.md`](ARCHITECTURE.md) and the [`adr/`](adr/) decision records.
+stavR is a small daemon that runs on `127.0.0.1:7777` and sits between any AI assistant (Claude Code, Cowork, future MCP clients) and the systems it's allowed to touch — your code, your shell, your GitHub. The product is a planner-plus-dispatcher: you describe an outcome, stavR produces a structured plan, you approve it once, and the daemon executes end-to-end across one or more workers.
 
-The name is Old Swedish — *stafr*, the rune-stave, the carved vertical line that is the atomic unit of every Swedish runestone. Each action your agents take is a stavr inscribed permanently into your local record.
+## What stavR actually does
+
+**1. BOM-driven planning.** Describe an outcome. stavR produces a **Bill of Materials** — a structured plan listing every tool call, model invocation, and side-effect required to ship it. You approve the BOM once. Execution runs end-to-end including retries and fixes, with no further prompts. The BOM is the noun the rest of the system is built around.
+
+**2. Worker dispatch.** stavR spawns Claude Code workers in isolated git worktrees — sequential or parallel, opus or sonnet, with per-worker budgets. Each worker has its own branch, its own MCP session, and reports through an event broker the Steward is watching.
+
+**3. Cost routing.** Three profile modes — **Turbo** (Opus everywhere), **Balanced** (Sonnet with Opus on hard steps, default), **Eco** (Haiku/Sonnet, fail-fast). The same BOM costs differently per profile; budgets are enforced before the spend, not after.
+
+**4. MCP-native connector surface.** Every external system — GitHub, scheduling, search, your own services — is a registered MCP connector. stavR is the only thing your AI talks to; stavR is the thing that talks to the world. Bricks are pluggable adapters loaded from disk via a manifest.
+
+**5. Local-first dashboard.** An eight-page operations dashboard at `http://127.0.0.1:7777/dashboard` — Home, Topology, Streams, Plans, Decide, Toolkit, Capabilities, Settings. Your data, your event log, your hardware. Binds to `127.0.0.1` only. No cloud, no telemetry, no third-party server.
+
+## The plumbing (architecture, not the headline)
+
+Under the planner sits a scope primitive: **trust scopes** are time-boxed, action-capped permission envelopes ("for the next hour, you may merge PRs in `Kstkoda/stavr` up to 10 times"). Anything outside a scope prompts; anything on the **no-go list** prompts regardless of scope. Approving a BOM creates the scope that runs it.
+
+This authority layer is plumbing, not the product. It is conceptually compatible with the [Tessera Protocol](https://github.com/tessera-protocol/tessera), which defines a capability-based authority layer for AI agents; if Tessera's wire format becomes the standard, stavR will adopt it as the serialization for its scopes. See [`NOTICE`](NOTICE) and the *Affiliations and prior art* section below.
+
+Architecture details live in [`ARCHITECTURE.md`](ARCHITECTURE.md) and the [`adr/`](adr/) decision records.
 
 ---
 
 ## Quick start
 
 ```sh
-# Install (once published to npm — see Installation below until then)
-npm install -g stavr
-
-# Start the daemon (binds 127.0.0.1:7777)
-stavr daemon start
-
-# Confirm it's running
-stavr daemon status
-
-# Watch events live in another terminal
-stavr tail
+git clone https://github.com/Kstkoda/stavr
+cd stavr
+npm install
+npm run build
+npm start
 ```
 
-Then point any MCP-aware client at the daemon by adding this to its `.mcp.json` (or equivalent):
+The daemon binds `127.0.0.1:7777`. Confirm it's up and watch events:
+
+```sh
+node dist/cli.js daemon status
+node dist/cli.js tail
+```
+
+Point any MCP-aware client at the daemon by adding this to its `.mcp.json` (or equivalent):
 
 ```json
 {
   "mcpServers": {
     "stavr": {
-      "type": "sse",
-      "url": "http://127.0.0.1:7777/mcp/sse"
+      "type": "http",
+      "url": "http://127.0.0.1:7777/mcp"
     }
   }
 }
 ```
 
-The client now sees Stavr's tools: `worker_spawn`, `trust_scope_propose`, `github_create_pr`, `github_merge_pr`, the full set listed in [`docs/tool-catalogue.json`](docs/tool-catalogue.json).
+Transport is **Streamable HTTP** (MCP spec 2025-06-18+) — a single `/mcp` endpoint handling POST/GET/DELETE with a session-id header. The legacy SSE endpoints (`/mcp/sse` + `/mcp/messages`) were retired in v0.2.
 
-## Installation (until v0.1.0 hits npm)
+The client now sees stavR's MCP tools: `worker_spawn`, `trust_scope_propose`, `github_create_pr`, `github_merge_pr`, and the full set listed in [`docs/tool-catalogue.json`](docs/tool-catalogue.json).
 
-```sh
-git clone https://github.com/Kstkoda/stavr
-cd stavr
-npm install
-npm run build
-node dist/cli.js daemon start
-```
+Node 20+ required. Developed and tested on Windows, macOS, and Linux. Persistence is a single SQLite file at `~/.stavr/runestone.db`.
 
-Node 20+ required. Currently developed and tested on Windows, macOS, and Linux equally.
+## What's shipped
 
-## What's in v0.1
+**v0.1.0** — released. Daemon, broker, append-only event log, trust scopes, worker orchestration via git worktrees, GitHub write adapters, `tail` CLI, stuck-worker watchdog, machine-readable contracts for every tool. JSON Schemas, an event taxonomy at [`docs/event-taxonomy.md`](docs/event-taxonomy.md), and a regenerable tool catalogue at [`docs/tool-catalogue.json`](docs/tool-catalogue.json).
 
-- **Daemon + broker + append-only event log** (SQLite WAL, single file at `~/.stavr/runestone.db`).
-- **Trust scopes** — pre-approved bundles of actions with time and action-count caps. The pattern lives in `src/trust/`.
-- **Worker orchestration via git worktrees.** Each spawned Claude Code worker gets its own branch, its own working tree, its own MCP session. Parallel workers in the same repo never collide.
-- **GitHub write adapters** — `github_create_pr`, `github_merge_pr`, `github_create_issue`, `github_add_labels`, and the rest. Gated by tier-and-scope. See [`docs/tool-cards/`](docs/tool-cards/).
-- **Operations dashboard** at `http://127.0.0.1:7777/dashboard` — eight pages built on the Dark 2.0 design system: Home (daemon health + active BOMs + recent decisions), Topology (SVG ops control center with time scrubber), Streams (multi-pane terminal view), Plans (food-label approval cards), Decide (decision cards with countdown), Toolkit (ESB bus + brick editor), Capabilities (Lego baseplate per profile mode), Settings (profile / scopes / no-go / bricks). See [`docs/dashboard.md`](docs/dashboard.md).
-- **`stavr tail` CLI** for terminal-pane live monitoring with filter chips for kind, worker, source-agent. Color-coded, exponential-backoff reconnect.
-- **Stuck-worker watchdog** — daemon emits `worker_stuck` events when a worker goes silent past a configurable threshold.
-- **Machine-readable contracts** — JSON Schemas for every tool, an event taxonomy doc at [`docs/event-taxonomy.md`](docs/event-taxonomy.md), and a regenerable tool catalogue at [`docs/tool-catalogue.json`](docs/tool-catalogue.json).
+**v0.2 audit fixes** — on `main`, unreleased. Streamable HTTP migration (replaced legacy SSE), `trust_scope_granted` event emission, Windows 8.3 path handling for the brick installer, undici Agent for outbound HTTP.
 
-## CLI vocabulary
+**v0.3 dashboard** — on `main`, unreleased. The eight-page operations dashboard: Home (daemon health + active BOMs + recent decisions), Topology (SVG ops control center with time scrubber), Streams (multi-pane terminal view), Plans (food-label approval cards), Decide (decision cards with countdown), Toolkit (ESB bus + brick editor), Capabilities (Lego baseplate per profile mode), Settings (profile / scopes / no-go / bricks). See [`docs/dashboard.md`](docs/dashboard.md).
 
-The verbs map directly onto the runestone metaphor:
+**v0.4 scheduler** — proposed at [`proposed/v0.4-scheduler-bom.md`](proposed/v0.4-scheduler-bom.md). Promotes the Steward from reactive (subscribes to events) to scheduler with backlog, priority, capacity, and dedupe. ~10-14 hours of autonomous execution.
+
+## CLI
 
 ```sh
-stavr daemon start         # raise the stone
-stavr fly <worker> --task  # send a worker out under a scope
-stavr tail                 # watch the runes being carved in real time
-stavr inscribe <event>     # commit an explicit event to the record
-stavr scope grant          # cut a trust scope into the stone
-stavr scope revoke         # break the scope
+node dist/cli.js daemon start      # start the daemon
+node dist/cli.js daemon status     # check health
+node dist/cli.js daemon stop       # shut it down
+node dist/cli.js tail              # live event stream with filter chips
+node dist/cli.js config show       # current configuration
+node dist/cli.js status            # daemon + recent events summary
+node dist/cli.js events            # query the event log
+node dist/cli.js pair bootstrap    # pair a remote device (spec 52)
+node dist/cli.js devices list      # paired devices
 ```
 
-The audit log is the runestone. Each action is a stavr. The carver is the daemon.
-
-## Architecture
-
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the topology and component map, and the [`adr/`](adr/) directory for the architecture decision records that explain *why* each major choice was made.
-
-The four-role design (User → Operator → Workers → Daemon) and the five-layer approval pipeline (tier → trust scope → user decision → no-go list → execution + audit) are documented in [`docs/release-notes-v0.1.0.md`](docs/release-notes-v0.1.0.md).
+The full command surface lives in [`src/cli.ts`](src/cli.ts). Once `stavr` is published to npm, the prefix `node dist/cli.js` collapses to `stavr`.
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for repo layout, development setup, testing philosophy, and the patterns for adding new event kinds, tool adapters, and worker spawners. We welcome PRs.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for repo layout, development setup, testing philosophy, and the patterns for adding new event kinds, tool adapters, and worker spawners. Contributions require [DCO sign-off](https://developercertificate.org/) — commit with `git commit -s`. PRs welcome.
 
 ## Security
 
@@ -101,12 +106,12 @@ If you find a security issue, please email **stenlund@gmail.com** rather than op
 
 ## License
 
-Stavr is licensed under the Apache License, Version 2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+stavR is licensed under the Apache License, Version 2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
 ## Affiliations and prior art
 
-Stavr is an independent personal project. It is **not affiliated with, endorsed by, or sponsored by** Anthropic, the LEGO Group, the STAVR Team blockchain validator operation at [stavr.tech](https://stavr.tech), the [Tessera Protocol](https://github.com/tessera-protocol/tessera) project, Ubiquiti / Unifi, FlightRadar24, or any other entity sharing similar names or operating in adjacent domains.
+stavR is an independent personal project. It is **not affiliated with, endorsed by, or sponsored by** Anthropic, the LEGO Group, the STAVR Team blockchain validator operation at [stavr.tech](https://stavr.tech), the [Tessera Protocol](https://github.com/tessera-protocol/tessera) project, Ubiquiti / Unifi, FlightRadar24, or any other entity sharing similar names or operating in adjacent domains.
 
-The trust-scope primitive in stavr was developed independently and shares conceptual ground with the Apache-2.0 [Tessera Protocol](https://github.com/tessera-protocol/tessera), which describes a capability-based authority layer for AI agents. Stavr positions itself around a broader scope (BOM planning, connector bus, cost routing, executor) of which trust scopes are one primitive among many. See [`NOTICE`](NOTICE) for full prior-art and design-influence acknowledgments.
+The **trust-scope primitive** in stavR was developed independently and shares conceptual ground with the Apache-2.0 [Tessera Protocol](https://github.com/tessera-protocol/tessera), which describes a capability-based authority layer for AI agents. stavR's positioning is broader (BOM-driven planning, MCP connector surface, cost routing, worker dispatch); trust scopes are one primitive among many. If Tessera's wire format becomes a standard, stavR will adopt it as the serialization for its scopes — overlap, not competition. See [`NOTICE`](NOTICE) for the full prior-art and design-influence acknowledgments.
 
-The name "stavr" derives from the Old Norse word for staff or rune-stave; it is used here for its evocative meaning, not as a claim of exclusive use.
+The name **"stavR"** is a mixed-case rendering of the Old Swedish/Old Norse *stafr* (staff or rune-stave) — the final capital R reflecting the Younger Futhark transliteration convention for the ᛦ rune. Used here for its evocative meaning, not as a claim of exclusive use. The icon glyph is the ᚱ Raido rune; the [brand assets](memory/) live in `memory/stavr-*.svg`.
