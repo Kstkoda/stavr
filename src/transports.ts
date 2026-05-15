@@ -601,7 +601,34 @@ export function mountDashboardRoutes(
   // routes (home, topology, streams, plans, decide, toolkit, capabilities,
   // settings) render the shared shell. Must run BEFORE any /dashboard/<page>/*
   // JSON endpoints so Express dispatches the page route for bare GETs.
-  mountDashboardPages(app, { homeData, plansData, decideData });
+  // Topology page snapshot — current workers + installed bricks + in-flight
+  // BOMs grouped by trust scope. Lightweight; the page reloads on relevant
+  // SSE events rather than tracking deltas.
+  function topologyData() {
+    const workers = broker.store.listWorkers();
+    const installed = broker.store.listInstalledBricks();
+    const bricks = installed.map((b) => ({
+      id: b.id,
+      kind: b.kind,
+      display_name: b.display_name,
+      enabled: b.enabled,
+    }));
+    const allBoms = broker.store.listBoms();
+    const inFlightBoms = allBoms.filter((b) =>
+      b.status === 'approved' || b.status === 'running' || b.status === 'proposed',
+    );
+    const active = trustStore.list({ status: 'active' });
+    const scopes = active.map((s) => ({
+      id: s.id,
+      title: s.title,
+      expires_at: s.expires_at,
+      actions_executed: s.actions_executed,
+      expires_after_actions: s.expires_after_actions,
+    }));
+    return { workers, bricks, scopes, inFlightBoms };
+  }
+
+  mountDashboardPages(app, { homeData, plansData, decideData, topologyData });
 
   app.get('/dashboard/plans/list', (req, res) => {
     const statusParam = (req.query.status as string | undefined) ?? undefined;
