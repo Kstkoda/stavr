@@ -580,11 +580,28 @@ export function mountDashboardRoutes(
     return { boms, totals };
   }
 
+  // Decide page snapshot — open decisions for action, plus the most
+  // recently resolved (last 24h) so the operator sees their own
+  // history. Context per decision is loaded lazily by the client.
+  function decideData() {
+    const all = broker.store.listRecentDecisions(100);
+    const open = all.filter((d) => d.status === 'open');
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const resolved = all
+      .filter((d) => d.status !== 'open')
+      .filter((d) => {
+        const at = d.responded_at ? Date.parse(d.responded_at) : Date.parse(d.requested_at);
+        return Number.isFinite(at) ? at >= cutoff : true;
+      })
+      .slice(0, 20);
+    return { open, resolved };
+  }
+
   // v0.3 dashboard shell — /dashboard redirects to /dashboard/home; per-page
   // routes (home, topology, streams, plans, decide, toolkit, capabilities,
   // settings) render the shared shell. Must run BEFORE any /dashboard/<page>/*
   // JSON endpoints so Express dispatches the page route for bare GETs.
-  mountDashboardPages(app, { homeData, plansData });
+  mountDashboardPages(app, { homeData, plansData, decideData });
 
   app.get('/dashboard/plans/list', (req, res) => {
     const statusParam = (req.query.status as string | undefined) ?? undefined;
