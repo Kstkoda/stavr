@@ -1,0 +1,220 @@
+/**
+ * Dashboard shell — top nav + content slot. Server-rendered HTML; the
+ * per-page module supplies the body string.
+ *
+ * Architecture: each `/dashboard/<page>` route renders the same shell
+ * with a different body and `activePage` highlighted. Hash-routing is
+ * intentionally NOT used — server-side routing keeps the dashboard
+ * deep-linkable, copyable, and crawl-friendly without a build step.
+ */
+
+import { TOKENS_CSS } from './tokens.js';
+import { FOOD_LABEL_CSS } from './components/food-label.js';
+import { BRICK_CSS } from './components/brick.js';
+import { INSPECTOR_CSS, INSPECTOR_JS, renderInspectorPanel } from './components/inspector.js';
+import { PILL_CSS } from './components/pill.js';
+import { SCRUBBER_CSS } from './components/scrubber.js';
+
+export type DashboardPageId =
+  | 'home'
+  | 'topology'
+  | 'streams'
+  | 'plans'
+  | 'decide'
+  | 'toolkit'
+  | 'capabilities'
+  | 'settings';
+
+export interface NavEntry {
+  id: DashboardPageId;
+  label: string;
+  href: string;
+}
+
+export const NAV_ENTRIES: NavEntry[] = [
+  { id: 'home',         label: 'Home',         href: '/dashboard/home' },
+  { id: 'topology',     label: 'Topology',     href: '/dashboard/topology' },
+  { id: 'streams',      label: 'Streams',      href: '/dashboard/streams' },
+  { id: 'plans',        label: 'Plans',        href: '/dashboard/plans' },
+  { id: 'decide',       label: 'Decide',       href: '/dashboard/decide' },
+  { id: 'toolkit',      label: 'Toolkit',      href: '/dashboard/toolkit' },
+  { id: 'capabilities', label: 'Capabilities', href: '/dashboard/capabilities' },
+  { id: 'settings',     label: 'Settings',     href: '/dashboard/settings' },
+];
+
+export interface RenderShellInput {
+  title: string;
+  activePage: DashboardPageId;
+  body: string;
+  /** Extra <head> markup (page-specific styles). */
+  head?: string;
+  /** Inline page script, executed after DOM ready. */
+  script?: string;
+}
+
+const BASE_CSS = `
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+}
+body {
+  display: grid;
+  grid-template-rows: 56px 1fr;
+  min-height: 100vh;
+}
+a { color: inherit; text-decoration: none; }
+button { font: inherit; }
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 20px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+}
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  background: linear-gradient(135deg, var(--accent-steward), var(--accent-ai-external));
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: #fff;
+  font-size: 13px;
+}
+.nav-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+}
+.nav-tab {
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.nav-tab:hover { background: var(--bg-elevated); color: var(--text-primary); }
+.nav-tab[aria-current="page"] {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.page {
+  padding: 24px 28px;
+  overflow: auto;
+}
+.page-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.page-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.page-sub { color: var(--text-secondary); font-size: 13px; }
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+.card-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin: 0 0 12px 0;
+}
+
+.placeholder {
+  background: var(--bg-surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  padding: 40px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+.placeholder strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-primary);
+  font-size: 16px;
+}
+`;
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderNav(active: DashboardPageId): string {
+  return NAV_ENTRIES.map((e) => {
+    const cur = e.id === active ? ' aria-current="page"' : '';
+    return `<a class="nav-tab" href="${e.href}" data-page="${e.id}"${cur}>${escapeHtml(e.label)}</a>`;
+  }).join('');
+}
+
+export function renderShell(input: RenderShellInput): string {
+  const css = [
+    TOKENS_CSS,
+    BASE_CSS,
+    FOOD_LABEL_CSS,
+    BRICK_CSS,
+    INSPECTOR_CSS,
+    PILL_CSS,
+    SCRUBBER_CSS,
+  ].join('\n');
+
+  const script = input.script ? `<script>${input.script}</script>` : '';
+
+  return [
+    `<!doctype html>`,
+    `<html lang="en" class="dark">`,
+    `<head>`,
+    `<meta charset="utf-8" />`,
+    `<title>${escapeHtml(input.title)}</title>`,
+    `<meta name="viewport" content="width=device-width,initial-scale=1" />`,
+    `<style>${css}</style>`,
+    input.head ?? '',
+    `</head>`,
+    `<body data-active-page="${input.activePage}">`,
+    `<header class="topnav" role="navigation" aria-label="Primary">`,
+    `<div class="brand"><span class="brand-mark">S</span>STAVR</div>`,
+    `<nav class="nav-tabs">${renderNav(input.activePage)}</nav>`,
+    `</header>`,
+    `<main class="page" role="main">${input.body}</main>`,
+    renderInspectorPanel(),
+    `<script>${INSPECTOR_JS}</script>`,
+    script,
+    `</body>`,
+    `</html>`,
+  ].join('\n');
+}

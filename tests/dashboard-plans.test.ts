@@ -73,12 +73,14 @@ describe('/dashboard/plans', () => {
     await h.transports.shutdown();
   });
 
-  it('GET /dashboard/plans serves an HTML page', async () => {
+  it('GET /dashboard/plans serves an HTML page (v0.3 shell placeholder until C3)', async () => {
     const res = await fetch(`${h.base}/dashboard/plans`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/html/);
     const body = await res.text();
     expect(body).toMatch(/Stavr — Plans/);
+    // v0.3 shell sets aria-current on the Plans nav entry.
+    expect(body).toContain('data-page="plans"');
   });
 
   it('GET /dashboard/plans/list returns persisted BOMs', async () => {
