@@ -690,7 +690,16 @@ export function mountDashboardRoutes(
     return out;
   }
 
-  mountDashboardPages(app, { homeData, plansData, decideData, topologyData, streamsData, toolkitData });
+  // Capabilities page snapshot — active profile mode (read-only for
+  // v0.3) + the DEFAULT_PROFILES routing tables. When the daemon has
+  // a custom profile config DB, that overlay can replace the defaults
+  // here; v0.3 ships the static defaults so the page shows the canonical
+  // mapping operators read in the docs.
+  function capabilitiesData(): import('./dashboard/pages/capabilities.js').CapabilitiesData {
+    return { activeMode: broker.store.getActiveProfileMode() };
+  }
+
+  mountDashboardPages(app, { homeData, plansData, decideData, topologyData, streamsData, toolkitData, capabilitiesData });
 
   // ---- C7 Toolkit endpoints ----
 
