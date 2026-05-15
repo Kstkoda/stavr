@@ -190,3 +190,26 @@ Three places to look:
 1. **The relevant spec** in `../privacy tracker/specs/`. The spec is the canonical "what should happen and why."
 2. **The ADRs** in [`adr/`](./adr/). The ADRs are the canonical "why is this code shaped like this?"
 3. **Recent commit messages** (`git log --oneline -20`). The `[cc-*]` tag tells you which agent wrote a given commit; the body tells you what they were trying to accomplish.
+
+---
+
+## Developer Certificate of Origin (DCO)
+
+All contributions to Stavr must be made under the [Developer Certificate of Origin v1.1](https://developercertificate.org/). The DCO is a lightweight per-commit attestation that you wrote the code or have rights to contribute it under this project's Apache-2.0 license. There is no CLA to sign.
+
+To comply, sign off every commit:
+
+```sh
+git commit -s -m "your message"
+```
+
+That adds a `Signed-off-by: Your Name <your@email>` trailer to the commit. To set this up once per repo:
+
+```sh
+git config user.name "Your Name"
+git config user.email "your@email"
+```
+
+PRs whose commits lack the sign-off will be asked to amend. The protection is intentional — it keeps the project's provenance chain clean and lets future maintainers stand behind every line of code in the repo.
+
+If you're contributing AI-assisted work (Claude Code, Cursor, etc.), the sign-off still applies. The attestation is about your right to contribute the code under this license, which holds regardless of how the code was drafted, provided you have reviewed and adopted it.

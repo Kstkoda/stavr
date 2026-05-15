@@ -13,3 +13,62 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+================================================================================
+PRIOR ART AND CONCEPTUAL INFLUENCES
+================================================================================
+
+Stavr was developed independently. The following acknowledgments document
+overlapping or adjacent work in the same problem space; Stavr does not
+incorporate source code from any of them unless explicitly noted.
+
+Trust-scope primitive
+---------------------
+Stavr's trust-scope concept -- named, time-bounded, action-capped, revocable
+approval envelopes for autonomous agents -- shares conceptual ground with the
+Tessera Protocol, an Apache-2.0 project at
+https://github.com/tessera-protocol/tessera that describes a capability-based
+authority layer for AI agents. Stavr and Tessera are independent implementations.
+Stavr positions itself around a broader scope (BOM-driven planning, connector
+bus, cost routing, executor) of which trust scopes are one primitive among many.
+
+Model Context Protocol
+----------------------
+Stavr's daemon implements MCP (Model Context Protocol) on the wire and consumes
+the official TypeScript SDK at https://github.com/modelcontextprotocol/typescript-sdk
+(MIT). The MCP specification and SDK are products of Anthropic and the MCP
+community; Stavr is not affiliated with or endorsed by Anthropic.
+
+Design language references
+--------------------------
+- The "ESB bus" framing in the Toolkit dashboard is a generic enterprise-
+  service-bus metaphor; no specific commercial ESB product is referenced.
+- The Topology dashboard's visual style is inspired by network management UIs
+  (Unifi, FlightRadar24); no source or assets are copied from those products.
+- "LEGO" and "DUPLO" are used as common-noun metaphors for kit-of-parts assembly
+  and are not affiliated with, endorsed by, or sponsored by the LEGO Group.
+
+================================================================================
+NAME AND AFFILIATIONS
+================================================================================
+
+The name "stavr" derives from the Old Norse word for a staff, stake, or rune-
+stave (Proto-Germanic *stabaz, cognate with English "staff"). The name is used
+here for its evocative meaning around inscription and audit, not as a claim of
+exclusive use.
+
+Stavr is not affiliated with, endorsed by, or sponsored by:
+- the STAVR Team blockchain validator operation at stavr.tech (proof-of-stake
+  validator infrastructure across Cosmos / Solana / Polkadot / Ethereum ecosystems),
+- the Tessera Protocol project (referenced above),
+- Anthropic, the LEGO Group, Ubiquiti / Unifi, or FlightRadar24,
+- or any other entity sharing a similar name or working in adjacent domains.
+
+================================================================================
+CONTRIBUTOR PROVENANCE
+================================================================================
+
+Contributions to this project are accepted under the Developer Certificate of
+Origin (DCO) version 1.1 (https://developercertificate.org/). Each commit must
+be signed off with `git commit -s` to attest that the contributor authored the
+code or has rights to contribute it under the project's license.
