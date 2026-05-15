@@ -8,8 +8,7 @@ import type { Broker } from './broker.js';
 import type { StoredEvent } from './persistence.js';
 import { startupDecisionSweep } from './tools/decisions.js';
 import { getLogger } from './log.js';
-import { DASHBOARD_HTML } from './dashboard-html.js';
-import { DASHBOARD_PLANS_HTML } from './dashboard-plans-html.js';
+import { mountDashboardPages } from './dashboard/index.js';
 import { computeUsage, fetchAnthropicBalance, type ComputeUsageOpts } from './usage.js';
 import {
   PendingPairingRegistry,
@@ -521,18 +520,11 @@ export function mountDashboardRoutes(
 ): void {
   const trustStore = getOrCreateTrustStore(broker);
 
-  app.get('/dashboard', (_req, res) => {
-    res.setHeader('content-type', 'text/html; charset=utf-8');
-    res.setHeader('cache-control', 'no-store');
-    res.send(DASHBOARD_HTML);
-  });
-
-  // v0.2 — Plans page (food-label approval card for BOMs).
-  app.get('/dashboard/plans', (_req, res) => {
-    res.setHeader('content-type', 'text/html; charset=utf-8');
-    res.setHeader('cache-control', 'no-store');
-    res.send(DASHBOARD_PLANS_HTML);
-  });
+  // v0.3 dashboard shell — /dashboard redirects to /dashboard/home; per-page
+  // routes (home, topology, streams, plans, decide, toolkit, capabilities,
+  // settings) render the shared shell. Must run BEFORE any /dashboard/<page>/*
+  // JSON endpoints so Express dispatches the page route for bare GETs.
+  mountDashboardPages(app);
 
   app.get('/dashboard/plans/list', (req, res) => {
     const statusParam = (req.query.status as string | undefined) ?? undefined;

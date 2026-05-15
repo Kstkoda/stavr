@@ -39,14 +39,24 @@ describe('Spec 40 Phase 3 — dashboard HTTP', () => {
     await h.transports.shutdown();
   });
 
-  it('GET /dashboard serves the HTML shell', async () => {
+  it('GET /dashboard redirects to /dashboard/home and serves the v0.3 shell', async () => {
+    // v0.3: /dashboard is now a redirect entry-point; fetch follows by default.
     const r = await fetch(`${h.base}/dashboard`);
     expect(r.status).toBe(200);
     expect(r.headers.get('content-type')).toMatch(/text\/html/);
+    expect(r.url.endsWith('/dashboard/home')).toBe(true);
     const body = await r.text();
-    expect(body).toContain('Stavr — Audit Dashboard');
-    expect(body).toContain('/dashboard/stream');
-    expect(body).toContain('/dashboard/decisions');
+    expect(body).toContain('STAVR');
+    // Nav links to every primary page surface live in the shell.
+    expect(body).toContain('href="/dashboard/topology"');
+    expect(body).toContain('href="/dashboard/plans"');
+    expect(body).toContain('href="/dashboard/decide"');
+  });
+
+  it('GET /dashboard returns a 302 when redirects are disabled', async () => {
+    const r = await fetch(`${h.base}/dashboard`, { redirect: 'manual' });
+    expect(r.status).toBe(302);
+    expect(r.headers.get('location')).toBe('/dashboard/home');
   });
 
   it('GET /dashboard/status reports uptime, clients, scopes', async () => {
