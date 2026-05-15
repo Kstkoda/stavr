@@ -17,7 +17,7 @@ import { renderHomePage, type HomeData } from './pages/home.js';
 import { renderTopologyPage } from './pages/topology.js';
 import { renderStreamsPage } from './pages/streams.js';
 import { renderPlansPage, type PlansData } from './pages/plans.js';
-import { renderDecidePage } from './pages/decide.js';
+import { renderDecidePage, type DecideData } from './pages/decide.js';
 import { renderToolkitPage } from './pages/toolkit.js';
 import { renderCapabilitiesPage } from './pages/capabilities.js';
 import { renderSettingsPage } from './pages/settings.js';
@@ -29,6 +29,8 @@ export interface DashboardPageDeps {
   homeData?: () => HomeData;
   /** Snapshot used for Plans server-side initial paint (C3). */
   plansData?: () => PlansData;
+  /** Snapshot used for Decide server-side initial paint (C4). */
+  decideData?: () => DecideData;
 }
 
 function sendHtml(res: express.Response, body: string): void {
@@ -55,7 +57,7 @@ export function mountDashboardPages(
     topology:     renderTopologyPage,
     streams:      renderStreamsPage,
     plans:        () => renderPlansPage(deps.plansData?.()),
-    decide:       renderDecidePage,
+    decide:       () => renderDecidePage(deps.decideData?.()),
     toolkit:      renderToolkitPage,
     capabilities: renderCapabilitiesPage,
     settings:     renderSettingsPage,
