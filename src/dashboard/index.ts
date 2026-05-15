@@ -15,7 +15,7 @@ import type express from 'express';
 import { NAV_ENTRIES, type DashboardPageId } from './shell.js';
 import { renderHomePage, type HomeData } from './pages/home.js';
 import { renderTopologyPage, type TopologyData } from './pages/topology.js';
-import { renderStreamsPage } from './pages/streams.js';
+import { renderStreamsPage, type StreamsData } from './pages/streams.js';
 import { renderPlansPage, type PlansData } from './pages/plans.js';
 import { renderDecidePage, type DecideData } from './pages/decide.js';
 import { renderToolkitPage } from './pages/toolkit.js';
@@ -33,6 +33,8 @@ export interface DashboardPageDeps {
   decideData?: () => DecideData;
   /** Snapshot used for Topology server-side initial paint (C5). */
   topologyData?: () => TopologyData;
+  /** Snapshot used for Streams server-side initial paint (C6). */
+  streamsData?: () => StreamsData;
 }
 
 function sendHtml(res: express.Response, body: string): void {
@@ -57,7 +59,7 @@ export function mountDashboardPages(
   const renderers: Record<DashboardPageId, () => string> = {
     home:         () => renderHomePage(deps.homeData?.()),
     topology:     () => renderTopologyPage(deps.topologyData?.()),
-    streams:      renderStreamsPage,
+    streams:      () => renderStreamsPage(deps.streamsData?.()),
     plans:        () => renderPlansPage(deps.plansData?.()),
     decide:       () => renderDecidePage(deps.decideData?.()),
     toolkit:      renderToolkitPage,
