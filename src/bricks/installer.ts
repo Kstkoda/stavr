@@ -9,7 +9,7 @@
 // On daemon boot, listInstalled() returns the rows; the caller re-imports
 // each entry to re-register concrete connectors.
 
-import { promises as fsp, existsSync } from 'node:fs';
+import { promises as fsp, existsSync, realpathSync } from 'node:fs';
 import { join, resolve, basename, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -188,7 +188,15 @@ export function createBrickInstaller(opts: InstallerOpts): BrickInstaller {
 // ============================================================
 
 async function importAndBuild(brickDir: string, manifest: BrickManifest): Promise<Connector> {
-  const entryAbs = resolve(brickDir, manifest.entry);
+  // Resolve through realpath.native (which calls Win32 GetFullPathName) to
+  // expand Windows 8.3 short paths like `RUNNER~1`. Plain fs.realpathSync
+  // follows symlinks but does NOT normalize 8.3 short names — only the
+  // .native variant does. pathToFileURL percent-encodes `~` as `%7E`, after
+  // which Node's loader can't find the file because the actual filesystem
+  // entry uses the long form. This bites GitHub Actions Windows runners
+  // and any Windows install path with short-form components.
+  const realBrickDir = realpathSync.native(brickDir);
+  const entryAbs = resolve(realBrickDir, manifest.entry);
   // pathToFileURL handles Windows backslashes / drive letters correctly.
   const url = pathToFileURL(entryAbs).href;
   const mod = (await import(url)) as { default?: BrickFactory; factory?: BrickFactory };

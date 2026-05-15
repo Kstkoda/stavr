@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { EventStore } from '../src/persistence.js';
 import { Broker } from '../src/broker.js';
 import { mountTransports, type MountedTransports } from '../src/transports.js';
@@ -30,7 +30,7 @@ interface SseClient {
 }
 
 async function makeClient(url: string, name: string): Promise<SseClient> {
-  const transport = new SSEClientTransport(new URL(url));
+  const transport = new StreamableHTTPClientTransport(new URL(url));
   const client = new Client({ name, version: '0.0.0' });
   const notifications: SseClient['notifications'] = [];
   client.fallbackNotificationHandler = async (n) => {
@@ -137,7 +137,7 @@ describe('Spec 44 — chaos: multi-client disconnect + resume', () => {
     broker = new Broker(store);
     transports = await mountTransports(broker, { mode: 'daemon', port: 0, silent: true });
     const addr = transports.httpServer!.address() as AddressInfo;
-    url = `http://127.0.0.1:${addr.port}/mcp/sse`;
+    url = `http://127.0.0.1:${addr.port}/mcp`;
   });
 
   afterEach(async () => {

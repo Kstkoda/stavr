@@ -1,5 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 export interface ConnectTestOptions {
   url: string;
@@ -16,7 +16,7 @@ export interface ConnectTestResult {
 }
 
 export async function runConnectTest(opts: ConnectTestOptions): Promise<ConnectTestResult> {
-  const transport = new SSEClientTransport(new URL(opts.url));
+  const transport = new StreamableHTTPClientTransport(new URL(opts.url));
   const client = new Client({ name: 'stavr-connect-test', version: '0.0.1' });
 
   const received: Array<{ method: string; params: { kind?: string } }> = [];

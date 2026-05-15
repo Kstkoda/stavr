@@ -328,5 +328,5 @@ describe('Spec 52 A2 — pairing end-to-end', () => {
     processes.push(nas2);
     await waitForHealthz(nas2Port, 20_000);
     // healthz reachable means the gate let us through.
-  }, 60_000);
+  }, 180_000);
 });

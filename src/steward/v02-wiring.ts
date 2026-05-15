@@ -99,6 +99,32 @@ export function wireV02Subsystem(opts: V02WiringOpts): V02SubsystemHandle {
         reporting: { cadence: 'every-5-actions', channels: ['event-log'] },
       });
       const granted = trustStore.grant(proposal.id, 'bom-approval');
+      if (granted) {
+        // Mirror the trust_scope_granted event emitted by the MCP-tool path
+        // (src/trust/tools.ts). Audit log must record BOM-derived scopes the
+        // same way it records user-initiated ones. Fire-and-forget so the
+        // sync createBomScope contract is preserved; correlate by bomId.
+        void events
+          .publish(
+            'trust_scope_granted',
+            {
+              scope_id: granted.id,
+              title: granted.title,
+              granted_by: granted.granted_by,
+              granted_at: granted.granted_at,
+              expires_at: granted.expires_at,
+              expires_after_actions: granted.expires_after_actions,
+            },
+            bomId,
+          )
+          .catch((err) => {
+            getLogger().warn('failed to emit trust_scope_granted for BOM scope', {
+              bom_id: bomId,
+              scope_id: granted.id,
+              error: (err as Error).message,
+            });
+          });
+      }
       return granted?.id ?? proposal.id;
     },
     closeBomScope: (scopeId) => {
