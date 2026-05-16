@@ -27,3 +27,11 @@ publishes a stable export.
 ## Phase log
 
 - Phase 1: branch + scaffold — done
+- Phase 2: OllamaProvider + profile routing + observability — done
+  - `src/steward/providers/ollama.ts`: provider with `/api/chat` (non-stream) + `listAvailableModels()` via `/api/tags`. Mock tool-call mapping, system-prompt + multi-turn message mapping, AbortController-based timeout. Observability via `recordProviderRequest` + `recordProviderLatency` in finally block.
+  - `src/observability/metrics.ts`: added `stavr_provider_requests_total` counter + `stavr_provider_latency_seconds` histogram with `{provider, model, status}` labels. Model-label cardinality kept bounded via truncation.
+  - `src/types/stavr-bom.ts`: added four `local-*` capability tags as union members; added `LOCAL_FRIENDLY_TAGS` and `isLocalModel()` helpers. Routing tables updated for all three profiles per brief §2.3: Turbo never local, Balanced local for `cheap-classifier` + `simple-summary` + `local-*`, Eco local-first across every local-friendly tag. Frontier fallback retained in every Balanced row.
+  - `src/steward/planner.ts`: extended `estimateStepCost` + `estimateStepDuration` for the four local-* tags; added Ollama models to the price table (zero per-token cost); updated planner LLM system prompt to include the new tags.
+  - `src/daemon.ts`: lazy singleton `getOllamaProvider()` for dashboard consumption + `_resetOllamaProviderForTests()` test seam. The Steward subprocess still selects one primary provider per `steward-config.yaml`; cross-provider step routing is a v0.5 portability concern (ADR-032).
+  - Tests: 37 new — `tests/steward/providers/ollama.test.ts` (7 cases: happy path, tool_calls, error mapping, listAvailableModels, host trim, message mapping), `tests/steward/planner-routing.test.ts` (matrix invariants across all three profiles), `tests/observability/ollama-metrics.test.ts` (Prometheus label assertions).
+  - Full suite: 502 passing / 1 pre-existing skip.

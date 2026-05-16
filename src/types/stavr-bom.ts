@@ -68,7 +68,15 @@ export type CapabilityTag =
   | 'multimodal-audio'
   | 'tool-use-heavy'
   | 'simple-summary'
-  | 'no-model';
+  | 'no-model'
+  // Local-LLM aliases (added 2026-05-17 with v0.4 Ollama provider). These are
+  // explicit "this step is fine on a local model" markers the planner may
+  // produce; they get routed via the same per-profile routing table, but
+  // declare intent up-front for cost transparency in the BOM food-label.
+  | 'local-classifier'
+  | 'local-reasoning'
+  | 'local-summary'
+  | 'local-reading';
 
 export const CAPABILITY_TAGS: readonly CapabilityTag[] = [
   'reading',
@@ -81,7 +89,40 @@ export const CAPABILITY_TAGS: readonly CapabilityTag[] = [
   'tool-use-heavy',
   'simple-summary',
   'no-model',
+  'local-classifier',
+  'local-reasoning',
+  'local-summary',
+  'local-reading',
 ] as const;
+
+/**
+ * Capability tags that the planner may route to a local LLM (Ollama). The
+ * Eco profile honours these aggressively; Balanced honours the lightest
+ * (`local-summary`, `local-classifier`); Turbo never routes locally.
+ */
+export const LOCAL_FRIENDLY_TAGS: readonly CapabilityTag[] = [
+  'cheap-classifier',
+  'simple-summary',
+  'reading',
+  'local-classifier',
+  'local-reasoning',
+  'local-summary',
+  'local-reading',
+] as const;
+
+/**
+ * Heuristic: a model name belongs to the local Ollama provider when it
+ * doesn't match a known frontier prefix. The convention is `<family>:<tag>`
+ * (e.g. `llama3.2:3b`, `phi3:mini`, `deepseek-r1:32b`). Frontier Anthropic
+ * models always start with `claude-`.
+ */
+export function isLocalModel(model: string): boolean {
+  if (!model) return false;
+  if (model.startsWith('claude-')) return false;
+  if (model.startsWith('gpt-')) return false;
+  if (model.startsWith('gemini-')) return false;
+  return true;
+}
 
 // ============================================================
 // PROFILE MODES — Turbo / Balanced / Eco
@@ -126,13 +167,18 @@ export const DEFAULT_PROFILES: Record<ProfileMode, ProfileConfig> = {
       'tool-use-heavy': ['claude-opus-4-7', 'claude-sonnet-4-6'],
       'simple-summary': ['claude-haiku-4-5'],
       'no-model': [],
+      // Turbo always uses Anthropic — local-* tags fall back to frontier.
+      'local-classifier': ['claude-haiku-4-5'],
+      'local-reasoning': ['claude-opus-4-7', 'claude-sonnet-4-6'],
+      'local-summary': ['claude-haiku-4-5'],
+      'local-reading': ['claude-haiku-4-5'],
     },
     steward_brain: 'claude-opus-4-7',
   },
 
   balanced: {
     label: 'Balanced',
-    description: 'Cheapest model that fits each step. Promotes on failure. Default mode.',
+    description: 'Cheapest model that fits each step. Local LLM for trivial classification + summary. Promotes on failure. Default mode.',
     budget_daily_soft_usd: 20,
     budget_daily_hard_usd: 40,
     budget_per_job_soft_usd: 0.5,
@@ -140,15 +186,21 @@ export const DEFAULT_PROFILES: Record<ProfileMode, ProfileConfig> = {
     approval_policy: 'auto-unless-flagged',
     routing: {
       reading: ['claude-haiku-4-5', 'claude-sonnet-4-6'],
-      'cheap-classifier': ['claude-haiku-4-5'],
+      // Local model handles the cheap classification load.
+      'cheap-classifier': ['llama3.2:3b', 'claude-haiku-4-5'],
       'code-execution': ['claude-sonnet-4-6', 'claude-opus-4-7'],
       'code-reasoning': ['claude-opus-4-7', 'claude-sonnet-4-6'],
       'long-context': ['claude-sonnet-4-6', 'claude-opus-4-7'],
       'multimodal-vision': ['claude-sonnet-4-6'],
       'multimodal-audio': ['claude-sonnet-4-6'],
       'tool-use-heavy': ['claude-sonnet-4-6', 'claude-opus-4-7'],
-      'simple-summary': ['claude-haiku-4-5'],
+      // Simple summaries are local-first; haiku is the fallback if Ollama is down.
+      'simple-summary': ['llama3.2:3b', 'claude-haiku-4-5'],
       'no-model': [],
+      'local-classifier': ['llama3.2:3b', 'claude-haiku-4-5'],
+      'local-reasoning': ['claude-haiku-4-5', 'llama3.2:3b'],
+      'local-summary': ['llama3.2:3b', 'claude-haiku-4-5'],
+      'local-reading': ['llama3.2:3b', 'claude-haiku-4-5'],
     },
     steward_brain: 'claude-sonnet-4-6',
   },
@@ -162,16 +214,20 @@ export const DEFAULT_PROFILES: Record<ProfileMode, ProfileConfig> = {
     on_capability_miss: 'refuse-notify',
     approval_policy: 'always-ask',
     routing: {
-      reading: ['llama-3.1-8b', 'claude-haiku-4-5'],
-      'cheap-classifier': ['llama-3.1-8b'],
+      reading: ['llama3.2:3b', 'claude-haiku-4-5'],
+      'cheap-classifier': ['llama3.2:3b'],
       'code-execution': ['claude-haiku-4-5'],
       'code-reasoning': ['claude-haiku-4-5'],
       'long-context': ['claude-haiku-4-5'],
       'multimodal-vision': ['claude-haiku-4-5'],
       'multimodal-audio': [],
       'tool-use-heavy': ['claude-haiku-4-5'],
-      'simple-summary': ['llama-3.1-8b'],
+      'simple-summary': ['llama3.2:3b'],
       'no-model': [],
+      'local-classifier': ['llama3.2:3b'],
+      'local-reasoning': ['llama3.2:3b'],
+      'local-summary': ['llama3.2:3b'],
+      'local-reading': ['llama3.2:3b'],
     },
     steward_brain: 'claude-haiku-4-5',
   },

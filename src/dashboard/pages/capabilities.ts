@@ -39,6 +39,10 @@ const CAPABILITY_LABEL: Record<CapabilityTag, string> = {
   'tool-use-heavy':   'tool-use-heavy',
   'simple-summary':   'simple summary',
   'no-model':         'no model',
+  'local-classifier': 'local · classifier',
+  'local-reasoning':  'local · reasoning',
+  'local-summary':    'local · summary',
+  'local-reading':    'local · reading',
 };
 
 function escapeHtml(s: string): string {
