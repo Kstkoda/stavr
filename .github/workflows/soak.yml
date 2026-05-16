@@ -1,0 +1,39 @@
+name: soak
+
+# bom-oom-leak-hunt C2.5 — weekly long-mode soak. Runs on Linux runners
+# only (heap snapshots are large; Windows runners run the regular matrix).
+# Manual dispatch is enabled so an operator can re-run it on demand after
+# a suspected regression.
+
+on:
+  schedule:
+    # Sunday 04:00 UTC. After main has the week's merges + the dashboard
+    # is most likely idle, so the snapshot dumps don't compete with anything.
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      STAVR_RUN_SOAK: long
+      STAVR_SOAK_RSS_CEILING_MB: '600'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Run soak
+        run: npx vitest run tests/soak --reporter=verbose
+      - name: Upload heap snapshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-heap-snapshots
+          path: tmp/heap-snapshots/*.heapsnapshot
+          retention-days: 14

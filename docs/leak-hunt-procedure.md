@@ -5,7 +5,7 @@ this when the daemon RSS climbs over ~1 GB, when an OOM crash hits, or as a
 periodic 24h sanity check before merging anything that touches the broker /
 persistence / dashboard hot paths.
 
-## What's wired (Checkpoint 1)
+## What's wired (Checkpoint 1 + 2)
 
 | Surface | Where | How to read |
 | --- | --- | --- |
@@ -14,6 +14,20 @@ persistence / dashboard hot paths.
 | POST `/debug/heap-snapshot` (loopback) | `src/transports.ts` | `curl -X POST http://127.0.0.1:7777/debug/heap-snapshot` |
 | Crash-time heap dump | `npm start` flags `--heapsnapshot-near-heap-limit=2`, `--report-on-fatalerror`, `--report-directory=./tmp/diag-reports` | Files land in `./tmp/heap-snapshots` and `./tmp/diag-reports` |
 | Controlled repro | `scripts/leak-repro.ts` | `npx tsx scripts/leak-repro.ts` |
+| Kind-aware retention (every 60 min) | `src/observability/retention.ts` + `EventStore.pruneEvents` | `stavr tail --kind retention_swept` |
+| Dashboard memoization | `src/dashboard/memo.ts`, wired in `mountDashboardRoutes` | `STAVR_DASHBOARD_CACHE_MS=2000` (default), `STAVR_STREAMS_MAX_EVENTS=100` (default) |
+| Explicit DELETE `/mcp` + 30s defensive timeout + 5-min janitor | `src/transports.ts` | `stavr tail --kind mcp_session_deleted --kind sse_session_force_removed` |
+| Long-running soak guard | `tests/soak/leak-soak.test.ts` + `.github/workflows/soak.yml` | `STAVR_RUN_SOAK=1 npx vitest run tests/soak` |
+
+## Retention env vars
+
+| Var | Default | Purpose |
+| --- | --- | --- |
+| `STAVR_EVENTS_OP_RETENTION_DAYS` | `7` | Days to keep operational kinds |
+| `STAVR_EVENTS_OP_MAX_ROWS` | `100000` | Hard cap on operational rows (oldest dropped first) |
+| `STAVR_EVENTS_AUDIT_RETENTION_DAYS` | `90` | Days to keep audit kinds (set very high to effectively disable) |
+| `STAVR_DASHBOARD_CACHE_MS` | `2000` | TTL for `homeData()` memoization |
+| `STAVR_STREAMS_MAX_EVENTS` | `100` | Cap on `getEvents` per Streams render |
 
 ## Triggering a snapshot against a running daemon
 

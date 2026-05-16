@@ -5,6 +5,13 @@ import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { DecisionOption, Event, EventKindT } from './event-types.js';
 import { getLogger } from './log.js';
+import {
+  AUDIT_KINDS,
+  OPERATIONAL_KINDS,
+  resolveRetentionOpts,
+  type RetentionOpts,
+  type RetentionResult,
+} from './observability/retention.js';
 import type {
   Bom,
   BomStep,
@@ -142,6 +149,30 @@ export class EventStore {
       CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind);
       CREATE INDEX IF NOT EXISTS idx_events_correlation ON events(correlation_id);
       CREATE INDEX IF NOT EXISTS idx_events_seq ON events(seq);
+    `);
+
+    // bom-oom-leak-hunt C2.1 — additive created_at + indexes for retention.
+    // Idempotent: re-checking pragma table_info(events) before ALTERing
+    // avoids "duplicate column" on re-run. We mirror persisted_at into
+    // created_at on existing rows so retention semantics match what's on
+    // disk (CURRENT_TIMESTAMP would mark every existing row as "created
+    // now" and defer eviction by the full retention window).
+    const hasCreatedAt = (
+      this.db.prepare(`PRAGMA table_info(events)`).all() as Array<{ name: string }>
+    ).some((row) => row.name === 'created_at');
+    if (!hasCreatedAt) {
+      // SQLite ALTER TABLE ADD COLUMN forbids non-constant defaults, so we
+      // add the column with no default, backfill from persisted_at, then
+      // future inserts populate it explicitly via appendEvent below.
+      this.db.exec(`ALTER TABLE events ADD COLUMN created_at TEXT`);
+      this.db.exec(`UPDATE events SET created_at = persisted_at WHERE created_at IS NULL`);
+    }
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+      CREATE INDEX IF NOT EXISTS idx_events_kind_created ON events(kind, created_at);
+    `);
+
+    this.db.exec(`
 
       CREATE TABLE IF NOT EXISTS decisions (
         correlation_id TEXT PRIMARY KEY,
@@ -483,8 +514,8 @@ export class EventStore {
     const seq = this.nextSeq();
     this.db
       .prepare(
-        `INSERT INTO events (id, kind, correlation_id, source_agent, tenant_id, payload_json, at, persisted_at, seq)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO events (id, kind, correlation_id, source_agent, tenant_id, payload_json, at, persisted_at, seq, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -496,6 +527,7 @@ export class EventStore {
         event.at,
         persisted_at,
         seq,
+        persisted_at,
       );
     return { id, persisted_at, ...event };
   }
@@ -572,6 +604,92 @@ export class EventStore {
 
   eventCount(): number {
     return (this.db.prepare(`SELECT COUNT(*) AS c FROM events`).get() as { c: number }).c;
+  }
+
+  /**
+   * bom-oom-leak-hunt C2.1 — kind-aware retention. See observability/retention.ts
+   * for the policy split. Operational rows are aged out at 7 days (default)
+   * AND capped at 100k rows; audit rows are aged out at 90 days only; unknown
+   * kinds are preserved with a warning. Best-effort: any DELETE failure logs
+   * but does not throw, so a transient SQLite issue can't take the daemon
+   * down.
+   */
+  pruneEvents(opts: RetentionOpts = {}): RetentionResult {
+    const start = Date.now();
+    const resolved = resolveRetentionOpts(opts);
+    const opKinds = [...OPERATIONAL_KINDS];
+    const auditKinds = [...AUDIT_KINDS];
+
+    const beforeCount = this.eventCount();
+
+    let deletedOperational = 0;
+    let deletedAudit = 0;
+    let unknownPreserved = 0;
+
+    try {
+      // Operational: age cap. Use ISO timestamps so it lines up with what
+      // appendEvent wrote into created_at.
+      const opCutoff = new Date(Date.now() - resolved.operationalDays * 86_400_000).toISOString();
+      const opByAge = this.db
+        .prepare(
+          `DELETE FROM events WHERE kind IN (${opKinds.map(() => '?').join(',')}) AND created_at < ?`,
+        )
+        .run(...opKinds, opCutoff);
+      deletedOperational += opByAge.changes;
+
+      // Operational: row cap. Keep newest N operational rows, drop the
+      // oldest beyond that. Single statement; SQLite evaluates the LIMIT
+      // sub-query against the same snapshot.
+      const opByCount = this.db
+        .prepare(
+          `DELETE FROM events WHERE id IN (
+             SELECT id FROM events
+             WHERE kind IN (${opKinds.map(() => '?').join(',')})
+             ORDER BY created_at ASC
+             LIMIT MAX(0, (SELECT COUNT(*) FROM events WHERE kind IN (${opKinds.map(() => '?').join(',')})) - ?)
+           )`,
+        )
+        .run(...opKinds, ...opKinds, resolved.operationalMaxRows);
+      deletedOperational += opByCount.changes;
+
+      // Audit: age cap only. No row cap by design — operators who want to
+      // shrink the audit log set STAVR_EVENTS_AUDIT_RETENTION_DAYS lower.
+      const auditCutoff = new Date(Date.now() - resolved.auditDays * 86_400_000).toISOString();
+      const auditRes = this.db
+        .prepare(
+          `DELETE FROM events WHERE kind IN (${auditKinds.map(() => '?').join(',')}) AND created_at < ?`,
+        )
+        .run(...auditKinds, auditCutoff);
+      deletedAudit += auditRes.changes;
+
+      // Unknown: count, warn, preserve. Casting after the spread because
+      // the runtime placeholder list shape is dynamic.
+      const knownKinds = [...opKinds, ...auditKinds];
+      const unknownRow = this.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM events WHERE kind NOT IN (${knownKinds.map(() => '?').join(',')})`,
+        )
+        .get(...knownKinds) as { c: number };
+      unknownPreserved = unknownRow.c;
+      if (unknownPreserved > 0) {
+        getLogger().warn('pruneEvents: uncategorized event kinds preserved (extend observability/retention.ts)', {
+          unknown_count: unknownPreserved,
+        });
+      }
+    } catch (err) {
+      getLogger().error('pruneEvents failed; daemon continues', { error: (err as Error).message });
+    }
+
+    const afterCount = this.eventCount();
+    return {
+      deletedOperational,
+      deletedAudit,
+      deletedUnknown: 0,
+      unknownPreserved,
+      duration_ms: Date.now() - start,
+      beforeCount,
+      afterCount,
+    };
   }
 
   /** Cheap liveness check: a SELECT 1 that throws if the underlying DB handle is gone. */
