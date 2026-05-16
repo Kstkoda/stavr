@@ -1,11 +1,17 @@
 /**
- * Dashboard shell — top nav + content slot. Server-rendered HTML; the
- * per-page module supplies the body string.
+ * Dashboard shell — top rail + page slot. Server-rendered HTML; the per-
+ * page module supplies the body string.
  *
- * Architecture: each `/dashboard/<page>` route renders the same shell
- * with a different body and `activePage` highlighted. Hash-routing is
+ * Architecture: each `/dashboard/<page>` route renders the same shell with
+ * a different body and `activePage` highlighted. Hash-routing is
  * intentionally NOT used — server-side routing keeps the dashboard
  * deep-linkable, copyable, and crawl-friendly without a build step.
+ *
+ * v0.4.1 polish: top rail is the canonical v2 mockup — rune badge + stav+ᚱ
+ * wordmark, glass nav, status pills (daemon uptime / steward model / GST
+ * clock), and the WATCH OK chip (renderWatchdogPip — same component, new
+ * label). The legacy `class="topnav"` is preserved because tests + the
+ * watchdog-pip mount contract depend on it.
  */
 
 import { TOKENS_CSS } from './tokens.js';
@@ -41,6 +47,7 @@ export type DashboardPageId =
   | 'toolkit'
   | 'mcps'
   | 'capabilities'
+  | 'diagnostics'
   | 'settings';
 
 export interface NavEntry {
@@ -58,6 +65,7 @@ export const NAV_ENTRIES: NavEntry[] = [
   { id: 'toolkit',      label: 'Toolkit',      href: '/dashboard/toolkit' },
   { id: 'mcps',         label: 'MCPs',         href: '/dashboard/mcps' },
   { id: 'capabilities', label: 'Capabilities', href: '/dashboard/capabilities' },
+  { id: 'diagnostics',  label: 'Diagnostics',  href: '/dashboard/diagnostics' },
   { id: 'settings',     label: 'Settings',     href: '/dashboard/settings' },
 ];
 
@@ -86,126 +94,186 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: var(--bg-base);
-  color: var(--text-primary);
-  font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background:
+    radial-gradient(1400px 900px at 18% -8%, #1a1326 0%, transparent 55%),
+    radial-gradient(1100px 800px at 110% 110%, #0f1d22 0%, transparent 55%),
+    var(--bg-0, var(--bg-base));
+  color: var(--ink-0, var(--text-primary));
+  font-family: var(--sans, ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif);
   font-size: 13px;
   line-height: 1.5;
 }
 body {
   display: grid;
-  grid-template-rows: 56px 1fr;
+  grid-template-rows: 52px 1fr;
   min-height: 100vh;
 }
 a { color: inherit; text-decoration: none; }
 button { font: inherit; }
 
+/* === TOP RAIL === */
 .topnav {
-  display: flex;
+  display: grid;
+  grid-template-columns: 250px 1fr auto;
   align-items: center;
-  gap: 24px;
-  padding: 0 20px;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border);
+  gap: 18px;
+  padding: 0 18px;
+  background: linear-gradient(180deg, rgba(15,16,24,.92), rgba(15,16,24,.65));
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  position: sticky; top: 0; z-index: 80;
 }
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-weight: 700;
+  font-family: var(--mono);
   font-size: 15px;
-  letter-spacing: 0.06em;
+  font-weight: 500;
+  letter-spacing: 0.02em;
 }
 .brand-mark {
-  width: 28px;
-  height: 28px;
-  background: linear-gradient(135deg, var(--accent-steward), var(--accent-ai-external));
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--rust), #6e2e15);
   border-radius: 6px;
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  color: #fff;
-  font-size: 13px;
+  color: #ffe9dc;
+  font-family: var(--mono);
+  font-size: 13px; line-height: 1;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 4px 14px var(--rust-glow);
+  filter: drop-shadow(0 0 4px var(--rust-glow));
 }
+.brand .stav { color: var(--ink-0); font-weight: 700; }
+.brand .rune-i {
+  color: var(--rust);
+  font-family: var(--mono);
+  font-style: normal;
+  filter: drop-shadow(0 0 6px var(--rust-glow));
+  animation: rune-pulse 4s ease-in-out infinite;
+}
+.brand-sr { position: absolute; left: -9999px; }
+@keyframes rune-pulse {
+  0%,100% { filter: drop-shadow(0 0 4px var(--rust-glow)); }
+  50%     { filter: drop-shadow(0 0 12px var(--rust-glow)); }
+}
+
 .nav-tabs {
   display: flex;
-  gap: 2px;
-  flex: 1;
+  gap: 4px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
 }
+.nav-tab {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--ink-1);
+  border: 1px solid transparent;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.nav-tab:hover {
+  background: rgba(255,255,255,.04);
+  color: var(--ink-0);
+}
+.nav-tab[aria-current="page"] {
+  background: var(--rust-soft);
+  color: #ffd9c4;
+  border-color: rgba(184, 84, 42, 0.3);
+}
+
 .topnav-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-1);
 }
-.nav-tab {
-  padding: 8px 14px;
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  transition: background 0.12s ease, color 0.12s ease;
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-1);
+  letter-spacing: 0.04em;
 }
-.nav-tab:hover { background: var(--bg-elevated); color: var(--text-primary); }
-.nav-tab[aria-current="page"] {
-  background: var(--bg-elevated);
-  color: var(--text-primary);
+.status-pill .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ink-3);
 }
+.status-pill .dot.ok   { background: var(--ok);   box-shadow: 0 0 6px var(--ok); }
+.status-pill .dot.warn { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.status-pill .dot.crit { background: var(--crit); box-shadow: 0 0 6px var(--crit); }
+.status-pill .dot.info { background: var(--info); }
+.status-pill .clk { color: var(--ink-2); font-variant-numeric: tabular-nums; }
 
+/* === PAGE === */
 .page {
-  padding: 24px 28px;
-  /* Allow space for the fixed-bottom smooth timeline (44px). */
-  padding-bottom: 60px;
+  padding: 18px 22px 60px;
   overflow: auto;
 }
 .page-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
 .page-title {
   font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-weight: 450;
+  letter-spacing: -0.02em;
   margin: 0;
+  color: var(--ink-0);
 }
-.page-sub { color: var(--text-secondary); font-size: 13px; }
+.page-sub { color: var(--ink-2); font-size: 12px; }
 
 .card {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: var(--bg-glass);
+  border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 16px;
+  backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
 }
 .card-title {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--text-secondary);
+  color: var(--ink-3);
   margin: 0 0 12px 0;
+  font-family: var(--mono);
 }
 
 .placeholder {
-  background: var(--bg-surface);
-  border: 1px dashed var(--border-strong);
-  border-radius: 10px;
+  background: var(--bg-glass);
+  border: 1px dashed var(--line-2);
+  border-radius: 12px;
   padding: 40px;
   text-align: center;
-  color: var(--text-secondary);
+  color: var(--ink-2);
+  backdrop-filter: blur(var(--glass-blur)) saturate(140%);
 }
 .placeholder strong {
   display: block;
   margin-bottom: 6px;
-  color: var(--text-primary);
+  color: var(--ink-0);
   font-size: 16px;
 }
 
-/* Skeleton loaders — pages drop these in while data is in flight. */
+/* Skeleton loaders */
 .skeleton {
   background: linear-gradient(90deg,
-    var(--bg-elevated) 0%,
-    var(--bg-hover)    50%,
-    var(--bg-elevated) 100%);
+    var(--bg-glass) 0%,
+    var(--bg-glass-2) 50%,
+    var(--bg-glass) 100%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.4s linear infinite;
   border-radius: 4px;
@@ -218,49 +286,35 @@ button { font: inherit; }
   100% { background-position: -200% 0; }
 }
 
-/* Connection banner — surfaces SSE drops. Hidden by default; pages or
- * the shell JS flip the data-state attribute. */
+/* Connection banner — surfaces SSE drops */
 .conn-banner {
   position: fixed;
   bottom: 18px;
   right: 18px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  border-left: 3px solid var(--risk-medium);
+  background: var(--bg-popover);
+  border: 1px solid var(--line-2);
+  border-left: 3px solid var(--warn);
   border-radius: 7px;
   padding: 8px 14px;
   font-size: 12px;
-  color: var(--text-primary);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  color: var(--ink-0);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.55);
   z-index: 70;
   display: none;
   align-items: center;
   gap: 10px;
+  backdrop-filter: blur(20px);
 }
-.conn-banner[data-state="dropped"] {
-  display: flex;
-  border-left-color: var(--risk-high);
-}
-.conn-banner[data-state="reconnecting"] {
-  display: flex;
-  border-left-color: var(--risk-medium);
-}
-.conn-banner[data-state="ok"] {
-  display: flex;
-  border-left-color: var(--risk-low);
+.conn-banner[data-state="dropped"]      { display: flex; border-left-color: var(--crit); }
+.conn-banner[data-state="reconnecting"] { display: flex; border-left-color: var(--warn); }
+.conn-banner[data-state="ok"]           {
+  display: flex; border-left-color: var(--ok);
   animation: conn-fadeout 2s 1s forwards;
 }
-@keyframes conn-fadeout {
-  to { opacity: 0; display: none; }
-}
-.conn-banner-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--risk-medium);
-}
-.conn-banner[data-state="dropped"] .conn-banner-dot { background: var(--risk-high); }
-.conn-banner[data-state="ok"] .conn-banner-dot { background: var(--risk-low); }
+@keyframes conn-fadeout { to { opacity: 0; display: none; } }
+.conn-banner-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.conn-banner[data-state="dropped"] .conn-banner-dot { background: var(--crit); }
+.conn-banner[data-state="ok"]      .conn-banner-dot { background: var(--ok); }
 `;
 
 /**
@@ -288,6 +342,24 @@ const SHELL_CONN_JS = `
 })();
 `;
 
+/**
+ * Top-rail clock — updates the GST time pill once per second. The clock
+ * needs no daemon round-trip; it just renders the operator's wall time.
+ */
+const SHELL_CLOCK_JS = `
+(function() {
+  const el = document.querySelector('[data-role="topnav-clock"]');
+  if (!el) return;
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function tick() {
+    const d = new Date();
+    el.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + ' GST';
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+`;
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -302,6 +374,32 @@ function renderNav(active: DashboardPageId): string {
     const cur = e.id === active ? ' aria-current="page"' : '';
     return `<a class="nav-tab" href="${e.href}" data-page="${e.id}"${cur}>${escapeHtml(e.label)}</a>`;
   }).join('');
+}
+
+function renderBrand(): string {
+  // Visible: rust rune badge + `stav` + Raido rune `ᚱ`.
+  // SR-only `STAVR` keeps screen-readers + the long-standing shell test happy.
+  return [
+    `<div class="brand">`,
+    `<span class="brand-mark" aria-hidden="true">ᚱ</span>`,
+    `<span class="word"><span class="stav">stav</span><i class="rune-i">ᚱ</i></span>`,
+    `<span class="brand-sr">STAVR</span>`,
+    `</div>`,
+  ].join('');
+}
+
+function renderTopRailRight(): string {
+  // Status pills are visual stubs — real uptime/steward/etc come from the
+  // watchdog-pip and a follow-up panel (ADR-033). Keep the markup so the
+  // shell matches the v2 mockup; pages can update text via DOM later.
+  return [
+    `<div class="topnav-right">`,
+    `<span class="status-pill" data-role="pill-daemon"><span class="dot ok"></span> daemon</span>`,
+    `<span class="status-pill" data-role="pill-steward"><span class="dot info"></span> steward · opus-4.7</span>`,
+    `<span class="status-pill"><span class="clk" data-role="topnav-clock">…</span></span>`,
+    renderWatchdogPip(),
+    `</div>`,
+  ].join('');
 }
 
 export function renderShell(input: RenderShellInput): string {
@@ -333,9 +431,9 @@ export function renderShell(input: RenderShellInput): string {
     `</head>`,
     `<body data-active-page="${input.activePage}">`,
     `<header class="topnav" role="navigation" aria-label="Primary">`,
-    `<div class="brand"><span class="brand-mark">S</span>STAVR</div>`,
+    renderBrand(),
     `<nav class="nav-tabs">${renderNav(input.activePage)}</nav>`,
-    `<div class="topnav-right">${renderWatchdogPip()}</div>`,
+    renderTopRailRight(),
     `</header>`,
     `<main class="page" role="main">${input.body}</main>`,
     renderInspectorPanel(),
@@ -348,6 +446,7 @@ export function renderShell(input: RenderShellInput): string {
     `</div>`,
     `<script>${INSPECTOR_JS}</script>`,
     `<script>${SHELL_CONN_JS}</script>`,
+    `<script>${SHELL_CLOCK_JS}</script>`,
     `<script>${FLOATING_INSPECTOR_JS}</script>`,
     `<script>${TIMELINE_JS}</script>`,
     `<script>${WATCHDOG_PIP_JS}</script>`,

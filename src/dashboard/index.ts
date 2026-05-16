@@ -23,6 +23,7 @@ import { renderDecidePage, type DecideData } from './pages/decide.js';
 import { renderToolkitPage, type ToolkitData } from './pages/toolkit.js';
 import { renderMcpsPage, type McpsData } from './pages/mcps.js';
 import { renderCapabilitiesPage, type CapabilitiesData } from './pages/capabilities.js';
+import { renderDiagnosticsPage, type DiagnosticsData } from './pages/diagnostics.js';
 import { renderSettingsPage, type SettingsData } from './pages/settings.js';
 
 export interface DashboardPageDeps {
@@ -44,6 +45,8 @@ export interface DashboardPageDeps {
   mcpsData?: () => McpsData;
   /** Snapshot used for Capabilities server-side initial paint (C8). */
   capabilitiesData?: () => CapabilitiesData;
+  /** Snapshot used for Diagnostics server-side initial paint (v0.4.1). */
+  diagnosticsData?: () => DiagnosticsData;
   /** Snapshot used for Settings server-side initial paint (C9). */
   settingsData?: () => SettingsData;
 }
@@ -77,6 +80,7 @@ export function mountDashboardPages(
     toolkit:      () => renderToolkitPage(deps.toolkitData?.()),
     mcps:         () => renderMcpsPage(deps.mcpsData?.()),
     capabilities: () => renderCapabilitiesPage(deps.capabilitiesData?.()),
+    diagnostics:  () => renderDiagnosticsPage(deps.diagnosticsData?.()),
     settings:     () => renderSettingsPage(deps.settingsData?.()),
   };
 
