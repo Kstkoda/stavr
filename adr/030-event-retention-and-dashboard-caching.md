@@ -155,3 +155,24 @@ worker's last-minute history without ballooning per-render allocations.
 - `stavr tail --kind retention_swept` — see retention working live.
 - `docs/leak-hunt-procedure.md` updated with the new env vars + the
   expected `retention_swept` cadence.
+
+## Follow-up: `stavr start` unification (2026-05-16)
+
+Discovered during fix-verification: the `stavr start` command (which
+`npm start` previously invoked) only mounted transports + broker. It did
+**not** call `startDaemonForeground`, so the retention scheduler and
+memory poller specified in this ADR were dormant under that entry
+point — the running daemon on 2026-05-16 06:00 UTC produced zero
+`daemon_memory` / `retention_swept` events despite the fix being merged.
+The 2026-05-15 OOM almost certainly occurred on the same lighter path.
+
+Closed in `feature/cli-start-unify` (`proposed/bom-cli-start-unify.md`):
+non-stdio `stavr start` now delegates to `startDaemonForeground`, so
+both entry points wire up the same set of daemon services (memory
+poller, retention scheduler, worker watchdog, steward, v0.2 subsystem,
+crash handler, PID file). `package.json`'s `start` script is also
+updated to `node … dist/cli.js daemon start` as belt-and-braces — even
+if someone later reverts the CLI unification, `npm start` keeps the
+right behaviour. `stavr start --stdio-only` retains its lighter
+semantics (no HTTP, no daemon wire-up) for the legitimate stdio-only
+use case.
