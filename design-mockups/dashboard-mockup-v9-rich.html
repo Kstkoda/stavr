@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>stavR · v9 rich — Topology fleet · Diagnostics flame · Inspector drawer</title>
+<style>
+:root{
+  --bg-deep:#04050a;--bg-glass:rgba(255,255,255,0.035);--bg-glass-2:rgba(255,255,255,0.06);
+  --bg-popover:rgba(14,16,22,0.92);--bg-drawer:rgba(10,12,18,0.82);
+  --border:rgba(255,255,255,0.07);--border-hi:rgba(255,255,255,0.16);
+  --text:#f1f3f6;--text-mute:#9aa3b2;--text-dim:#5c6675;
+  --rust:#B8542A;--rust-glow:rgba(184,84,42,0.4);
+  --sky:#5cc6ff;--green:#5eea9c;--amber:#fbbf24;--red:#ff7a7a;--purple:#b394ff;--orange:#fb923c;
+  --mono:ui-monospace,'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;
+  --sans:'Inter',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:radial-gradient(ellipse 1400px 900px at 50% 30%,rgba(184,84,42,0.06) 0%,transparent 60%),radial-gradient(ellipse 800px 600px at 90% 80%,rgba(92,198,255,0.04) 0%,transparent 60%),var(--bg-deep);color:var(--text);font-family:var(--sans);font-size:13px;font-weight:350;letter-spacing:0.01em;min-height:100vh}
+.glass{background:var(--bg-glass);backdrop-filter:blur(24px) saturate(140%);-webkit-backdrop-filter:blur(24px) saturate(140%);border:1px solid var(--border);border-radius:14px}
+
+/* === TOP RAIL (carry from v8) === */
+.rail-top{display:grid;grid-template-columns:240px 1fr 240px;align-items:center;height:56px;padding:8px 18px;margin:12px 12px 0;font-size:12px;position:sticky;top:12px;z-index:100;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:16px;font-weight:500}
+.brand .stav{color:var(--text)}
+.brand .rune{color:var(--rust);font-size:21px;filter:drop-shadow(0 0 8px var(--rust-glow));animation:pulse 4s ease-in-out infinite}
+@keyframes pulse{0%,100%{filter:drop-shadow(0 0 6px var(--rust-glow))}50%{filter:drop-shadow(0 0 14px var(--rust-glow))}}
+.brand .label{font-family:var(--sans);font-size:10px;color:var(--text-dim);letter-spacing:0.18em;text-transform:uppercase}
+.cmdk-hint{justify-self:center;display:inline-flex;align-items:center;gap:8px;padding:6px 14px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;color:var(--text-mute);font-size:12px;cursor:pointer}
+.cmdk-hint:hover{border-color:var(--border-hi);color:var(--text)}
+.cmdk-hint .kbd{padding:2px 6px;background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:4px;font-family:var(--mono);font-size:10px}
+.status-right{justify-self:end;display:flex;align-items:center;gap:10px;color:var(--text-mute);font-family:var(--mono);font-size:11px}
+.wd-pip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(94,234,156,0.08);border:1px solid rgba(94,234,156,0.25);border-radius:999px;color:var(--green);font-family:var(--mono);font-size:10px;letter-spacing:0.1em}
+.wd-pip::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green)}
+
+.nav-row{margin:8px 12px 0;display:flex;justify-content:center;gap:4px;padding:6px}
+.nav-row button{background:transparent;border:1px solid transparent;color:var(--text-mute);font-size:12px;padding:6px 14px;border-radius:8px;cursor:pointer;transition:all 0.2s}
+.nav-row button:hover{color:var(--text);background:rgba(255,255,255,0.04)}
+.nav-row button.active{color:var(--text);background:rgba(184,84,42,0.1);border-color:rgba(184,84,42,0.3)}
+
+.page{display:none;margin:12px;margin-right:432px}
+.page.active{display:block}
+.page-head{margin-bottom:16px;padding:16px 20px;display:flex;justify-content:space-between;align-items:baseline}
+.page-head h1{margin:0;font-size:22px;font-weight:400;letter-spacing:-0.02em}
+.page-head .sub{color:var(--text-mute);font-size:12px}
+.breadcrumb{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--text-mute)}
+.breadcrumb a{color:var(--text-mute);text-decoration:none;cursor:pointer}
+.breadcrumb a:hover{color:var(--text)}
+.breadcrumb .sep{color:var(--text-dim)}
+.breadcrumb .curr{color:var(--text)}
+
+/* ============================================================
+   TOPOLOGY · fleet view (cards) + zoom-in (radial)
+   ============================================================ */
+.fleet-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px}
+.machine-card{padding:16px 18px;cursor:pointer;transition:all 0.2s;position:relative}
+.machine-card:hover{background:rgba(255,255,255,0.06);border-color:var(--border-hi);transform:translateY(-2px)}
+.machine-card.primary{border:1px solid rgba(184,84,42,0.4)!important;background:linear-gradient(135deg,rgba(184,84,42,0.06),rgba(255,255,255,0.01))!important}
+.mc-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.mc-icon{width:36px;height:36px;border-radius:9px;background:rgba(184,84,42,0.18);color:var(--rust);display:grid;place-items:center;font-family:var(--mono);font-size:13px;font-weight:600;border:1px solid rgba(184,84,42,0.3)}
+.mc-icon.local{background:rgba(92,198,255,0.15);color:var(--sky);border-color:rgba(92,198,255,0.3)}
+.mc-icon.external{background:rgba(94,234,156,0.12);color:var(--green);border-color:rgba(94,234,156,0.3)}
+.mc-icon.federated{background:rgba(167,139,250,0.15);color:var(--purple);border-color:rgba(167,139,250,0.3)}
+.mc-name{font-size:14px;font-weight:500}
+.mc-sub{font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-top:1px}
+.mc-tag{margin-left:auto;font-size:9px;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-dim);padding:3px 7px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:4px}
+.mc-tag.you{color:var(--rust);border-color:rgba(184,84,42,0.3);background:rgba(184,84,42,0.06)}
+.mc-mini-radial{height:120px;display:grid;place-items:center;position:relative;margin-bottom:10px}
+.mc-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;font-family:var(--mono);font-size:10px;color:var(--text-mute)}
+.mc-stat{padding:6px 8px;background:rgba(0,0,0,0.2);border:1px solid var(--border);border-radius:6px;text-align:center}
+.mc-stat .v{color:var(--text);font-size:12px;margin-bottom:1px}
+.mc-stat .l{font-size:8px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim)}
+.mc-acl-line{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);font-size:10px;font-family:var(--mono);color:var(--text-mute)}
+.mc-acl-line .acl-grant{color:var(--green)}
+.mc-acl-line .acl-limited{color:var(--amber)}
+.mc-acl-line .acl-blocked{color:var(--red)}
+
+/* ACL legend */
+.acl-legend{display:flex;gap:12px;padding:10px 16px;margin-bottom:12px;font-size:11px;font-family:var(--mono);color:var(--text-mute)}
+.acl-legend .ll{display:inline-flex;align-items:center;gap:6px}
+.acl-legend .ll-dash{width:24px;height:2px;border-radius:1px}
+.acl-legend .ll-dash.full{background:var(--green)}
+.acl-legend .ll-dash.read{background:var(--amber)}
+.acl-legend .ll-dash.blocked{background:var(--red);background-image:repeating-linear-gradient(45deg,transparent 0 2px,rgba(0,0,0,0.4) 2px 4px)}
+
+/* === Single-machine zoomed view (radial v8) === */
+.topo-zoom{padding:20px;height:600px;position:relative;display:none}
+.topo-zoom.active{display:block}
+.topo-zoom-back{position:absolute;top:14px;left:18px;font-family:var(--mono);font-size:11px;color:var(--text-mute);cursor:pointer;display:inline-flex;align-items:center;gap:6px;z-index:10}
+.topo-zoom-back:hover{color:var(--text)}
+
+/* ============================================================
+   DIAGNOSTICS · service map + trace list + flame graph
+   ============================================================ */
+.diag-layout{display:grid;grid-template-rows:auto auto 1fr;gap:12px;height:calc(100vh - 200px)}
+
+.diag-top-strip{display:grid;grid-template-columns:1.4fr repeat(4,1fr);gap:10px}
+.svc-map{padding:14px 18px}
+.svc-map .smh{display:flex;justify-content:space-between;margin-bottom:10px;font-size:11px}
+.svc-map .smh-title{font-weight:450}
+.svc-map .smh-meta{color:var(--text-mute);font-family:var(--mono);font-size:10px}
+.svc-map svg{width:100%;height:90px}
+.diag-stat{padding:12px 14px}
+.diag-stat .lab{font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em}
+.diag-stat .val{font-family:var(--mono);font-size:22px;margin-top:4px}
+.diag-stat .sub{font-size:10px;color:var(--text-mute);margin-top:2px;font-family:var(--mono)}
+.diag-stat.warn .val{color:var(--amber)}
+.diag-stat.crit .val{color:var(--red)}
+
+/* Trace list */
+.trace-list-wrap{padding:0;overflow:hidden;display:flex;flex-direction:column;min-height:160px;max-height:240px}
+.trace-list-head{display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid var(--border)}
+.trace-list-head .tlh-title{font-weight:450;font-size:13px}
+.trace-list-head .tlh-meta{color:var(--text-mute);font-family:var(--mono);font-size:10px;margin-left:auto}
+.trace-list-head .live-toggle{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(94,234,156,0.08);border:1px solid rgba(94,234,156,0.25);border-radius:999px;color:var(--green);font-family:var(--mono);font-size:10px;cursor:pointer}
+.trace-list-head .live-toggle::before{content:'';width:5px;height:5px;background:var(--green);border-radius:50%;box-shadow:0 0 6px var(--green);animation:blink 1.5s infinite}
+.trace-list-head .filter-chip{padding:3px 8px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:4px;font-family:var(--mono);font-size:10px;color:var(--text-mute);cursor:pointer}
+.trace-list-head .filter-chip:hover{color:var(--text)}
+.trace-rows{overflow-y:auto;flex:1;font-family:var(--mono);font-size:11px}
+.trace-row{display:grid;grid-template-columns:90px 90px 100px 1fr 80px 70px 50px;gap:10px;padding:6px 18px;border-bottom:1px solid rgba(255,255,255,0.03);cursor:pointer;align-items:center}
+.trace-row:hover{background:rgba(255,255,255,0.04)}
+.trace-row.selected{background:rgba(184,84,42,0.08);border-left:2px solid var(--rust)}
+.trace-row .ts{color:var(--text-dim)}
+.trace-row .tr-id{color:var(--sky)}
+.trace-row .tr-worker{color:var(--purple)}
+.trace-row .tr-tool{color:var(--text)}
+.trace-row .tr-lat{color:var(--text-mute);text-align:right}
+.trace-row .tr-lat.slow{color:var(--amber);font-weight:600}
+.trace-row .tr-status{font-size:9px;text-align:center;padding:2px 5px;border-radius:3px}
+.trace-row .tr-status.ok{background:rgba(94,234,156,0.1);color:var(--green)}
+.trace-row .tr-status.err{background:rgba(255,122,122,0.12);color:var(--red)}
+.trace-row .tr-spans{color:var(--text-mute);text-align:right;font-size:10px}
+
+/* Flame graph + span tree */
+.flame-pane{display:grid;grid-template-columns:1fr 320px;gap:12px;min-height:280px}
+.flame-svg-wrap{padding:14px 18px;display:flex;flex-direction:column;overflow:hidden}
+.flame-svg-wrap .fh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.flame-svg-wrap .fh-title{font-weight:450;font-size:13px}
+.flame-svg-wrap .fh-title .tr-id{color:var(--sky);font-family:var(--mono);font-size:11px;margin-left:8px}
+.flame-svg-wrap .fh-meta{color:var(--text-mute);font-family:var(--mono);font-size:10px}
+.flame-area{flex:1;overflow:hidden;background:#06070a;border-radius:8px;padding:10px;min-height:200px}
+.flame-area svg{width:100%;height:100%;display:block}
+
+.span-attrs{padding:14px 16px;overflow-y:auto;max-height:380px}
+.span-attrs h4{margin:0 0 8px;font-size:12px;font-weight:500}
+.span-attrs h4 .smode{font-family:var(--mono);font-size:10px;color:var(--text-mute);font-weight:400;margin-left:6px}
+.attr-row{display:grid;grid-template-columns:120px 1fr;gap:8px;padding:5px 0;border-bottom:1px dashed var(--border);font-size:11px}
+.attr-row .ak{color:var(--text-mute);font-family:var(--mono);font-size:10px}
+.attr-row .av{font-family:var(--mono);font-size:11px;color:var(--text);word-break:break-all}
+.attr-row .av.code{background:rgba(0,0,0,0.3);padding:4px 6px;border-radius:4px}
+.bubbleup-list{margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}
+.bubbleup-list .bu-head{font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.15em;margin-bottom:6px}
+.bubble-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:11px;font-family:var(--mono);cursor:pointer}
+.bubble-row:hover{color:var(--text)}
+.bubble-row .bu-bar{flex:1;height:4px;background:rgba(255,255,255,0.04);border-radius:2px;overflow:hidden;margin:0 8px}
+.bubble-row .bu-fill{height:100%;background:linear-gradient(90deg,var(--amber),var(--red));border-radius:2px}
+.bubble-row .bu-val{color:var(--text-mute);min-width:40px;text-align:right;font-size:10px}
+
+/* ============================================================
+   INSPECTOR DRAWER · right-side, tabbed multi
+   ============================================================ */
+.inspector-drawer{
+  position:fixed;top:80px;right:12px;bottom:12px;width:420px;
+  background:var(--bg-drawer);backdrop-filter:blur(40px) saturate(140%);
+  border:1px solid var(--border-hi);border-radius:14px;
+  z-index:300;display:flex;flex-direction:column;
+  box-shadow:-12px 0 40px rgba(0,0,0,0.6);
+}
+.id-tabs{display:flex;gap:2px;padding:8px 8px 0;border-bottom:1px solid var(--border);overflow-x:auto}
+.id-tab{padding:8px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-bottom:none;border-radius:6px 6px 0 0;font-size:11px;color:var(--text-mute);cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-family:var(--mono)}
+.id-tab.active{background:rgba(184,84,42,0.1);color:var(--text);border-color:rgba(184,84,42,0.3);border-bottom-color:transparent}
+.id-tab .id-close{color:var(--text-dim);font-size:11px;width:14px;text-align:center;border-radius:3px}
+.id-tab .id-close:hover{background:rgba(255,122,122,0.15);color:var(--red)}
+.id-tab.add{background:transparent;border-style:dashed;color:var(--text-dim);cursor:pointer}
+.id-tab.add:hover{color:var(--text);border-color:var(--border-hi)}
+
+.id-pane{flex:1;overflow-y:auto;padding:16px 18px}
+.id-head{display:flex;align-items:center;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:14px}
+.id-icon{width:42px;height:42px;border-radius:10px;background:rgba(184,84,42,0.18);color:var(--rust);display:grid;place-items:center;font-family:var(--mono);font-size:14px;font-weight:600;border:1px solid rgba(184,84,42,0.3)}
+.id-icon.purple{background:rgba(167,139,250,0.15);color:var(--purple);border-color:rgba(167,139,250,0.3)}
+.id-icon.sky{background:rgba(92,198,255,0.15);color:var(--sky);border-color:rgba(92,198,255,0.3)}
+.id-title{font-size:14px;font-weight:500}
+.id-sub{font-size:11px;color:var(--text-mute);font-family:var(--mono);margin-top:2px}
+.id-status{margin-left:auto;font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:999px;letter-spacing:0.1em}
+.id-status.ok{background:rgba(94,234,156,0.1);color:var(--green);border:1px solid rgba(94,234,156,0.25)}
+.id-status.warn{background:rgba(251,191,36,0.1);color:var(--amber);border:1px solid rgba(251,191,36,0.25)}
+
+.id-section{margin-bottom:14px}
+.id-section .lab{font-size:9px;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-dim);margin-bottom:6px;display:flex;justify-content:space-between}
+.id-row{display:grid;grid-template-columns:1fr auto;gap:6px;font-size:11px;padding:5px 0;border-bottom:1px dashed var(--border)}
+.id-row .k{color:var(--text-mute)}
+.id-row .v{font-family:var(--mono);text-align:right}
+.id-row .v.ok{color:var(--green)}
+.id-row .v.warn{color:var(--amber)}
+.id-form{display:flex;flex-direction:column;gap:8px}
+.id-form > div{display:flex;flex-direction:column;gap:3px}
+.id-form label{font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em}
+.id-form select,.id-form input{background:rgba(0,0,0,0.4);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:6px;font-family:var(--mono);font-size:11px}
+.id-actions{display:flex;gap:6px;padding-top:14px;border-top:1px solid var(--border);margin-top:14px}
+.id-actions button{flex:1;padding:8px;background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:11px;cursor:pointer;font-family:var(--sans)}
+.id-actions .save{background:var(--rust);border-color:var(--rust);color:white;font-weight:500}
+.id-actions .danger{color:var(--red);border-color:rgba(255,122,122,0.3)}
+
+/* ============================================================
+   CMD-K palette overlay
+   ============================================================ */
+.cmdk-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);z-index:500;display:none}
+.cmdk-overlay.open{display:block}
+.cmdk-modal{position:fixed;top:120px;left:50%;transform:translateX(-50%);width:560px;background:var(--bg-popover);backdrop-filter:blur(40px);border:1px solid var(--border-hi);border-radius:14px;z-index:510;box-shadow:0 24px 64px rgba(0,0,0,0.7);overflow:hidden;display:none}
+.cmdk-modal.open{display:block}
+.cmdk-input{width:100%;background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--text);padding:16px 20px;font-family:var(--sans);font-size:14px;outline:none}
+.cmdk-input::placeholder{color:var(--text-dim)}
+.cmdk-list{max-height:400px;overflow-y:auto;padding:8px}
+.cmdk-section{font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.15em;padding:8px 12px 4px}
+.cmdk-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:12px}
+.cmdk-row:hover{background:rgba(184,84,42,0.1)}
+.cmdk-row .cm-icon{width:24px;height:24px;border-radius:5px;background:rgba(184,84,42,0.18);color:var(--rust);display:grid;place-items:center;font-size:11px;font-family:var(--mono);font-weight:600}
+.cmdk-row .cm-icon.purple{background:rgba(167,139,250,0.15);color:var(--purple)}
+.cmdk-row .cm-icon.sky{background:rgba(92,198,255,0.15);color:var(--sky)}
+.cmdk-row .cm-name{flex:1}
+.cmdk-row .cm-name .cm-sub{display:block;font-size:10px;color:var(--text-mute);margin-top:1px;font-family:var(--mono)}
+.cmdk-row .cm-kbd{font-family:var(--mono);font-size:9px;color:var(--text-dim);padding:2px 5px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:3px}
+
+/* nav row */
+.tab-btn-row{margin:8px 12px 0;display:flex;justify-content:center;gap:4px;padding:6px}
+.tab-btn-row button{background:transparent;border:1px solid transparent;color:var(--text-mute);font-size:12px;padding:6px 14px;border-radius:8px;cursor:pointer}
+.tab-btn-row button.active{color:var(--text);background:rgba(184,84,42,0.1);border-color:rgba(184,84,42,0.3)}
+</style>
+</head>
+<body>
+
+<!-- TOP RAIL -->
+<div class="rail-top glass">
+  <div class="brand"><span class="stav">stav</span><span class="rune">ᚱ</span><span class="label">v0.5 · Bal</span></div>
+  <div class="cmdk-hint" id="cmdk-open">
+    <span>Inspect anything…</span>
+    <span class="kbd">⌘K</span>
+  </div>
+  <div class="status-right">
+    <span class="wd-pip">WATCH OK</span>
+    <span>BALANCED</span>
+  </div>
+</div>
+
+<!-- NAV -->
+<div class="nav-row glass">
+  <button class="tab-btn-row-btn" data-page="topology">Topology</button>
+  <button class="tab-btn-row-btn active" data-page="diagnostics">Diagnostics</button>
+</div>
+
+<!-- ============================================================
+     TOPOLOGY · fleet view → zoom into single machine
+     ============================================================ -->
+<section class="page" id="page-topology">
+  <div class="page-head">
+    <div>
+      <h1>Topology</h1>
+      <div class="sub">Fleet view · your machines + paired peers. Click any card to zoom in. External nodes are ACL-scoped.</div>
+    </div>
+    <div class="breadcrumb">
+      <a id="bc-fleet">Fleet</a>
+      <span class="sep">›</span>
+      <span class="curr" id="bc-curr">all machines</span>
+    </div>
+  </div>
+
+  <div id="fleet-view">
+    <div class="acl-legend glass">
+      <span class="ll"><span class="ll-dash full"></span>full ACL grant</span>
+      <span class="ll"><span class="ll-dash read"></span>read-only</span>
+      <span class="ll"><span class="ll-dash blocked"></span>blocked / no ACL</span>
+      <span style="margin-left:auto;color:var(--text-dim);font-family:var(--mono);font-size:10px">5 machines · 1 federated peer (read-only)</span>
+    </div>
+
+    <div class="fleet-grid">
+      <!-- PRIMARY (you) -->
+      <div class="machine-card glass primary" data-zoom="primary">
+        <div class="mc-head">
+          <div class="mc-icon">ᚱ</div>
+          <div>
+            <div class="mc-name">primary · this PC</div>
+            <div class="mc-sub">Windows · stavR full daemon</div>
+          </div>
+          <span class="mc-tag you">YOU</span>
+        </div>
+        <div class="mc-mini-radial">
+          <svg viewBox="0 0 200 120" style="width:100%;height:100%">
+            <g stroke="rgba(255,255,255,0.06)" fill="none" stroke-dasharray="1 3">
+              <circle cx="100" cy="60" r="20"/><circle cx="100" cy="60" r="40"/><circle cx="100" cy="60" r="55"/>
+            </g>
+            <circle cx="100" cy="60" r="14" fill="url(#g-rust)"/>
+            <text x="100" y="64" text-anchor="middle" font-family="ui-monospace" font-size="13" fill="white">ᚱ</text>
+            <g fill="rgba(167,139,250,0.8)"><circle cx="70" cy="40" r="3"/><circle cx="130" cy="40" r="3"/><circle cx="60" cy="80" r="3"/><circle cx="140" cy="80" r="3"/></g>
+            <g fill="rgba(92,198,255,0.8)"><circle cx="40" cy="20" r="3"/><circle cx="160" cy="20" r="3"/><circle cx="170" cy="90" r="3"/></g>
+            <defs><radialGradient id="g-rust"><stop offset="0%" stop-color="#fcd6c4"/><stop offset="60%" stop-color="#B8542A"/><stop offset="100%" stop-color="#7a3618"/></radialGradient></defs>
+          </svg>
+        </div>
+        <div class="mc-stats">
+          <div class="mc-stat"><div class="v">5</div><div class="l">workers</div></div>
+          <div class="mc-stat"><div class="v">7</div><div class="l">bricks</div></div>
+          <div class="mc-stat"><div class="v">184/m</div><div class="l">calls</div></div>
+          <div class="mc-stat"><div class="v" style="color:var(--green)">●</div><div class="l">health</div></div>
+        </div>
+      </div>
+
+      <!-- LOCAL spawn node -->
+      <div class="machine-card glass" data-zoom="mac">
+        <div class="mc-head">
+          <div class="mc-icon local">M</div>
+          <div>
+            <div class="mc-name">mac · MLX</div>
+            <div class="mc-sub">stavr-spawn · 16 GB · M3 Max</div>
+          </div>
+          <span class="mc-tag">LOCAL</span>
+        </div>
+        <div class="mc-mini-radial">
+          <svg viewBox="0 0 200 120"><g fill="rgba(251,191,36,0.7)"><circle cx="100" cy="50" r="12"/><circle cx="100" cy="50" r="22" fill="none" stroke="rgba(251,191,36,0.4)" stroke-dasharray="2 3"/></g><text x="100" y="54" text-anchor="middle" font-family="ui-monospace" font-size="10" fill="#1a1a1a">L</text><circle cx="60" cy="80" r="3" fill="var(--amber)"/><circle cx="140" cy="80" r="3" fill="var(--amber)"/></svg>
+        </div>
+        <div class="mc-stats">
+          <div class="mc-stat"><div class="v">2</div><div class="l">workers</div></div>
+          <div class="mc-stat"><div class="v">Whisper</div><div class="l">+ LLaVA</div></div>
+          <div class="mc-stat"><div class="v">22/m</div><div class="l">calls</div></div>
+          <div class="mc-stat"><div class="v" style="color:var(--green)">●</div><div class="l">health</div></div>
+        </div>
+        <div class="mc-acl-line">
+          <span>cross-machine ACL</span>
+          <span class="acl-grant">● full</span>
+        </div>
+      </div>
+
+      <!-- LOCAL GPU box -->
+      <div class="machine-card glass" data-zoom="linux">
+        <div class="mc-head">
+          <div class="mc-icon local">G1</div>
+          <div>
+            <div class="mc-name">linux-gpu</div>
+            <div class="mc-sub">stavr-spawn · RTX 4090 · 64 GB</div>
+          </div>
+          <span class="mc-tag">LOCAL</span>
+        </div>
+        <div class="mc-mini-radial">
+          <svg viewBox="0 0 200 120"><circle cx="100" cy="50" r="14" fill="rgba(251,191,36,0.8)"/><text x="100" y="55" text-anchor="middle" font-family="ui-monospace" font-size="9" fill="#1a1a1a">70B</text><circle cx="100" cy="50" r="26" fill="none" stroke="rgba(251,191,36,0.3)" stroke-dasharray="2 3"/></svg>
+        </div>
+        <div class="mc-stats">
+          <div class="mc-stat"><div class="v">1</div><div class="l">workers</div></div>
+          <div class="mc-stat"><div class="v">DeepSeek</div><div class="l">70B-Q4</div></div>
+          <div class="mc-stat"><div class="v">8/m</div><div class="l">calls</div></div>
+          <div class="mc-stat"><div class="v" style="color:var(--green)">●</div><div class="l">health</div></div>
+        </div>
+        <div class="mc-acl-line">
+          <span>cross-machine ACL</span>
+          <span class="acl-grant">● full</span>
+        </div>
+      </div>
+
+      <!-- LOCAL Synology -->
+      <div class="machine-card glass" data-zoom="synology">
+        <div class="mc-head">
+          <div class="mc-icon local">S</div>
+          <div>
+            <div class="mc-name">synology</div>
+            <div class="mc-sub">stavr-spawn · NAS · NFS host</div>
+          </div>
+          <span class="mc-tag">LOCAL</span>
+        </div>
+        <div class="mc-mini-radial">
+          <svg viewBox="0 0 200 120"><rect x="86" y="40" width="28" height="22" rx="3" fill="rgba(155,155,155,0.4)"/><text x="100" y="55" text-anchor="middle" font-family="ui-monospace" font-size="8" fill="white">NFS</text><circle cx="100" cy="80" r="3" fill="var(--green)"/><circle cx="80" cy="80" r="3" fill="var(--green)"/><circle cx="120" cy="80" r="3" fill="var(--green)"/></svg>
+        </div>
+        <div class="mc-stats">
+          <div class="mc-stat"><div class="v">3</div><div class="l">workers</div></div>
+          <div class="mc-stat"><div class="v">BGE</div><div class="l">+ Phi3</div></div>
+          <div class="mc-stat"><div class="v">42/m</div><div class="l">embed</div></div>
+          <div class="mc-stat"><div class="v" style="color:var(--green)">●</div><div class="l">health</div></div>
+        </div>
+        <div class="mc-acl-line">
+          <span>cross-machine ACL</span>
+          <span class="acl-grant">● full</span>
+        </div>
+      </div>
+
+      <!-- LOCAL gaming pc 2 -->
+      <div class="machine-card glass" data-zoom="gaming2">
+        <div class="mc-head">
+          <div class="mc-icon local">G2</div>
+          <div>
+            <div class="mc-name">gaming-pc-2</div>
+            <div class="mc-sub">stavr-spawn · 3080 · 32 GB</div>
+          </div>
+          <span class="mc-tag">LOCAL</span>
+        </div>
+        <div class="mc-mini-radial">
+          <svg viewBox="0 0 200 120"><circle cx="100" cy="50" r="12" fill="rgba(251,191,36,0.7)"/><text x="100" y="54" text-anchor="middle" font-family="ui-monospace" font-size="9" fill="#1a1a1a">8B</text><circle cx="100" cy="50" r="22" fill="none" stroke="rgba(251,191,36,0.3)" stroke-dasharray="2 3"/></svg>
+        </div>
+        <div class="mc-stats">
+          <div class="mc-stat"><div class="v">1</div><div class="l">workers</div></div>
+          <div class="mc-stat"><div class="v">Qwen 8B</div><div class="l">Q5</div></div>
+          <div class="mc-stat"><div class="v">14/m</div><div class="l">calls</div></div>
+          <div class="mc-stat"><div class="v" style="color:var(--green)">●</div><div class="l">health</div></div>
+        </div>
+        <div class="mc-acl-line">
+          <span>cross-machine ACL</span>
+          <span class="acl-grant">● full</span>
+        </div>
+      </div>
+
+      <!-- FEDERATED PEER (external, ACL-limited) -->
+      <div class="machine-card glass" data-zoom="colleague">
+        <div class="mc-head">
+          <div class="mc-icon federated">ᚱ</div>
+          <div>
+            <div class="mc-name">alex@home.lan</div>
+            <div class="mc-sub">federated primary · paired 3d ago</div>
+          </div>
+          <span class="mc-tag" style="color:var(--purple);border-color:rgba(167,139,250,0.3);background:rgba(167,139,250,0.06)">FEDERATED</span>
+        </div>
+        <div class="mc-mini-radial">
+          <svg viewBox="0 0 200 120">
+            <g stroke="rgba(255,255,255,0.06)" fill="none" stroke-dasharray="1 3"><circle cx="100" cy="60" r="20"/></g>
+            <circle cx="100" cy="60" r="14" fill="url(#g-rust2)" opacity="0.6"/>
+            <text x="100" y="64" text-anchor="middle" font-family="ui-monospace" font-size="13" fill="white" opacity="0.7">ᚱ</text>
+            <!-- Ghosted silhouettes for ACL-blocked bits -->
+            <g opacity="0.25"><circle cx="60" cy="80" r="3" fill="white"/><circle cx="140" cy="80" r="3" fill="white"/></g>
+            <text x="100" y="105" text-anchor="middle" font-family="ui-monospace" font-size="8" fill="var(--text-dim)">🔒 internal hidden</text>
+            <defs><radialGradient id="g-rust2"><stop offset="0%" stop-color="#fcd6c4"/><stop offset="100%" stop-color="#7a3618"/></radialGradient></defs>
+          </svg>
+        </div>
+        <div class="mc-stats">
+          <div class="mc-stat"><div class="v">3</div><div class="l">workers*</div></div>
+          <div class="mc-stat"><div class="v">—</div><div class="l">bricks</div></div>
+          <div class="mc-stat"><div class="v">—</div><div class="l">calls</div></div>
+          <div class="mc-stat"><div class="v" style="color:var(--green)">●</div><div class="l">health</div></div>
+        </div>
+        <div class="mc-acl-line">
+          <span>cross-machine ACL</span>
+          <span class="acl-limited">⚠ read-only · workers count only</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ZOOM VIEW (hidden by default) -->
+  <div class="topo-zoom glass" id="topo-zoom">
+    <span class="topo-zoom-back" id="zoom-back">‹ back to fleet</span>
+    <div style="text-align:center;padding-top:40px;color:var(--text-mute)">
+      <div style="font-size:14px;margin-bottom:8px">Single-machine radial view here</div>
+      <div style="font-size:11px;font-family:var(--mono)">(daemon center · inner: own bits · middle: workers · outer: external systems)</div>
+      <div style="font-size:11px;font-family:var(--mono);margin-top:8px;color:var(--text-dim)">— same as v8 mockup topology page, scoped to selected machine</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     DIAGNOSTICS · service map · trace list · flame graph
+     ============================================================ -->
+<section class="page active" id="page-diagnostics">
+  <div class="page-head">
+    <div>
+      <h1>Diagnostics</h1>
+      <div class="sub">L1 · MCP traffic + traces + spans + flame graphs · 2026 OTel-native</div>
+    </div>
+    <div class="breadcrumb">
+      <a>fleet</a><span class="sep">›</span><a>primary</a><span class="sep">›</span><span class="curr">L1 diagnostics</span>
+    </div>
+  </div>
+
+  <div class="diag-layout">
+
+    <!-- Top strip: service map + 4 KPIs -->
+    <div class="diag-top-strip">
+      <div class="svc-map glass">
+        <div class="smh">
+          <span class="smh-title">Service map · last 5min</span>
+          <span class="smh-meta">width = call rate · color = error rate</span>
+        </div>
+        <svg viewBox="0 0 600 80">
+          <!-- Workers (left) -->
+          <g font-family="ui-monospace" font-size="9" fill="var(--text-mute)">
+            <circle cx="40" cy="20" r="8" fill="rgba(167,139,250,0.4)"/><text x="55" y="23">cc-resolver</text>
+            <circle cx="40" cy="42" r="6" fill="rgba(167,139,250,0.4)"/><text x="55" y="45">pt-b007</text>
+            <circle cx="40" cy="62" r="5" fill="rgba(167,139,250,0.4)"/><text x="55" y="65">unity</text>
+          </g>
+          <!-- Tools (right) -->
+          <g font-family="ui-monospace" font-size="9" fill="var(--text-mute)">
+            <circle cx="560" cy="14" r="6" fill="rgba(92,198,255,0.4)"/><text x="500" y="17" text-anchor="end">github_mcp</text>
+            <circle cx="560" cy="32" r="5" fill="rgba(92,198,255,0.4)"/><text x="500" y="35" text-anchor="end">workspace.bash</text>
+            <circle cx="560" cy="50" r="4" fill="rgba(92,198,255,0.4)"/><text x="500" y="53" text-anchor="end">read_file</text>
+            <circle cx="560" cy="68" r="6" fill="rgba(255,122,122,0.6)"/><text x="500" y="71" text-anchor="end" fill="var(--red)">webhook</text>
+          </g>
+          <!-- Flow ribbons -->
+          <g fill="none" stroke-linecap="round">
+            <path d="M48 20 Q 300 16 552 14" stroke="rgba(94,234,156,0.5)" stroke-width="3"/>
+            <path d="M48 20 Q 300 26 555 32" stroke="rgba(94,234,156,0.4)" stroke-width="2"/>
+            <path d="M48 42 Q 300 46 556 50" stroke="rgba(94,234,156,0.4)" stroke-width="2"/>
+            <path d="M48 42 Q 300 38 555 32" stroke="rgba(94,234,156,0.5)" stroke-width="2.5"/>
+            <path d="M48 62 Q 300 64 555 32" stroke="rgba(94,234,156,0.3)" stroke-width="1.5"/>
+            <path d="M48 62 Q 300 66 554 68" stroke="rgba(255,122,122,0.6)" stroke-width="2"/>
+          </g>
+        </svg>
+      </div>
+      <div class="diag-stat glass"><div class="lab">Throughput</div><div class="val">184/m</div><div class="sub">peak 312 @ 14:32</div></div>
+      <div class="diag-stat glass"><div class="lab">p99 latency</div><div class="val">412ms</div><div class="sub">p50: 38 · p95: 247</div></div>
+      <div class="diag-stat glass warn"><div class="lab">Error rate</div><div class="val">2.1%</div><div class="sub">12 / last hour</div></div>
+      <div class="diag-stat glass crit"><div class="lab">Stuck</div><div class="val">3</div><div class="sub">oldest 14m</div></div>
+    </div>
+
+    <!-- Trace list -->
+    <div class="trace-list-wrap glass">
+      <div class="trace-list-head">
+        <span class="tlh-title">Traces · last 1h</span>
+        <span class="filter-chip">tool: webhook.callback ✕</span>
+        <span class="filter-chip">status: err ✕</span>
+        <span class="tlh-meta">filtered to 3 of 412 traces · sorted by latency</span>
+        <span class="live-toggle">LIVE</span>
+      </div>
+      <div class="trace-rows">
+        <div class="trace-row selected">
+          <span class="ts">15:42:17.244</span>
+          <span class="tr-id">cr-9f3e</span>
+          <span class="tr-worker">cc-stuck-002</span>
+          <span class="tr-tool">webhook.callback (timeout)</span>
+          <span class="tr-lat slow">30s+</span>
+          <span class="tr-status err">err</span>
+          <span class="tr-spans">12 spans</span>
+        </div>
+        <div class="trace-row">
+          <span class="ts">15:39:42.998</span>
+          <span class="tr-id">cr-7f2a</span>
+          <span class="tr-worker">cc-stuck-002</span>
+          <span class="tr-tool">webhook.callback (timeout)</span>
+          <span class="tr-lat slow">30s+</span>
+          <span class="tr-status err">err</span>
+          <span class="tr-spans">8 spans</span>
+        </div>
+        <div class="trace-row">
+          <span class="ts">14:48:11.412</span>
+          <span class="tr-id">cr-5d18</span>
+          <span class="tr-worker">cc-prev</span>
+          <span class="tr-tool">webhook.callback</span>
+          <span class="tr-lat slow">412ms</span>
+          <span class="tr-status err">err</span>
+          <span class="tr-spans">4 spans</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Flame graph + span tree + span detail -->
+    <div class="flame-pane">
+      <div class="flame-svg-wrap glass">
+        <div class="fh">
+          <span class="fh-title">Flame graph<span class="tr-id">cr-9f3e</span></span>
+          <span class="fh-meta">12 spans · 30,247ms · 1 error</span>
+        </div>
+        <div class="flame-area">
+          <svg viewBox="0 0 600 200" preserveAspectRatio="none">
+            <!-- Root span (full width) -->
+            <g><rect x="0" y="0" width="600" height="22" fill="rgba(167,139,250,0.4)" stroke="rgba(167,139,250,0.6)" stroke-width="1"/><text x="8" y="15" font-family="ui-monospace" font-size="10" fill="white">invoke_agent · cc-stuck-002 · 30,247ms</text></g>
+            <!-- Level 2 -->
+            <g><rect x="2" y="24" width="80" height="22" fill="rgba(94,234,156,0.4)" stroke="rgba(94,234,156,0.6)"/><text x="8" y="39" font-family="ui-monospace" font-size="9" fill="white">setup · 142ms</text></g>
+            <g><rect x="84" y="24" width="60" height="22" fill="rgba(94,234,156,0.4)" stroke="rgba(94,234,156,0.6)"/><text x="90" y="39" font-family="ui-monospace" font-size="9" fill="white">scope · 38ms</text></g>
+            <g><rect x="146" y="24" width="450" height="22" fill="rgba(255,122,122,0.5)" stroke="rgba(255,122,122,0.7)"/><text x="152" y="39" font-family="ui-monospace" font-size="9" fill="white">execute_tool · webhook.callback · 30,067ms ⚡ TIMEOUT</text></g>
+            <!-- Level 3 children of execute_tool -->
+            <g><rect x="148" y="48" width="40" height="22" fill="rgba(92,198,255,0.4)" stroke="rgba(92,198,255,0.6)"/><text x="154" y="63" font-family="ui-monospace" font-size="9" fill="white">open</text></g>
+            <g><rect x="190" y="48" width="40" height="22" fill="rgba(92,198,255,0.4)" stroke="rgba(92,198,255,0.6)"/><text x="196" y="63" font-family="ui-monospace" font-size="9" fill="white">browser</text></g>
+            <g><rect x="232" y="48" width="362" height="22" fill="rgba(255,122,122,0.6)" stroke="rgba(255,122,122,0.8)"/><text x="238" y="63" font-family="ui-monospace" font-size="9" fill="white">awaiting OAuth redirect · stalled 30,000ms ⚡</text></g>
+            <!-- Selected span indicator -->
+            <rect x="146" y="22" width="450" height="26" fill="none" stroke="var(--rust)" stroke-width="2" stroke-dasharray="3 3"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="span-attrs glass">
+        <h4>Span detail<span class="smode">selected</span></h4>
+        <div class="id-row"><span class="k">name</span><span class="v">execute_tool</span></div>
+        <div class="id-row"><span class="k">tool</span><span class="v">webhook.callback</span></div>
+        <div class="id-row"><span class="k">duration</span><span class="v warn">30,067ms</span></div>
+        <div class="id-row"><span class="k">status</span><span class="v" style="color:var(--red)">ERROR · timeout</span></div>
+        <div class="id-row"><span class="k">worker</span><span class="v">cc-stuck-002</span></div>
+        <div class="id-row"><span class="k">correlation</span><span class="v" style="color:var(--sky)">cr-9f3e</span></div>
+        <div class="id-row"><span class="k">scope</span><span class="v">ts-c7e1</span></div>
+
+        <div class="id-section" style="margin-top:14px">
+          <div class="lab">Args</div>
+          <div class="attr-row"><span class="av code">{ "url": "https://api.example.com/oauth/callback", "wait_for": "redirect" }</span></div>
+        </div>
+
+        <div class="bubbleup-list">
+          <div class="bu-head">⚡ BubbleUp · anomalous in this trace</div>
+          <div class="bubble-row">
+            <span style="color:var(--red)">timeout=true</span>
+            <div class="bu-bar"><div class="bu-fill" style="width:87%"></div></div>
+            <span class="bu-val">87%</span>
+          </div>
+          <div class="bubble-row">
+            <span style="color:var(--amber)">retry_count=0</span>
+            <div class="bu-bar"><div class="bu-fill" style="width:62%"></div></div>
+            <span class="bu-val">62%</span>
+          </div>
+          <div class="bubble-row">
+            <span style="color:var(--amber)">auth.token.expired=true</span>
+            <div class="bu-bar"><div class="bu-fill" style="width:54%"></div></div>
+            <span class="bu-val">54%</span>
+          </div>
+        </div>
+
+        <div class="bubbleup-list">
+          <div class="bu-head">Similar past failures</div>
+          <div class="bubble-row" style="color:var(--text-mute)">
+            <span>cr-7f2a · 3 min ago</span>
+            <span class="bu-val" style="color:var(--red)">err</span>
+          </div>
+          <div class="bubble-row" style="color:var(--text-mute)">
+            <span>cr-5d18 · 54 min ago</span>
+            <span class="bu-val" style="color:var(--red)">err</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     RIGHT INSPECTOR DRAWER · tabbed
+     ============================================================ -->
+<aside class="inspector-drawer">
+  <div class="id-tabs">
+    <div class="id-tab active">cc-stuck-002 <span class="id-close">✕</span></div>
+    <div class="id-tab">trace cr-9f3e <span class="id-close">✕</span></div>
+    <div class="id-tab">webhook brick <span class="id-close">✕</span></div>
+    <div class="id-tab add">+ ⌘K</div>
+  </div>
+
+  <div class="id-pane">
+    <div class="id-head">
+      <div class="id-icon">CC4</div>
+      <div>
+        <div class="id-title">cc-stuck-002</div>
+        <div class="id-sub">L2 worker · sonnet 4.6 · PID 31215</div>
+      </div>
+      <span class="id-status warn">STALLED</span>
+    </div>
+
+    <div class="id-section">
+      <div class="lab">Live</div>
+      <div class="id-row"><span class="k">Last activity</span><span class="v warn">2m ago</span></div>
+      <div class="id-row"><span class="k">Stuck on</span><span class="v">webhook.callback</span></div>
+      <div class="id-row"><span class="k">Cost</span><span class="v">$0.05 / $2.00</span></div>
+      <div class="id-row"><span class="k">Tool/sec</span><span class="v">0.0</span></div>
+      <div class="id-row"><span class="k">Stream</span><span class="v" style="color:var(--sky)">ws://127.0.0.1:7821</span></div>
+      <div class="id-row"><span class="k">Trace</span><span class="v" style="color:var(--sky)">cr-9f3e</span></div>
+    </div>
+
+    <div class="id-section">
+      <div class="lab">Configuration</div>
+      <div class="id-form">
+        <div><label>Auth method</label><select><option>OAuth · Max</option><option>API key</option></select></div>
+        <div><label>Login as</label><input value="stenlund@gmail.com"/></div>
+        <div><label>Trust scope</label><select><option>ts-c7e1 · 3/10 · 12m left</option></select></div>
+        <div><label>Model</label><select><option>sonnet 4.6 (current)</option></select></div>
+        <div><label>Budget cap</label><input value="$2.00"/></div>
+        <div><label>Workspace</label><input value="C:\dev\cowire\worktrees\cc-stuck-002"/></div>
+      </div>
+    </div>
+
+    <div class="id-section">
+      <div class="lab">Suggested action <span style="color:var(--amber)">→</span></div>
+      <div style="font-size:11px;color:var(--text-mute);line-height:1.5">Webhook brick's OAuth expired. Open browser to re-auth, or kill this worker and let next dispatch retry with fresh scope.</div>
+    </div>
+
+    <div class="id-actions">
+      <button class="save">Re-auth webhook</button>
+      <button>Tail stream</button>
+      <button class="danger">Kill worker</button>
+    </div>
+  </div>
+</aside>
+
+<!-- ============================================================
+     CMD-K palette
+     ============================================================ -->
+<div class="cmdk-overlay" id="cmdk-overlay"></div>
+<div class="cmdk-modal" id="cmdk-modal">
+  <input class="cmdk-input" placeholder="Inspect anything — worker name, trace id, scope, system, BOM, file…" />
+  <div class="cmdk-list">
+    <div class="cmdk-section">Workers</div>
+    <div class="cmdk-row"><div class="cm-icon purple">CR</div><div class="cm-name">cascade-resolver<span class="cm-sub">L2 · sonnet · running</span></div><span class="cm-kbd">↵</span></div>
+    <div class="cmdk-row"><div class="cm-icon purple">B7</div><div class="cm-name">pt-b007<span class="cm-sub">L2 · sonnet · running</span></div><span class="cm-kbd">↵</span></div>
+
+    <div class="cmdk-section">Traces (recent)</div>
+    <div class="cmdk-row"><div class="cm-icon sky">cr</div><div class="cm-name">cr-9f3e<span class="cm-sub">webhook.callback timeout · 30s · err</span></div><span class="cm-kbd">↵</span></div>
+    <div class="cmdk-row"><div class="cm-icon sky">cr</div><div class="cm-name">cr-7f2a<span class="cm-sub">webhook.callback timeout · 30s · err</span></div><span class="cm-kbd">↵</span></div>
+
+    <div class="cmdk-section">Systems</div>
+    <div class="cmdk-row"><div class="cm-icon">⚡</div><div class="cm-name">webhook brick<span class="cm-sub">connector · auth lost 8m ago</span></div><span class="cm-kbd">↵</span></div>
+    <div class="cmdk-row"><div class="cm-icon">GH</div><div class="cm-name">GitHub MCP<span class="cm-sub">847 calls today · healthy</span></div><span class="cm-kbd">↵</span></div>
+
+    <div class="cmdk-section">Machines</div>
+    <div class="cmdk-row"><div class="cm-icon">M</div><div class="cm-name">mac · MLX<span class="cm-sub">stavr-spawn · 16 GB · M3 Max</span></div><span class="cm-kbd">↵</span></div>
+    <div class="cmdk-row"><div class="cm-icon">G1</div><div class="cm-name">linux-gpu<span class="cm-sub">stavr-spawn · RTX 4090 · 64 GB</span></div><span class="cm-kbd">↵</span></div>
+  </div>
+</div>
+
+<script>
+// nav
+document.querySelectorAll('.tab-btn-row-btn').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tab-btn-row-btn').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  b.classList.add('active');
+  document.getElementById('page-' + b.dataset.page).classList.add('active');
+}));
+
+// topology zoom
+document.querySelectorAll('[data-zoom]').forEach(c => c.addEventListener('click', () => {
+  document.getElementById('fleet-view').style.display = 'none';
+  document.getElementById('topo-zoom').classList.add('active');
+  document.getElementById('bc-curr').textContent = c.querySelector('.mc-name').textContent;
+}));
+document.getElementById('zoom-back')?.addEventListener('click', () => {
+  document.getElementById('fleet-view').style.display = 'block';
+  document.getElementById('topo-zoom').classList.remove('active');
+  document.getElementById('bc-curr').textContent = 'all machines';
+});
+
+// cmd-k
+function openCmdK(){
+  document.getElementById('cmdk-overlay').classList.add('open');
+  document.getElementById('cmdk-modal').classList.add('open');
+  setTimeout(() => document.querySelector('.cmdk-input')?.focus(), 50);
+}
+function closeCmdK(){
+  document.getElementById('cmdk-overlay').classList.remove('open');
+  document.getElementById('cmdk-modal').classList.remove('open');
+}
+document.getElementById('cmdk-open').addEventListener('click', openCmdK);
+document.getElementById('cmdk-overlay').addEventListener('click', closeCmdK);
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openCmdK(); }
+  if (e.key === 'Escape') closeCmdK();
+});
+
+// inspector tab close
+document.querySelectorAll('.id-close').forEach(x => x.addEventListener('click', e => {
+  e.stopPropagation();
+  e.target.closest('.id-tab').remove();
+}));
+</script>
+</body>
+</html>

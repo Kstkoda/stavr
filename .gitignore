@@ -38,3 +38,9 @@ tmp/heap-snapshots/*
 !tmp/heap-snapshots/.gitkeep
 tmp/diag-reports/*
 !tmp/diag-reports/.gitkeep
+
+# Repo-root heap snapshots (Node --heapsnapshot-near-heap-limit drops them here)
+*.heapsnapshot
+
+# Session-local design notes
+.work/

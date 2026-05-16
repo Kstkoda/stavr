@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>stavR · Diagnostics v1 — stream river + steward signals + debug-aware + export + fleet</title>
+<style>
+:root{
+  --bg-deep:#04050a;--bg-glass:rgba(255,255,255,0.035);--bg-glass-2:rgba(255,255,255,0.06);
+  --bg-popover:rgba(14,16,22,0.92);--bg-drawer:rgba(10,12,18,0.82);
+  --border:rgba(255,255,255,0.07);--border-hi:rgba(255,255,255,0.16);
+  --text:#f1f3f6;--text-mute:#9aa3b2;--text-dim:#5c6675;
+  --rust:#B8542A;--rust-glow:rgba(184,84,42,0.4);
+  --sky:#5cc6ff;--green:#5eea9c;--amber:#fbbf24;--red:#ff7a7a;--purple:#b394ff;--orange:#fb923c;
+  --mono:ui-monospace,'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;
+  --sans:'Inter',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:radial-gradient(ellipse 1600px 1000px at 50% 40%,rgba(184,84,42,0.08) 0%,transparent 60%),radial-gradient(ellipse 900px 700px at 88% 70%,rgba(92,198,255,0.05) 0%,transparent 60%),radial-gradient(ellipse 700px 500px at 12% 75%,rgba(167,139,250,0.04) 0%,transparent 60%),var(--bg-deep);color:var(--text);font-family:var(--sans);font-size:13px;font-weight:350;letter-spacing:0.01em;min-height:100vh;overflow:hidden}
+.glass{background:var(--bg-glass);backdrop-filter:blur(24px) saturate(140%);-webkit-backdrop-filter:blur(24px) saturate(140%);border:1px solid var(--border);border-radius:14px}
+.glass-soft{background:rgba(255,255,255,0.02);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.04);border-radius:12px}
+
+/* ============================================================
+   TOP RAIL · brand · fleet selector · debug toggle · health pulse
+   ============================================================ */
+.rail-top{display:grid;grid-template-columns:240px 1fr auto;align-items:center;height:60px;padding:0 22px;font-size:12px;gap:20px;position:relative;z-index:30}
+.brand{display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:17px;font-weight:500}
+.brand .rune{color:var(--rust);font-size:22px;filter:drop-shadow(0 0 10px var(--rust-glow));animation:pulse 4s ease-in-out infinite}
+@keyframes pulse{0%,100%{filter:drop-shadow(0 0 8px var(--rust-glow))}50%{filter:drop-shadow(0 0 18px var(--rust-glow))}}
+.brand .label{font-family:var(--sans);font-size:10px;color:var(--text-dim);letter-spacing:0.2em;text-transform:uppercase}
+
+.fleet-scope{display:flex;align-items:center;gap:10px;justify-self:start}
+.fleet-pill{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;background:rgba(184,84,42,0.08);border:1px solid rgba(184,84,42,0.25);border-radius:999px;cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--text)}
+.fleet-pill:hover{background:rgba(184,84,42,0.14)}
+.fleet-pill .scope-dot{width:7px;height:7px;border-radius:50%;background:var(--rust);box-shadow:0 0 6px var(--rust-glow)}
+.fleet-pill .caret{opacity:0.5;margin-left:2px}
+.fleet-divider{font-family:var(--mono);font-size:11px;color:var(--text-dim)}
+.fleet-segs{display:flex;gap:4px;font-family:var(--mono);font-size:10px}
+.fleet-seg{padding:5px 11px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:6px;color:var(--text-mute);cursor:pointer}
+.fleet-seg.active{background:rgba(255,255,255,0.07);color:var(--text);border-color:var(--border-hi)}
+
+.top-right{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:11px;color:var(--text-mute)}
+.debug-toggle{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:0.1em}
+.debug-toggle.on{background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.3);color:var(--amber)}
+.debug-toggle.on::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber);animation:blink 1.2s infinite}
+.debug-toggle.off{background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text-mute)}
+.debug-toggle.off::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--text-dim)}
+@keyframes blink{50%{opacity:0.4}}
+.health-bead{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(94,234,156,0.08);border:1px solid rgba(94,234,156,0.25);border-radius:999px;color:var(--green);font-family:var(--mono);font-size:10px;letter-spacing:0.1em}
+.health-bead .bpulse{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:bpulse 1.2s ease-in-out infinite}
+@keyframes bpulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.3);opacity:0.7}}
+
+/* ============================================================
+   MAIN LAYOUT · grid: left signals · center stream · right captures + export
+   ============================================================ */
+.main{display:grid;grid-template-columns:280px 1fr 320px;gap:14px;padding:14px 14px 0;height:calc(100vh - 60px);overflow:hidden}
+
+/* ============================================================
+   LEFT RAIL · Steward signals (the 7 things)
+   ============================================================ */
+.signals-rail{display:flex;flex-direction:column;gap:10px;overflow-y:auto;padding-right:2px}
+.signal-card{padding:14px 16px;display:flex;flex-direction:column;gap:6px;position:relative;overflow:hidden}
+.signal-card::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:linear-gradient(180deg,transparent,currentColor,transparent);opacity:0.4}
+.signal-card.health{color:var(--green)}
+.signal-card.resource{color:var(--sky)}
+.signal-card.latency{color:var(--amber)}
+.signal-card.errors{color:var(--red)}
+.signal-card.stuck{color:var(--red)}
+.signal-card.backlog{color:var(--purple)}
+.signal-card.learn{color:var(--orange)}
+.signal-head{display:flex;align-items:center;justify-content:space-between}
+.signal-name{font-size:10px;text-transform:uppercase;letter-spacing:0.18em;color:var(--text-mute);font-family:var(--mono)}
+.signal-state{font-size:9px;text-transform:uppercase;letter-spacing:0.15em;padding:2px 6px;border-radius:3px;background:rgba(0,0,0,0.3);color:currentColor}
+.signal-primary{font-family:var(--mono);font-size:16px;color:var(--text);font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
+.signal-sub{font-size:10px;color:var(--text-mute);font-family:var(--mono);line-height:1.4}
+.signal-sparkbar{height:18px;display:flex;align-items:flex-end;gap:1px;margin-top:2px}
+.signal-sparkbar .b{flex:1;background:currentColor;opacity:0.6;border-radius:1px 1px 0 0;min-height:2px}
+
+.signals-head{font-size:9px;text-transform:uppercase;letter-spacing:0.2em;color:var(--text-dim);font-family:var(--mono);padding:4px 4px 6px}
+
+/* ============================================================
+   CENTER · STREAM RIVER (the main visualization)
+   ============================================================ */
+.stream-stage{position:relative;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+.stream-toolbar{display:flex;align-items:center;justify-content:space-between;padding:10px 18px;font-family:var(--mono);font-size:11px}
+.stream-title{font-weight:500;color:var(--text);letter-spacing:-0.01em}
+.stream-controls{display:flex;align-items:center;gap:8px}
+.stream-controls .ctrl{padding:4px 10px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:5px;color:var(--text-mute);font-size:10px;cursor:pointer;letter-spacing:0.1em;display:inline-flex;align-items:center;gap:5px}
+.stream-controls .ctrl.active{background:rgba(184,84,42,0.12);color:var(--rust);border-color:rgba(184,84,42,0.3)}
+.stream-controls .ctrl:hover{color:var(--text)}
+.stream-controls .ctrl .spd{font-size:9px;opacity:0.6}
+
+.river{flex:1;position:relative;overflow:hidden;background:linear-gradient(180deg,rgba(184,84,42,0.02) 0%,transparent 30%,transparent 70%,rgba(92,198,255,0.02) 100%)}
+
+/* Time axis labels at bottom of river */
+.river-axis{position:absolute;bottom:6px;left:18px;right:18px;display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--text-dim);pointer-events:none;z-index:5}
+.river-now-line{position:absolute;right:18px;top:0;bottom:24px;width:1px;background:linear-gradient(180deg,var(--rust),transparent);z-index:4}
+.river-now-line::before{content:'NOW';position:absolute;top:-2px;right:6px;font-family:var(--mono);font-size:9px;color:var(--rust);letter-spacing:0.1em}
+
+/* Each "lane" is a horizontal track per worker */
+.lane{position:absolute;left:0;right:0;height:28px;display:flex;align-items:center}
+.lane-label{position:absolute;left:18px;font-family:var(--mono);font-size:9px;color:var(--text-mute);background:rgba(4,5,10,0.6);padding:2px 6px;border-radius:3px;z-index:3}
+
+/* Trace capsules flow right-to-left */
+.capsule{position:absolute;height:18px;border-radius:9px;display:flex;align-items:center;padding:0 8px;font-family:var(--mono);font-size:9px;cursor:pointer;backdrop-filter:blur(4px);border:1px solid;transition:transform 0.15s;letter-spacing:0.02em}
+.capsule:hover{transform:translateY(-2px) scale(1.05);z-index:10}
+.capsule.ok{background:rgba(94,234,156,0.12);border-color:rgba(94,234,156,0.35);color:var(--green)}
+.capsule.slow{background:rgba(251,191,36,0.14);border-color:rgba(251,191,36,0.4);color:var(--amber)}
+.capsule.err{background:rgba(255,122,122,0.16);border-color:rgba(255,122,122,0.45);color:var(--red);box-shadow:0 0 12px rgba(255,122,122,0.3)}
+.capsule.mcp{background:rgba(167,139,250,0.12);border-color:rgba(167,139,250,0.35);color:var(--purple)}
+
+/* Animated flow */
+@keyframes flowL{from{transform:translateX(0)}to{transform:translateX(-100vw)}}
+
+/* Connection lines between correlated traces */
+.corr-link{position:absolute;height:1px;background:linear-gradient(90deg,transparent,rgba(184,84,42,0.5),transparent);pointer-events:none;z-index:2}
+
+/* ============================================================
+   RIGHT RAIL · Captures (when debug ON) + Export
+   ============================================================ */
+.right-rail{display:flex;flex-direction:column;gap:10px;overflow-y:auto;padding-left:2px}
+
+.captures-panel{padding:14px 16px}
+.cp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.cp-title{font-size:11px;font-weight:500;letter-spacing:0.05em}
+.cp-title.lit{color:var(--amber)}
+.cp-title.lit::before{content:'⚡ ';color:var(--amber)}
+.cp-status{font-family:var(--mono);font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-dim)}
+.cp-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:12px}
+.cp-actions button{padding:7px 6px;background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:10px;cursor:pointer;font-family:var(--mono);letter-spacing:0.05em}
+.cp-actions button:hover{background:rgba(251,191,36,0.1);border-color:rgba(251,191,36,0.3);color:var(--amber)}
+.cp-actions button:disabled{opacity:0.4;cursor:not-allowed}
+
+.capture-item{display:grid;grid-template-columns:24px 1fr auto;gap:8px;padding:8px 0;border-top:1px dashed var(--border);font-size:11px;cursor:pointer;align-items:center}
+.capture-item:first-of-type{border-top:none}
+.capture-item:hover{color:var(--rust)}
+.capture-item .ci-icon{font-size:13px}
+.capture-item .ci-meta{font-family:var(--mono);font-size:9px;color:var(--text-mute);margin-top:2px}
+.capture-item .ci-size{font-family:var(--mono);font-size:9px;color:var(--text-dim);text-align:right}
+
+.heap-mini{margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+.heap-mini .hm-head{display:flex;justify-content:space-between;font-size:9px;font-family:var(--mono);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.15em;margin-bottom:4px}
+.heap-mini svg{width:100%;height:40px}
+
+/* Export panel */
+.export-panel{padding:14px 16px}
+.ep-head{font-size:11px;font-weight:500;margin-bottom:6px}
+.ep-sub{font-size:10px;color:var(--text-mute);margin-bottom:10px;line-height:1.45}
+.export-row{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:6px;margin-bottom:5px;font-family:var(--mono);font-size:10px;cursor:pointer}
+.export-row:hover{border-color:var(--border-hi)}
+.export-row .er-name{display:flex;align-items:center;gap:8px}
+.export-row .er-icon{width:14px;height:14px;border-radius:3px;background:rgba(184,84,42,0.18);color:var(--rust);display:grid;place-items:center;font-size:10px;font-weight:600}
+.export-row .er-icon.green{background:rgba(94,234,156,0.18);color:var(--green)}
+.export-row .er-icon.purple{background:rgba(167,139,250,0.18);color:var(--purple)}
+.export-row .er-status{font-size:9px;letter-spacing:0.1em;color:var(--text-dim)}
+.export-row .er-status.live{color:var(--green)}
+.export-row .er-status.live::before{content:'● ';font-size:8px}
+.export-snippet{margin-top:8px;padding:8px 10px;background:#06070a;border:1px solid var(--border);border-radius:5px;font-family:var(--mono);font-size:9.5px;color:var(--text-mute);line-height:1.45;word-break:break-all}
+.export-snippet .k{color:var(--sky)}
+.export-snippet .v{color:var(--green)}
+
+/* Trace inspect popover (when capsule clicked) */
+.trace-inspect{position:fixed;top:120px;right:340px;width:380px;background:var(--bg-popover);backdrop-filter:blur(40px);border:1px solid var(--border-hi);border-radius:14px;z-index:200;padding:14px 16px;display:none;box-shadow:0 24px 64px rgba(0,0,0,0.7),0 0 0 1px rgba(184,84,42,0.15)}
+.trace-inspect.open{display:block}
+.ti-head{display:flex;align-items:center;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--border);margin-bottom:10px}
+.ti-id{font-family:var(--mono);font-size:13px;color:var(--sky)}
+.ti-meta{font-family:var(--mono);font-size:10px;color:var(--text-mute);margin-top:2px}
+.ti-close{margin-left:auto;background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text-mute);width:24px;height:24px;border-radius:5px;cursor:pointer;font-size:11px}
+.ti-flame{background:#06070a;border-radius:6px;padding:8px;margin-bottom:10px}
+.ti-flame svg{width:100%;height:90px}
+.ti-attrs{font-family:var(--mono);font-size:10px;line-height:1.6}
+.ti-attrs .k{color:var(--text-mute)}
+.ti-attrs .v{color:var(--text)}
+
+/* Bottom time scrubber */
+.time-scrubber{position:absolute;bottom:0;left:14px;right:14px;height:48px;padding:8px 16px;display:flex;align-items:center;gap:12px;background:rgba(4,5,10,0.4);backdrop-filter:blur(20px);border-top:1px solid var(--border);border-radius:0 0 14px 14px}
+.scrub-label{font-family:var(--mono);font-size:9px;color:var(--text-dim);letter-spacing:0.15em;text-transform:uppercase;white-space:nowrap}
+.scrub-track{flex:1;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;position:relative;cursor:pointer;overflow:visible}
+.scrub-fill{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,rgba(92,198,255,0.4),rgba(184,84,42,0.7));border-radius:3px}
+.scrub-handle{position:absolute;width:14px;height:14px;background:var(--rust);border-radius:50%;top:-4px;box-shadow:0 0 8px var(--rust-glow);transform:translateX(-50%)}
+.scrub-marks{position:absolute;left:0;right:0;top:-3px;height:12px}
+.scrub-mark{position:absolute;top:0;width:2px;height:12px;border-radius:1px;opacity:0.8}
+.scrub-mark.err{background:var(--red);box-shadow:0 0 4px var(--red)}
+.scrub-mark.decision{background:var(--amber)}
+.scrub-mark.bom{background:var(--green)}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     TOP RAIL — brand · fleet selector · debug toggle · health
+     ============================================================ -->
+<div class="rail-top">
+  <div class="brand">
+    <span class="rune">ᚱ</span>
+    <span style="color:var(--text)">stav<span class="rune" style="font-size:17px">R</span></span>
+    <span class="label">Diagnostics</span>
+  </div>
+
+  <div class="fleet-scope">
+    <div class="fleet-pill">
+      <span class="scope-dot"></span>
+      <span>primary · this PC</span>
+      <span class="caret">▾</span>
+    </div>
+    <span class="fleet-divider">scope:</span>
+    <div class="fleet-segs">
+      <div class="fleet-seg active">primary only</div>
+      <div class="fleet-seg">all my machines</div>
+      <div class="fleet-seg">specific node ›</div>
+      <div class="fleet-seg" style="color:var(--purple);border-color:rgba(167,139,250,0.25)">alex@home.lan 🔒</div>
+    </div>
+  </div>
+
+  <div class="top-right">
+    <div class="debug-toggle on">
+      DEBUG · ON · auto-revert 47m
+    </div>
+    <div class="health-bead">
+      <span class="bpulse"></span> ALL OK
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     MAIN GRID
+     ============================================================ -->
+<div class="main">
+
+  <!-- ============================================================
+       LEFT RAIL · Steward's seven signals
+       ============================================================ -->
+  <div class="signals-rail">
+    <div class="signals-head">Steward signals · the seven things I must see</div>
+
+    <!-- LIVENESS -->
+    <div class="signal-card glass health">
+      <div class="signal-head">
+        <span class="signal-name">1 · LIVENESS</span>
+        <span class="signal-state">OK</span>
+      </div>
+      <div class="signal-primary">all green</div>
+      <div class="signal-sub">daemon · 5 workers · 7 bricks · DB writable</div>
+    </div>
+
+    <!-- RESOURCE -->
+    <div class="signal-card glass resource">
+      <div class="signal-head">
+        <span class="signal-name">2 · RESOURCE</span>
+        <span class="signal-state">42%</span>
+      </div>
+      <div class="signal-primary">3.4 GB / 8 GB heap</div>
+      <div class="signal-sub">CPU 18% · Max OAuth 67% · spend $2.84/$20</div>
+      <div class="signal-sparkbar">
+        <div class="b" style="height:30%"></div><div class="b" style="height:35%"></div>
+        <div class="b" style="height:32%"></div><div class="b" style="height:38%"></div>
+        <div class="b" style="height:42%"></div><div class="b" style="height:40%"></div>
+        <div class="b" style="height:45%"></div><div class="b" style="height:42%"></div>
+      </div>
+    </div>
+
+    <!-- LATENCY -->
+    <div class="signal-card glass latency">
+      <div class="signal-head">
+        <span class="signal-name">3 · LATENCY</span>
+        <span class="signal-state">p99 412ms</span>
+      </div>
+      <div class="signal-primary">38 / 247 / 412 <span style="color:var(--text-dim);font-size:11px">ms</span></div>
+      <div class="signal-sub">p50 · p95 · p99 · worst tool: workspace.bash</div>
+      <div class="signal-sparkbar">
+        <div class="b" style="height:20%"></div><div class="b" style="height:25%"></div>
+        <div class="b" style="height:18%"></div><div class="b" style="height:30%"></div>
+        <div class="b" style="height:42%"></div><div class="b" style="height:55%"></div>
+        <div class="b" style="height:68%"></div><div class="b" style="height:60%"></div>
+      </div>
+    </div>
+
+    <!-- ERROR RATE -->
+    <div class="signal-card glass errors">
+      <div class="signal-head">
+        <span class="signal-name">4 · ERROR RATE</span>
+        <span class="signal-state">2.1%</span>
+      </div>
+      <div class="signal-primary">12 errors / 1h</div>
+      <div class="signal-sub">↑ from 0.4% · webhook.callback 11/12</div>
+    </div>
+
+    <!-- STUCK -->
+    <div class="signal-card glass stuck">
+      <div class="signal-head">
+        <span class="signal-name">5 · STUCK CALLS</span>
+        <span class="signal-state">3</span>
+      </div>
+      <div class="signal-primary">oldest 14m</div>
+      <div class="signal-sub">cc-stuck-002 · 2× webhook.callback · ts-c7e1</div>
+    </div>
+
+    <!-- BACKLOG -->
+    <div class="signal-card glass backlog">
+      <div class="signal-head">
+        <span class="signal-name">6 · BACKLOG</span>
+        <span class="signal-state">2 / 1</span>
+      </div>
+      <div class="signal-primary">BOMs · decisions</div>
+      <div class="signal-sub">v0.4 awaiting · webhook re-auth needed</div>
+    </div>
+
+    <!-- LEARNING -->
+    <div class="signal-card glass learn">
+      <div class="signal-head">
+        <span class="signal-name">7 · LEARNING</span>
+        <span class="signal-state">14d</span>
+      </div>
+      <div class="signal-primary">347 lessons · 89% applied</div>
+      <div class="signal-sub">last self-critique 22h ago · 3 new lessons</div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       CENTER · STREAM RIVER
+       ============================================================ -->
+  <div class="stream-stage glass">
+    <div class="stream-toolbar">
+      <div class="stream-title">stream · 5 workers · 184 calls/min · live</div>
+      <div class="stream-controls">
+        <div class="ctrl active">LIVE</div>
+        <div class="ctrl">⏸ pause</div>
+        <div class="ctrl">⟲ replay <span class="spd">1×</span></div>
+        <div class="ctrl">filter: <span class="spd">err only</span></div>
+        <div class="ctrl">⌘K inspect</div>
+      </div>
+    </div>
+
+    <div class="river" id="river">
+      <!-- WORKER LANES (5 of them) -->
+      <div class="lane" style="top:30px">
+        <span class="lane-label">cc-resolver · sonnet · ts-a4c1</span>
+        <!-- capsules — distributed across the lane -->
+        <div class="capsule mcp" style="left:60%;top:5px;width:90px">github_read_pr · 142ms</div>
+        <div class="capsule ok" style="left:74%;top:5px;width:70px">read_file · 8ms</div>
+        <div class="capsule slow" style="left:84%;top:5px;width:80px">git push · 854ms</div>
+      </div>
+      <div class="lane" style="top:80px">
+        <span class="lane-label">pt-b007 · sonnet · ts-b3d2</span>
+        <div class="capsule ok" style="left:50%;top:5px;width:70px">read_file · 5ms</div>
+        <div class="capsule mcp" style="left:62%;top:5px;width:78px">workspace.bash · 218ms</div>
+        <div class="capsule ok" style="left:78%;top:5px;width:60px">lint pass</div>
+      </div>
+      <div class="lane" style="top:130px">
+        <span class="lane-label">pt-b008 · sonnet · ts-b3d3</span>
+        <div class="capsule slow" style="left:45%;top:5px;width:100px">ci_matrix · 1.4s</div>
+        <div class="capsule ok" style="left:67%;top:5px;width:74px">github_check</div>
+      </div>
+      <div class="lane" style="top:180px">
+        <span class="lane-label">unity-worker · sonnet · ts-d9f4</span>
+        <div class="capsule slow" style="left:35%;top:5px;width:120px">shader_compile · 1.8s</div>
+        <div class="capsule ok" style="left:60%;top:5px;width:90px">asset_pack · 220ms</div>
+        <div class="capsule mcp" style="left:78%;top:5px;width:80px">workspace.bash</div>
+      </div>
+      <div class="lane" style="top:230px">
+        <span class="lane-label" style="color:var(--amber)">cc-stuck-002 · ⚠ stalled · ts-c7e1</span>
+        <div class="capsule err" style="left:20%;top:5px;width:170px">webhook.callback · TIMEOUT 30s+</div>
+        <div class="capsule err" style="left:48%;top:5px;width:170px">webhook.callback · TIMEOUT 30s+</div>
+      </div>
+
+      <!-- Correlation links between related capsules -->
+      <div class="corr-link" style="top:39px;left:60%;width:14%"></div>
+      <div class="corr-link" style="top:189px;left:60%;width:18%"></div>
+
+      <!-- NOW vertical line -->
+      <div class="river-now-line"></div>
+
+      <!-- Time axis -->
+      <div class="river-axis">
+        <span>-60min</span>
+        <span>-45</span>
+        <span>-30</span>
+        <span>-15</span>
+        <span>-5</span>
+        <span style="color:var(--rust)">NOW · 15:42:18</span>
+      </div>
+
+      <!-- Time scrubber at bottom -->
+      <div class="time-scrubber">
+        <span class="scrub-label">time</span>
+        <div class="scrub-track">
+          <div class="scrub-marks">
+            <div class="scrub-mark bom" style="left:8%"></div>
+            <div class="scrub-mark decision" style="left:22%"></div>
+            <div class="scrub-mark bom" style="left:38%"></div>
+            <div class="scrub-mark err" style="left:55%"></div>
+            <div class="scrub-mark err" style="left:62%"></div>
+            <div class="scrub-mark decision" style="left:78%"></div>
+            <div class="scrub-mark err" style="left:88%"></div>
+          </div>
+          <div class="scrub-fill" style="width:100%"></div>
+          <div class="scrub-handle" style="left:100%"></div>
+        </div>
+        <span class="scrub-label" style="color:var(--rust)">LIVE</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       RIGHT RAIL · Captures (debug-aware) + Export
+       ============================================================ -->
+  <div class="right-rail">
+
+    <!-- DEBUG-AWARE CAPTURES (lights up when debug=ON) -->
+    <div class="captures-panel glass">
+      <div class="cp-head">
+        <span class="cp-title lit">Captures · debug live</span>
+        <span class="cp-status">last 24h</span>
+      </div>
+      <div class="cp-actions">
+        <button>Heap now</button>
+        <button>CPU 30s</button>
+        <button>Diag report</button>
+      </div>
+
+      <div class="capture-item">
+        <span class="ci-icon">🧠</span>
+        <div>
+          <div>heap-snapshot</div>
+          <div class="ci-meta">11:34:18 · pre-OOM auto · ./tmp/heap-snapshots/snap-1734.heapsnapshot</div>
+        </div>
+        <span class="ci-size">187 MB</span>
+      </div>
+      <div class="capture-item">
+        <span class="ci-icon">📊</span>
+        <div>
+          <div>cpu-profile</div>
+          <div class="ci-meta">09:12:44 · manual · 30s · ./tmp/cpu-profiles/cpu-0912.cpuprofile</div>
+        </div>
+        <span class="ci-size">2.4 MB</span>
+      </div>
+      <div class="capture-item">
+        <span class="ci-icon">📋</span>
+        <div>
+          <div>diagnostic-report</div>
+          <div class="ci-meta">2026-05-16 03:42 · on fatal error · pre-OOM</div>
+        </div>
+        <span class="ci-size">412 KB</span>
+      </div>
+
+      <!-- Live heap mini-chart fed by daemon_memory events every 60s -->
+      <div class="heap-mini">
+        <div class="hm-head">
+          <span>heap growth · last 1h</span>
+          <span style="color:var(--green)">stable</span>
+        </div>
+        <svg viewBox="0 0 280 40">
+          <defs>
+            <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="rgba(184,84,42,0.5)"/>
+              <stop offset="100%" stop-color="rgba(184,84,42,0)"/>
+            </linearGradient>
+          </defs>
+          <path d="M0 32 L20 30 L40 28 L60 30 L80 26 L100 28 L120 24 L140 24 L160 22 L180 20 L200 22 L220 20 L240 18 L260 20 L280 18 L280 40 L0 40 Z" fill="url(#hg)"/>
+          <path d="M0 32 L20 30 L40 28 L60 30 L80 26 L100 28 L120 24 L140 24 L160 22 L180 20 L200 22 L220 20 L240 18 L260 20 L280 18" fill="none" stroke="rgba(184,84,42,0.8)" stroke-width="1"/>
+        </svg>
+      </div>
+    </div>
+
+    <!-- EXPORT PANEL — wire to Grafana / Prometheus / OTLP -->
+    <div class="export-panel glass">
+      <div class="ep-head">Export · stream this elsewhere</div>
+      <div class="ep-sub">stavR speaks Prometheus + OTel out of the box. Point your tools at:</div>
+
+      <div class="export-row">
+        <div class="er-name">
+          <span class="er-icon green">P</span>
+          <span>Prometheus /metrics</span>
+        </div>
+        <span class="er-status">scrape me</span>
+      </div>
+      <div class="export-snippet">
+        <span class="k">scrape_target:</span> <span class="v">http://127.0.0.1:7777/metrics</span><br/>
+        <span class="k">scrape_interval:</span> <span class="v">15s</span>
+      </div>
+
+      <div class="export-row" style="margin-top:10px">
+        <div class="er-name">
+          <span class="er-icon purple">O</span>
+          <span>OpenTelemetry OTLP</span>
+        </div>
+        <span class="er-status live">live · 12 spans/min</span>
+      </div>
+      <div class="export-snippet">
+        <span class="k">STAVR_OTEL_EXPORTER_OTLP_ENDPOINT=</span><br/>
+        <span class="v">https://otlp-gateway.grafana.net/otlp</span>
+      </div>
+
+      <div class="export-row" style="margin-top:10px">
+        <div class="er-name">
+          <span class="er-icon">G</span>
+          <span>Grafana dashboard</span>
+        </div>
+        <span class="er-status">↓ JSON</span>
+      </div>
+      <div class="export-snippet">
+        <span style="color:var(--text-mute)">prebuilt stavR dashboard for Grafana · click to download</span>
+      </div>
+    </div>
+
+    <!-- FEDERATION HINT -->
+    <div class="export-panel glass" style="border-color:rgba(167,139,250,0.2);background:linear-gradient(135deg,rgba(167,139,250,0.04),transparent)">
+      <div class="ep-head" style="color:var(--purple)">Fleet aggregation</div>
+      <div class="ep-sub">When stavr-spawn nodes are paired (per ADR-035), each node's <span style="font-family:var(--mono);color:var(--text)">/metrics</span> rolls up here. Federated peers' data is ACL-scoped — you see what they granted.</div>
+      <div class="export-row" style="background:rgba(167,139,250,0.06);border-color:rgba(167,139,250,0.2)">
+        <div class="er-name">
+          <span class="er-icon" style="background:rgba(167,139,250,0.18);color:var(--purple)">F</span>
+          <span>4 nodes · 1 peer (read-only)</span>
+        </div>
+        <span class="er-status">aggregating</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     TRACE INSPECT POPOVER (appears when a capsule clicked)
+     ============================================================ -->
+<div class="trace-inspect open" id="inspect">
+  <div class="ti-head">
+    <div>
+      <div class="ti-id">cr-9f3e</div>
+      <div class="ti-meta">cc-stuck-002 · webhook.callback · 30,067ms · ERR</div>
+    </div>
+    <button class="ti-close">✕</button>
+  </div>
+
+  <div class="ti-flame">
+    <svg viewBox="0 0 360 90">
+      <rect x="0" y="0" width="360" height="20" fill="rgba(167,139,250,0.4)" stroke="rgba(167,139,250,0.6)"/>
+      <text x="5" y="14" font-family="ui-monospace" font-size="9" fill="white">invoke_agent · 30,247ms</text>
+      <rect x="2" y="22" width="40" height="20" fill="rgba(94,234,156,0.4)" stroke="rgba(94,234,156,0.6)"/>
+      <text x="5" y="36" font-family="ui-monospace" font-size="8" fill="white">setup</text>
+      <rect x="44" y="22" width="314" height="20" fill="rgba(255,122,122,0.55)" stroke="rgba(255,122,122,0.8)"/>
+      <text x="49" y="36" font-family="ui-monospace" font-size="8" fill="white">execute_tool · webhook · 30,067ms ⚡ TIMEOUT</text>
+      <rect x="46" y="44" width="60" height="20" fill="rgba(92,198,255,0.4)" stroke="rgba(92,198,255,0.6)"/>
+      <text x="49" y="58" font-family="ui-monospace" font-size="8" fill="white">browser open</text>
+      <rect x="108" y="44" width="248" height="20" fill="rgba(255,122,122,0.65)" stroke="rgba(255,122,122,0.8)"/>
+      <text x="113" y="58" font-family="ui-monospace" font-size="8" fill="white">awaiting OAuth · stalled 30,000ms</text>
+    </svg>
+  </div>
+
+  <div class="ti-attrs">
+    <div><span class="k">tool:</span> <span class="v">webhook.callback</span></div>
+    <div><span class="k">scope:</span> <span class="v">ts-c7e1 (3/10 used)</span></div>
+    <div><span class="k">cost:</span> <span class="v">$0.05</span></div>
+    <div><span class="k">retry_count:</span> <span class="v">0</span></div>
+    <div><span class="k">auth.token.expired:</span> <span class="v" style="color:var(--amber)">true</span></div>
+    <div style="margin-top:8px;color:var(--amber)">→ suggested: re-auth webhook brick or kill worker</div>
+  </div>
+</div>
+
+<script>
+// JS minimal — just close inspect on click outside / on X
+document.querySelector('.ti-close')?.addEventListener('click', () => document.getElementById('inspect').classList.remove('open'));
+document.querySelectorAll('.capsule').forEach(c => c.addEventListener('click', () => document.getElementById('inspect').classList.add('open')));
+document.querySelectorAll('.fleet-seg').forEach(s => s.addEventListener('click', e => {
+  document.querySelectorAll('.fleet-seg').forEach(x => x.classList.remove('active'));
+  e.currentTarget.classList.add('active');
+}));
+</script>
+</body>
+</html>
