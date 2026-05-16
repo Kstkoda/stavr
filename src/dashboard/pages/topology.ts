@@ -76,13 +76,34 @@ function renderNode(node: TopologyNode): string {
 }
 
 function renderStewardNode(steward: { x: number; y: number; r: number }): string {
+  // v8: rust disc with rune at the centre + concentric pulse rings, dashed
+  // inner ring for the Steward + Watchdog (Watchdog is an external supervisor
+  // and gets a dashed border to signal "lives outside the daemon").
+  const r = steward.r;
   return [
     `<g class="topo-steward" transform="translate(${steward.x}, ${steward.y})"`,
     ` data-layer="steward" data-id="steward" role="button" tabindex="0"`,
-    ` aria-label="Steward (daemon)">`,
-    `<circle r="${steward.r}" fill="var(--accent-steward)" stroke="#3a0a0a" stroke-width="2" />`,
-    `<text text-anchor="middle" dy="5" fill="#fff" font-size="12" font-weight="700" font-family="ui-sans-serif">STAVR</text>`,
+    ` aria-label="stavR daemon">`,
+    `<circle class="topo-daemon-pulse" r="${r + 14}" />`,
+    `<circle class="topo-daemon-pulse-2" r="${r + 8}" />`,
+    `<circle class="topo-daemon-ring-inner" r="${r + 4}" />`,
+    `<circle r="${r}" class="topo-daemon-disc" />`,
+    `<text class="topo-daemon-rune" text-anchor="middle" dy="6" font-size="18" font-weight="800">ᛋ</text>`,
+    `<text class="topo-daemon-label" text-anchor="middle" dy="${r + 18}" font-size="10" letter-spacing="0.12em">STAVR DAEMON</text>`,
     `</g>`,
+  ].join('');
+}
+
+function renderModeChips(): string {
+  // Bottom-of-canvas mode switcher per v8. RADIAL is the only mode in v0.4;
+  // HEAT + HISTORY are placeholders for v0.5+ that visually preview what's
+  // coming but are inert.
+  return [
+    `<div class="topo-mode-chips" role="tablist" aria-label="Topology mode">`,
+    `<button type="button" class="tm-chip" data-mode="radial" aria-pressed="true">RADIAL</button>`,
+    `<button type="button" class="tm-chip" data-mode="heat"    aria-pressed="false" disabled title="v0.5">HEAT</button>`,
+    `<button type="button" class="tm-chip" data-mode="history" aria-pressed="false" disabled title="v0.5">HISTORY</button>`,
+    `</div>`,
   ].join('');
 }
 
@@ -228,6 +249,62 @@ const TOPOLOGY_CSS = `
 }
 
 .placeholder { color: var(--text-dim); font-style: italic; font-size: 12px; padding: 8px 0; }
+
+/* v8 — daemon disc */
+.topo-daemon-disc {
+  fill: var(--rust);
+  stroke: #3a0a0a;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 8px var(--rust-glow));
+}
+.topo-daemon-rune  { fill: #fff8f0; }
+.topo-daemon-label { fill: var(--rust-soft); font-family: ui-monospace, Menlo, Consolas, monospace; }
+.topo-daemon-ring-inner {
+  fill: none;
+  stroke: var(--rust);
+  stroke-width: 1;
+  stroke-dasharray: 4 6;
+  opacity: 0.5;
+}
+.topo-daemon-pulse,
+.topo-daemon-pulse-2 {
+  fill: none;
+  stroke: var(--rust);
+  stroke-width: 1;
+  opacity: 0.0;
+  transform-origin: center;
+  animation: topo-pulse 2.4s ease-out infinite;
+}
+.topo-daemon-pulse-2 { animation-delay: 1.2s; }
+@keyframes topo-pulse {
+  0%   { opacity: 0.45; transform: scale(0.8); }
+  100% { opacity: 0;    transform: scale(1.6); }
+}
+
+/* v8 — mode chips */
+.topo-mode-chips {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.tm-chip {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.tm-chip[aria-pressed="true"] {
+  border-color: var(--rust);
+  color: var(--rust-soft);
+  background: var(--bg-surface);
+}
+.tm-chip:disabled { opacity: 0.4; cursor: not-allowed; }
 `;
 
 const TOPOLOGY_JS = `
@@ -426,6 +503,7 @@ export function renderTopologyPage(data?: TopologyData): string {
     `<div class="topo-frame">`,
     `<div class="topo-canvas" data-role="topo-canvas">`,
     svg,
+    renderModeChips(),
     scrubberWithTime,
     `</div>`,
     renderBomSidebar(snapshot),

@@ -28,6 +28,18 @@ publishes a stable export.
 
 - Phase 1: branch + scaffold — done
 - Phase 2: OllamaProvider + profile routing + observability — done
+- Phase 3: Dashboard v8 visual refresh — done (no canonical mockup HTML to copy verbatim — visual language derived from §3 textual brief + existing Dark 2.0 tokens with the v8 rust + glass additions in §3.2)
+  - `src/dashboard/tokens.ts`: added v8 palette (`--rust`, `--rust-soft`, `--rust-glow`, `--bg-popover`, `--glass-blur`, `--health-{ok,warn,down}`).
+  - `src/dashboard/components/floating-inspector.ts`: single global popover, anchored via `getBoundingClientRect`, glass-blurred, Escape + outside-click dismiss. Exposes `window.__stavrFloatingInspector.openAt / .close`.
+  - `src/dashboard/components/timeline.ts`: fixed-bottom 44px smooth SVG path with cubic-bezier interpolation, rust gradient fill, multi-color stroke, event dots at significant moments, pulsing "now" cursor. Polls `/dashboard/home/data` every 5s.
+  - `src/dashboard/components/watchdog-pip.ts`: top-rail health pip that reads `/healthz` (5s) + `/metrics` (30s) using the same regex-against-text-format-prom path an external scraper would — no in-process shortcut. Combined health green/yellow/red.
+  - `src/dashboard/shell.ts`: mounts the three new shell-level components once each, adds `topnav-right` slot for the pip, expands `DashboardPageId` with `helm` + `mcps`, separates NAV_ENTRIES from LEGACY_NAV_ENTRIES (the latter keeps `/dashboard/home` reachable for v0.3 bookmarks).
+  - `src/dashboard/pages/helm.ts`: new 5-band v8 page (L4 INTENT · L3 PLANS · L2 WORKERS · L1 TOOL CALLS · L0 SYSTEMS). Workers row is clickable dots, sys-chips are clickable, L4 intent opens a steward-sheet placeholder via the floating inspector.
+  - `src/dashboard/pages/topology.ts`: central node rewritten as a rust daemon disc with rune (ᛋ) + pulse rings; mode-switcher chips (RADIAL active · HEAT/HISTORY placeholders for v0.5). Layout adapter untouched.
+  - `src/dashboard/index.ts`: `/dashboard` now 302s to `/dashboard/helm`; legacy `/dashboard/home` continues to serve the v0.3 page. helm + mcps wired into the renderer map.
+  - `src/transports.ts`: new `helmData()` + `mcpsData()` aggregators; `helmData` reuses `homeData()` memoization so the Helm page costs no extra broker reads.
+  - Tests updated for the redirect change + the topology central-node rename. New tests: helm (8 cases), floating-inspector (4 cases), watchdog-pip (4 cases). Topology test gains a v8 mode-chip assertion.
+  - Full suite: 521 passing / 1 pre-existing skip.
   - `src/steward/providers/ollama.ts`: provider with `/api/chat` (non-stream) + `listAvailableModels()` via `/api/tags`. Mock tool-call mapping, system-prompt + multi-turn message mapping, AbortController-based timeout. Observability via `recordProviderRequest` + `recordProviderLatency` in finally block.
   - `src/observability/metrics.ts`: added `stavr_provider_requests_total` counter + `stavr_provider_latency_seconds` histogram with `{provider, model, status}` labels. Model-label cardinality kept bounded via truncation.
   - `src/types/stavr-bom.ts`: added four `local-*` capability tags as union members; added `LOCAL_FRIENDLY_TAGS` and `isLocalModel()` helpers. Routing tables updated for all three profiles per brief §2.3: Turbo never local, Balanced local for `cheap-classifier` + `simple-summary` + `local-*`, Eco local-first across every local-friendly tag. Frontier fallback retained in every Balanced row.

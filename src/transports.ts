@@ -991,7 +991,69 @@ export function mountDashboardRoutes(
   const homeData = memoize(homeDataRaw, dashboardCacheMs);
   const streamsData = memoize(streamsDataRaw, Math.max(1, Math.floor(dashboardCacheMs / 2)));
 
-  mountDashboardPages(app, { homeData, plansData, decideData, topologyData, streamsData, toolkitData, capabilitiesData, settingsData });
+  // v0.4 Helm page — derived from the same underlying state as Home (we want
+  // the same memoization to amortise the cost of broker.store reads). The
+  // shape is denser (workers row, sys-chips, intent summary).
+  function helmDataRaw(): import('./dashboard/pages/helm.js').HelmData {
+    const h = homeData();
+    const workers = broker.store.listWorkers().slice(0, 32).map((w) => ({
+      id: w.id,
+      type: w.type,
+      status: ((): 'idle' | 'running' | 'crashed' | 'cleanup' => {
+        if (w.status === 'running') return 'running';
+        if (w.status === 'crashed') return 'crashed';
+        if (w.status === 'starting') return 'cleanup';
+        return 'idle';
+      })(),
+      current_step: undefined,
+    }));
+    const bricks = broker.store.listInstalledBricks();
+    const systems = bricks.slice(0, 32).map((b) => ({
+      id: b.id,
+      label: b.display_name,
+      glyph: b.kind === 'mcp' ? '🧩' : b.kind === 'http' ? '🌐' : '⚙️',
+      health: (b.enabled ? 'ok' : 'down') as 'ok' | 'degraded' | 'down' | 'unknown',
+      detail: `${b.kind} · ${b.enabled ? 'enabled' : 'disabled'}`,
+    }));
+    const activeBom = h.boms.recent.find((b) => b.status === 'running' || b.status === 'approved');
+    const intent = activeBom
+      ? { summary: activeBom.goal, sub: `${h.boms.open} open · profile ${h.health.profile_mode}` }
+      : { summary: 'Steward is idle.', sub: `profile ${h.health.profile_mode} · ${h.boms.total} total BOMs` };
+    return {
+      intent,
+      health: {
+        ok: h.health.ok,
+        version: h.health.version,
+        port: h.health.port,
+        started_at: h.health.started_at,
+        uptime_sec: h.health.uptime_sec,
+        profile_mode: h.health.profile_mode,
+        event_count: h.health.event_count,
+        active_scopes: h.health.active_scopes,
+      },
+      boms: h.boms,
+      decisions: h.decisions,
+      workers,
+      systems,
+    };
+  }
+  const helmData = memoize(helmDataRaw, dashboardCacheMs);
+
+  // v0.4 MCPs page — installed bricks come straight from the brick registry;
+  // the static github.com/mcp snapshot lives in the page module itself so
+  // it's bundled with the daemon and doesn't require a registry lookup.
+  function mcpsData(): import('./dashboard/pages/mcps.js').McpsData {
+    return {
+      installed: broker.store.listInstalledBricks().map((b) => ({
+        id: b.id,
+        display_name: b.display_name,
+        kind: b.kind,
+        enabled: b.enabled,
+      })),
+    };
+  }
+
+  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, toolkitData, mcpsData, capabilitiesData, settingsData });
 
   // ---- C9 Settings endpoints ----
 

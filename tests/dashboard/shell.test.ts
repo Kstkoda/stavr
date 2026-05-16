@@ -36,7 +36,7 @@ describe('v0.3 dashboard shell — unit', () => {
   it('renders the brand mark, every nav entry, and design tokens', () => {
     const html = renderShell({
       title: 'Test',
-      activePage: 'home',
+      activePage: 'helm',
       body: '<div id="probe">hi</div>',
     });
     expect(html).toContain('<!doctype html>');
@@ -54,7 +54,7 @@ describe('v0.3 dashboard shell — unit', () => {
     const html = renderShell({ title: 't', activePage: 'plans', body: '' });
     expect(html).toContain('data-page="plans"');
     expect(html).toMatch(/data-page="plans"\s+aria-current="page"/);
-    expect(html).not.toMatch(/data-page="home"\s+aria-current="page"/);
+    expect(html).not.toMatch(/data-page="helm"\s+aria-current="page"/);
   });
 
   it('includes the inspector skeleton and open/close JS', () => {
@@ -77,8 +77,8 @@ describe('v0.3 dashboard shell — integration', () => {
   });
 
   const pageIds: DashboardPageId[] = [
-    'home', 'topology', 'streams', 'plans',
-    'decide', 'toolkit', 'capabilities', 'settings',
+    'helm', 'topology', 'streams', 'plans',
+    'decide', 'toolkit', 'mcps', 'capabilities', 'settings',
   ];
 
   for (const id of pageIds) {
@@ -89,15 +89,21 @@ describe('v0.3 dashboard shell — integration', () => {
       const body = await r.text();
       // Shared tokens + nav appear on every page.
       expect(body).toContain('--accent-steward:       #ef4444;');
-      expect(body).toContain('href="/dashboard/home"');
+      expect(body).toContain('href="/dashboard/helm"');
       // Active page is highlighted.
       expect(body).toMatch(new RegExp(`data-page="${id}"\\s+aria-current="page"`));
     });
   }
 
-  it('GET /dashboard issues 302 to /dashboard/home', async () => {
+  it('GET /dashboard/home still works as a v0.3 legacy alias', async () => {
+    const r = await fetch(`${h.base}/dashboard/home`);
+    expect(r.status).toBe(200);
+    expect(r.headers.get('content-type')).toMatch(/text\/html/);
+  });
+
+  it('GET /dashboard issues 302 to /dashboard/helm', async () => {
     const r = await fetch(`${h.base}/dashboard`, { redirect: 'manual' });
     expect(r.status).toBe(302);
-    expect(r.headers.get('location')).toBe('/dashboard/home');
+    expect(r.headers.get('location')).toBe('/dashboard/helm');
   });
 });
