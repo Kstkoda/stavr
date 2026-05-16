@@ -5,6 +5,7 @@ import type { Event, EventKindT } from './event-types.js';
 import { getLogger } from './log.js';
 import { recordBrokerEvent } from './observability/metrics.js';
 import { runWithCorrelation } from './observability/logger.js';
+import { addBrokerSpanEvent } from './observability/spans.js';
 
 interface Subscription {
   sessionId: string;
@@ -116,6 +117,20 @@ export class Broker {
       recordBrokerEvent(stored);
     } catch {
       /* metrics must never break fanout */
+    }
+    // bom-diagnostics-2026 C2.3 — register the emission as an addEvent on
+    // the active OTel span (if any) rather than a new span. The event log
+    // is the system-of-record; spans only need to know that an emission
+    // happened during the active request/operation. No-op when no SDK is
+    // configured or no span is active — span explosion is the failure mode
+    // we're avoiding.
+    try {
+      addBrokerSpanEvent(stored.kind, {
+        correlationId: stored.correlation_id,
+        sourceAgent: stored.source_agent,
+      });
+    } catch {
+      /* spans must never break fanout */
     }
     const cid = stored.correlation_id;
     if (cid) {

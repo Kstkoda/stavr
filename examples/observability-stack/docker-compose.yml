@@ -1,0 +1,47 @@
+# Local OTel / metrics / traces stack for stavr development.
+# Spec: bom-diagnostics-2026.md C2.6.
+#
+# Run it:
+#   cd examples/observability-stack
+#   docker compose up -d
+#
+# Then start the daemon with:
+#   STAVR_OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+#     OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental \
+#     npm start
+#
+# Open:
+#   - Jaeger UI:     http://localhost:16686
+#   - Prometheus:    http://localhost:9090
+#
+# Everything binds to 127.0.0.1 — local-first per stavr's posture.
+
+services:
+  jaeger:
+    # Jaeger all-in-one ships an OTLP/HTTP receiver on :4318 — no separate
+    # collector needed for a single-machine dev workflow.
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: stavr-dev-jaeger
+    ports:
+      - "127.0.0.1:16686:16686"  # Jaeger UI
+      - "127.0.0.1:4317:4317"    # OTLP gRPC
+      - "127.0.0.1:4318:4318"    # OTLP HTTP — stavr points here
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
+  prometheus:
+    image: prom/prometheus:v3.0.0
+    container_name: stavr-dev-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.listen-address=0.0.0.0:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+    # Use host networking so the scrape can reach 127.0.0.1:7777 on the
+    # docker host (where stavr is running). On Docker Desktop /
+    # OrbStack this is host.docker.internal; the prometheus.yml below
+    # uses that.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
