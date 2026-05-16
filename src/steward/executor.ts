@@ -44,6 +44,11 @@ import type {
   StewardPlanner,
 } from './planner.js';
 
+import {
+  withExecuteToolSpan,
+  withInvokeAgentSpan,
+} from '../observability/spans.js';
+
 // ============================================================
 // DEPENDENCIES
 // ============================================================
@@ -179,7 +184,25 @@ export class BomExecutor {
     if (this.running.has(bomId)) return;
     this.running.add(bomId);
     try {
-      await this.runBomInner(bomId);
+      // bom-diagnostics-2026 C2.3 — OTel GenAI canonical agent root span.
+      // One `invoke_agent` per BOM run; per-step `execute_tool` spans live
+      // as children below in runStep. Never collapse the two levels —
+      // LangSmith / Braintrust / Jaeger GenAI plugins rely on the two-tier
+      // shape.
+      const bom = this.deps.store.getBom(bomId);
+      const stepCount = bom
+        ? (this.deps.store.getActiveVersion(bomId)?.steps ?? []).length
+        : undefined;
+      await withInvokeAgentSpan(
+        {
+          bomId,
+          bomTitle: bom?.goal,
+          profileMode: bom?.profile_mode,
+          stepCount,
+          correlationId: bom?.correlation_id,
+        },
+        async () => this.runBomInner(bomId),
+      );
     } finally {
       this.running.delete(bomId);
     }
@@ -277,25 +300,39 @@ export class BomExecutor {
 
     let result: ExecResult;
     const t0 = Date.now();
+    // bom-diagnostics-2026 C2.3 — `execute_tool` child span under the
+    // active `invoke_agent`. tool_name is the step's capability tag so the
+    // span name lines up with the GenAI semconv expectation that
+    // `gen_ai.tool.name` matches what the agent thinks it is calling.
     try {
-      const connector = this.deps.connectors.get(step.brick_id);
-      if (!connector) {
-        throw new Error(`no connector registered for brick_id '${step.brick_id}'`);
-      }
-      const argsRaw = (step as unknown as { args?: Record<string, unknown> }).args;
-      const explicitCapId = (step as unknown as { capability_id?: string }).capability_id;
-      const capabilities = connector.capabilities();
-      // Resolve the connector capability id: explicit field wins, else match
-      // by capabilityTag, else fall back to the first capability.
-      let capabilityId = explicitCapId;
-      if (!capabilityId) {
-        const matched = capabilities.find((c) => c.capabilityTag === step.capability);
-        capabilityId = matched?.id ?? capabilities[0]?.id;
-      }
-      if (!capabilityId) {
-        throw new Error(`connector '${step.brick_id}' exposes no capabilities`);
-      }
-      result = await connector.exec(capabilityId, argsRaw ?? {}, ctx);
+      result = await withExecuteToolSpan(
+        {
+          toolName: step.capability,
+          toolCallId: `${bom.id}:${step.step_no}`,
+          bomId: bom.id,
+          stepNo: step.step_no,
+          riskClass: step.risk_class,
+          brickId: step.brick_id,
+        },
+        async () => {
+          const connector = this.deps.connectors.get(step.brick_id);
+          if (!connector) {
+            throw new Error(`no connector registered for brick_id '${step.brick_id}'`);
+          }
+          const argsRaw = (step as unknown as { args?: Record<string, unknown> }).args;
+          const explicitCapId = (step as unknown as { capability_id?: string }).capability_id;
+          const capabilities = connector.capabilities();
+          let capabilityId = explicitCapId;
+          if (!capabilityId) {
+            const matched = capabilities.find((c) => c.capabilityTag === step.capability);
+            capabilityId = matched?.id ?? capabilities[0]?.id;
+          }
+          if (!capabilityId) {
+            throw new Error(`connector '${step.brick_id}' exposes no capabilities`);
+          }
+          return connector.exec(capabilityId, argsRaw ?? {}, ctx);
+        },
+      );
     } catch (err) {
       result = {
         ok: false,

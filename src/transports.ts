@@ -18,6 +18,7 @@ import {
 } from './observability/metrics.js';
 import { logContext } from './observability/logger.js';
 import { mountDebugEndpoints } from './observability/debug-endpoints.js';
+import { attachMcpAttributes } from './observability/spans.js';
 import { getV02Subsystem } from './steward/v02-wiring.js';
 import { computeUsage, fetchAnthropicBalance, type ComputeUsageOpts } from './usage.js';
 import {
@@ -413,6 +414,21 @@ export async function mountTransports(
       const incomingSid = req.header('mcp-session-id');
       let session = incomingSid ? sseSessions.get(incomingSid) : undefined;
       let isNew = false;
+
+      // bom-diagnostics-2026 C2.3 — attach OTel GenAI MCP semconv attributes
+      // to the auto-instrumented http server span. Best-effort: when no OTel
+      // SDK is configured, getActiveSpan() returns undefined and this is a
+      // pure no-op. We decode `method` + `params.name` from the JSON-RPC body
+      // when the request shape is the canonical MCP one.
+      const body = (req.body ?? {}) as { method?: string; params?: { name?: string } };
+      attachMcpAttributes({
+        method: typeof body.method === 'string' ? body.method : undefined,
+        toolName:
+          body.method === 'tools/call' && typeof body.params?.name === 'string'
+            ? body.params.name
+            : undefined,
+        sessionId: incomingSid ?? undefined,
+      });
 
       if (!session) {
         // No existing session — for non-POST requests this is an error.

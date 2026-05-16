@@ -29,6 +29,8 @@ import { loadConfig } from './config.js';
 import { wireV02Subsystem, type V02SubsystemHandle } from './steward/v02-wiring.js';
 import { startMemoryPoller, type MemoryPollerStop } from './observability/memory-poller.js';
 import { resolveRetentionOpts } from './observability/retention.js';
+import { startOtel, type StartedOtel } from './observability/otel.js';
+import { startEventLoopMonitor, type EventLoopMonitorStop } from './observability/event-loop.js';
 
 export interface DaemonOptions {
   port: number;
@@ -125,6 +127,21 @@ async function sleep(ms: number): Promise<void> {
  * Used when `--detach` is NOT set (foreground) or, internally, by the detached child.
  */
 export async function startDaemonForeground(opts: DaemonOptions): Promise<MountedTransports> {
+  // bom-diagnostics-2026 C2.2 — start OTel SDK as early as possible so the
+  // http + express auto-instrumentations can patch before any server binds.
+  // When STAVR_OTEL_EXPORTER_OTLP_ENDPOINT is unset, this is a no-op and
+  // returns null (no traces are exported; in-process span calls become
+  // cheap NoopTracer ops). The SDK shutdown is wired into the daemon
+  // shutdown handler below.
+  let otelHandle: StartedOtel | null = null;
+  try {
+    otelHandle = startOtel();
+  } catch (err) {
+    getLogger().error('failed to start OTel SDK; daemon continues without traces', {
+      error: (err as Error).message,
+    });
+  }
+
   const existing = readPidFile();
   const stalePid = existing && !isProcessAlive(existing.pid) ? existing : undefined;
   if (existing && isProcessAlive(existing.pid) && !opts.force) {
@@ -295,6 +312,19 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
+  // bom-diagnostics-2026 C2.4 — event-loop lag + ELU sampling. Prom metrics
+  // refresh every 5s; broker `daemon_eventloop` events every 60s for the
+  // event log. Both interval handles are unref'd, so they don't block
+  // shutdown.
+  let eventLoopMonitorStop: EventLoopMonitorStop | undefined;
+  try {
+    eventLoopMonitorStop = startEventLoopMonitor({ broker });
+  } catch (err) {
+    logger.error('failed to start event-loop monitor; daemon continues without it', {
+      error: (err as Error).message,
+    });
+  }
+
   // bom-oom-leak-hunt C2.1 — events table retention. Run once at boot
   // (covers daemons restarted after long downtime) and then every hour.
   // The pruneEvents call is best-effort: any DB hiccup is caught inside
@@ -367,11 +397,17 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     if (memoryPollerStop) {
       try { memoryPollerStop(); } catch { /* best effort */ }
     }
+    if (eventLoopMonitorStop) {
+      try { eventLoopMonitorStop(); } catch { /* best effort */ }
+    }
     try { clearInterval(retentionHandle); } catch { /* best effort */ }
     if (v02) {
       try { v02.stop(); } catch { /* best effort */ }
     }
     await transports.shutdown();
+    if (otelHandle) {
+      try { await otelHandle.shutdown(); } catch { /* best effort */ }
+    }
     removePidFile();
     process.exit(0);
   };
