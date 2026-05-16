@@ -20,6 +20,12 @@ coverage/
 # Claude Code per-project state
 .claude/
 
+# Claude auto-memory bootstrap seed (private context, not for public repo)
+.claude-memory-seed/
+
+# Runtime memory dir (daemon writes here; never commit)
+memory/
+
 # Vitest config compilation temp files
 vitest.config.ts.timestamp-*.mjs
 
