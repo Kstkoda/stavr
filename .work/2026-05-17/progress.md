@@ -63,6 +63,9 @@ publishes a stable export.
   - `src/dashboard/shell.ts`: Capture button mounted once across the shell + CSS/JS wired.
   - Tests: 33 new across `tests/observability/runtime-toggles.test.ts`, `tests/observability/debug-endpoint-guard.test.ts`, `tests/tools/capture.test.ts`, `tests/dashboard/capture.test.ts`, `tests/dashboard/settings-diagnostics.test.ts`, `tests/dashboard/capability-matrix.test.ts`.
   - Full suite: 562 passing / 1 pre-existing skip.
+- Phase 6: Integration + PR
+  - `npm run check` (tsc → vitest → build) passes from a clean tree.
+  - Live smoke test (in-process boot, ephemeral port): /dashboard 302→/helm, /dashboard/{helm,topology,mcps,settings} all 200, /healthz 200 JSON, /metrics 200 Prometheus text/plain. Shutdown clean.
   - `src/steward/providers/ollama.ts`: provider with `/api/chat` (non-stream) + `listAvailableModels()` via `/api/tags`. Mock tool-call mapping, system-prompt + multi-turn message mapping, AbortController-based timeout. Observability via `recordProviderRequest` + `recordProviderLatency` in finally block.
   - `src/observability/metrics.ts`: added `stavr_provider_requests_total` counter + `stavr_provider_latency_seconds` histogram with `{provider, model, status}` labels. Model-label cardinality kept bounded via truncation.
   - `src/types/stavr-bom.ts`: added four `local-*` capability tags as union members; added `LOCAL_FRIENDLY_TAGS` and `isLocalModel()` helpers. Routing tables updated for all three profiles per brief §2.3: Turbo never local, Balanced local for `cheap-classifier` + `simple-summary` + `local-*`, Eco local-first across every local-friendly tag. Frontier fallback retained in every Balanced row.
