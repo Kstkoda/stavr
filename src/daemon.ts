@@ -16,6 +16,7 @@ import { setCredentialStore } from './server.js';
 import { loadStewardConfig } from './steward/config.js';
 import { makeAnthropicProvider } from './steward/providers/anthropic.js';
 import { makeClaudeCodeProvider } from './steward/providers/claude-code.js';
+import { makeOllamaProvider } from './steward/providers/ollama.js';
 import { startStewardLoop, type RunningLoop } from './steward/loop.js';
 import type { StewardProvider } from './steward/providers/types.js';
 import {
@@ -362,6 +363,32 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
   );
   retentionHandle.unref?.();
 
+  // v0.4 — runtime-toggle expiry sweep. Default TTL when an operator
+  // enables a debug endpoint from the dashboard is 60 minutes; we sweep
+  // every 60s so expired toggles flip back to "off" promptly. Each
+  // eviction emits an audit-class `runtime_toggle_expired` event so the
+  // operator can see when revert happened.
+  const sweepRuntimeToggles = async (): Promise<void> => {
+    try {
+      const expired = store.pruneExpiredRuntimeToggles();
+      for (const key of expired) {
+        await broker.publish({
+          kind: 'runtime_toggle_expired',
+          at: new Date().toISOString(),
+          source_agent: 'stavr-daemon',
+          payload: { key },
+        });
+      }
+    } catch (err) {
+      logger.error('runtime-toggle sweep failed; daemon continues', { error: (err as Error).message });
+    }
+  };
+  const toggleSweepHandle: ReturnType<typeof setInterval> = setInterval(
+    () => void sweepRuntimeToggles(),
+    60_000,
+  );
+  toggleSweepHandle.unref?.();
+
   // v0.2 — planner + executor + connector registry. Gated by experimental.planner.
   // When the flag is off, this whole subsystem stays dormant.
   let v02: V02SubsystemHandle | undefined;
@@ -580,6 +607,31 @@ function makeProviderFromConfig(config: {
     return makeAnthropicProvider({ apiKey, model: config.steward.model });
   }
   return makeClaudeCodeProvider({ model: config.steward.model });
+}
+
+/**
+ * Process-singleton Ollama provider used by the dashboard's Capabilities page
+ * (to list available models) and reserved for v0.5 multi-provider routing when
+ * the Steward grows the ability to fan steps out to local LLMs.
+ *
+ * Construction is lazy + cached — instantiating doesn't hit the network. The
+ * host comes from `STAVR_OLLAMA_HOST` (default `http://127.0.0.1:11434`).
+ */
+let ollamaProviderSingleton: ReturnType<typeof makeOllamaProvider> | undefined;
+export function getOllamaProvider(): ReturnType<typeof makeOllamaProvider> {
+  if (!ollamaProviderSingleton) {
+    ollamaProviderSingleton = makeOllamaProvider({
+      host: process.env.STAVR_OLLAMA_HOST,
+      model: process.env.STAVR_OLLAMA_DEFAULT_MODEL,
+      timeoutMs: Number(process.env.STAVR_OLLAMA_TIMEOUT_MS) || undefined,
+    });
+  }
+  return ollamaProviderSingleton;
+}
+
+/** Test seam — clears the singleton so unit tests can swap the impl. */
+export function _resetOllamaProviderForTests(): void {
+  ollamaProviderSingleton = undefined;
 }
 
 /**

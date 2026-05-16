@@ -459,6 +459,20 @@ export class EventStore {
         switched_at     TEXT NOT NULL DEFAULT (datetime('now')),
         switched_by     TEXT NOT NULL DEFAULT 'system'
       );
+
+      -- v0.4 runtime toggles: settings flippable from the dashboard without
+      -- a PM2 restart. Used today for STAVR_DEBUG_ENABLED + per-endpoint
+      -- subset (heap/cpu/report). Time-bound via expires_at; a background
+      -- sweep evicts expired rows. Audit-class events
+      -- (runtime_toggle_changed / runtime_toggle_expired) make this trail
+      -- survive 90d retention. See memory/project_stavr_runtime_toggles.md.
+      CREATE TABLE IF NOT EXISTS runtime_toggles (
+        key         TEXT PRIMARY KEY,
+        value       TEXT NOT NULL,
+        set_at      INTEGER NOT NULL,
+        set_by      TEXT NOT NULL,
+        expires_at  INTEGER
+      );
     `);
 
     // Seed no-go defaults (idempotent via INSERT OR IGNORE).
@@ -1343,6 +1357,89 @@ export class EventStore {
          ON CONFLICT(id) DO UPDATE SET active_mode=excluded.active_mode, switched_at=datetime('now'), switched_by=excluded.switched_by`,
       )
       .run(mode, switchedBy);
+  }
+
+  // ---- Runtime toggles (v0.4) ----
+
+  /**
+   * Read a runtime toggle. Returns the value (string) when present AND not
+   * expired; otherwise null. Expired rows are NOT deleted here — the
+   * background sweep in `pruneExpiredRuntimeToggles()` handles eviction so
+   * the read path stays a pure single-row select. Callers that want the
+   * raw value regardless of expiry should query `listRuntimeToggles()`
+   * which returns the expiry too.
+   */
+  getRuntimeToggle(key: string, nowEpochMs: number = Date.now()): string | null {
+    const row = this.db.prepare(
+      `SELECT value, expires_at FROM runtime_toggles WHERE key = ?`,
+    ).get(key) as { value: string; expires_at: number | null } | undefined;
+    if (!row) return null;
+    if (row.expires_at != null && row.expires_at <= nowEpochMs) return null;
+    return row.value;
+  }
+
+  /**
+   * Set a runtime toggle. ttlMinutes=0 means "no expiry" (the value sticks
+   * until explicitly cleared). When TTL is provided, the row's expires_at
+   * is set to now + ttlMinutes*60s. Returns the resolved expires_at (null
+   * when no TTL).
+   */
+  setRuntimeToggle(
+    key: string,
+    value: string,
+    setBy: string,
+    ttlMinutes?: number,
+    nowEpochMs: number = Date.now(),
+  ): number | null {
+    const expiresAt = ttlMinutes && ttlMinutes > 0
+      ? nowEpochMs + ttlMinutes * 60_000
+      : null;
+    this.db
+      .prepare(
+        `INSERT INTO runtime_toggles (key, value, set_at, set_by, expires_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, set_at=excluded.set_at, set_by=excluded.set_by, expires_at=excluded.expires_at`,
+      )
+      .run(key, value, nowEpochMs, setBy, expiresAt);
+    return expiresAt;
+  }
+
+  listRuntimeToggles(): Array<{
+    key: string;
+    value: string;
+    set_at: number;
+    set_by: string;
+    expires_at: number | null;
+  }> {
+    return this.db
+      .prepare(`SELECT key, value, set_at, set_by, expires_at FROM runtime_toggles ORDER BY key`)
+      .all() as Array<{
+        key: string;
+        value: string;
+        set_at: number;
+        set_by: string;
+        expires_at: number | null;
+      }>;
+  }
+
+  deleteRuntimeToggle(key: string): boolean {
+    const r = this.db.prepare(`DELETE FROM runtime_toggles WHERE key = ?`).run(key);
+    return r.changes > 0;
+  }
+
+  /**
+   * Evict expired toggles. Returns the deleted keys so the caller can emit
+   * a `runtime_toggle_expired` audit event for each. Idempotent — running
+   * the sweep on a fresh DB returns []. Use `nowEpochMs` test seam to fast-
+   * forward time.
+   */
+  pruneExpiredRuntimeToggles(nowEpochMs: number = Date.now()): string[] {
+    const expired = this.db
+      .prepare(`SELECT key FROM runtime_toggles WHERE expires_at IS NOT NULL AND expires_at <= ?`)
+      .all(nowEpochMs) as Array<{ key: string }>;
+    if (expired.length === 0) return [];
+    const stmt = this.db.prepare(`DELETE FROM runtime_toggles WHERE key = ?`);
+    for (const e of expired) stmt.run(e.key);
+    return expired.map((e) => e.key);
   }
 
   // ---- No-go list ----

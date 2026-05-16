@@ -36,9 +36,49 @@ export interface MountDebugEndpointsOpts {
   env?: NodeJS.ProcessEnv;
   /** Override `process.cwd()` for output directories. Test seam. */
   cwd?: () => string;
+  /**
+   * v0.4 — runtime toggle reader. When provided, the guard checks the
+   * runtime_toggles row for `STAVR_DEBUG_ENABLED` (and per-endpoint
+   * subkeys) BEFORE falling back to the environment. Lets operators flip
+   * diagnostics from the dashboard without a PM2 restart while keeping
+   * the env-var path working for headless / non-DB callers.
+   */
+  readToggle?: (key: string) => string | null;
+  /**
+   * v0.4 — fire-and-forget audit event emitter. When provided, each
+   * successful /debug/* invocation emits `{heap_snapshot,cpu_profile,
+   * diagnostic_report}_taken` with the output file path so Settings →
+   * Diagnostics can list recent captures.
+   */
+  emitEvent?: (kind: string, payload: Record<string, unknown>) => void;
 }
 
-export function isDebugEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+/**
+ * v0.4 — granular per-endpoint toggle keys layered on top of the master.
+ * An endpoint guard checks the master OR the per-endpoint key; either
+ * being '1' opens the gate. This lets an operator enable JUST heap
+ * snapshots from the dashboard while keeping the others off.
+ */
+export const DEBUG_TOGGLE_MASTER = 'STAVR_DEBUG_ENABLED';
+export const DEBUG_TOGGLE_HEAP   = 'STAVR_DEBUG_HEAP';
+export const DEBUG_TOGGLE_CPU    = 'STAVR_DEBUG_CPU';
+export const DEBUG_TOGGLE_REPORT = 'STAVR_DEBUG_REPORT';
+
+export function isDebugEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+  readToggle?: (key: string) => string | null,
+  perEndpointKey?: string,
+): boolean {
+  // Runtime toggle takes precedence — per the brief, the master is the
+  // primary gate and the per-endpoint key is layered on top.
+  if (readToggle) {
+    const master = readToggle(DEBUG_TOGGLE_MASTER);
+    if (master === '1' || master === 'true') return true;
+    if (perEndpointKey) {
+      const ep = readToggle(perEndpointKey);
+      if (ep === '1' || ep === 'true') return true;
+    }
+  }
   const v = env.STAVR_DEBUG_ENABLED;
   return v === '1' || v === 'true';
 }
@@ -66,10 +106,12 @@ export function mountDebugEndpoints(app: Express, opts: MountDebugEndpointsOpts 
   const env = opts.env ?? process.env;
   const now = opts.now ?? Date.now;
   const cwd = opts.cwd ?? (() => process.cwd());
+  const readToggle = opts.readToggle;
+  const emit = opts.emitEvent ?? (() => { /* no-op when not wired */ });
   const logger = getLogger();
 
-  const gated = (req: Request, res: Response): boolean => {
-    if (!isDebugEnabled(env) || !isLoopbackReq(req)) {
+  const gated = (req: Request, res: Response, perEndpointKey?: string): boolean => {
+    if (!isDebugEnabled(env, readToggle, perEndpointKey) || !isLoopbackReq(req)) {
       res.status(404).end();
       return false;
     }
@@ -77,7 +119,7 @@ export function mountDebugEndpoints(app: Express, opts: MountDebugEndpointsOpts 
   };
 
   app.post('/debug/heap-snapshot', (req: Request, res: Response) => {
-    if (!gated(req, res)) return;
+    if (!gated(req, res, DEBUG_TOGGLE_HEAP)) return;
     if (!checkRateLimit('heap-snapshot', now)) {
       res.status(429).json({ ok: false, error: 'rate_limited', retry_after_seconds: 60 });
       return;
@@ -88,6 +130,7 @@ export function mountDebugEndpoints(app: Express, opts: MountDebugEndpointsOpts 
       const file = writeHeapSnapshot(resolvePath(dir, `snapshot-${now()}.heapsnapshot`));
       const size = statSync(file).size;
       logger.info('heap snapshot written', { file, size_bytes: size });
+      emit('heap_snapshot_taken', { file, size_bytes: size });
       res.json({ ok: true, file, size_bytes: size });
     } catch (err) {
       res.status(500).json({ ok: false, error: (err as Error).message });
@@ -95,7 +138,7 @@ export function mountDebugEndpoints(app: Express, opts: MountDebugEndpointsOpts 
   });
 
   app.post('/debug/cpu-profile', async (req: Request, res: Response) => {
-    if (!gated(req, res)) return;
+    if (!gated(req, res, DEBUG_TOGGLE_CPU)) return;
     if (!checkRateLimit('cpu-profile', now)) {
       res.status(429).json({ ok: false, error: 'rate_limited', retry_after_seconds: 60 });
       return;
@@ -119,6 +162,7 @@ export function mountDebugEndpoints(app: Express, opts: MountDebugEndpointsOpts 
       writeFileSync(file, JSON.stringify(stopped.profile));
       const size = statSync(file).size;
       logger.info('cpu profile written', { file, duration_seconds: duration, size_bytes: size });
+      emit('cpu_profile_taken', { file, duration_seconds: duration, size_bytes: size });
       res.json({ ok: true, file, duration_seconds: duration, size_bytes: size });
     } catch (err) {
       res.status(500).json({ ok: false, error: (err as Error).message });
@@ -128,7 +172,7 @@ export function mountDebugEndpoints(app: Express, opts: MountDebugEndpointsOpts 
   });
 
   app.post('/debug/diagnostic-report', (req: Request, res: Response) => {
-    if (!gated(req, res)) return;
+    if (!gated(req, res, DEBUG_TOGGLE_REPORT)) return;
     if (!checkRateLimit('diagnostic-report', now)) {
       res.status(429).json({ ok: false, error: 'rate_limited', retry_after_seconds: 60 });
       return;
@@ -140,6 +184,7 @@ export function mountDebugEndpoints(app: Express, opts: MountDebugEndpointsOpts 
       const written = (process as unknown as { report: { writeReport: (p: string) => string } }).report.writeReport(target);
       const size = statSync(written).size;
       logger.info('diagnostic report written', { file: written, size_bytes: size });
+      emit('diagnostic_report_taken', { file: written, size_bytes: size });
       res.json({ ok: true, file: written, size_bytes: size });
     } catch (err) {
       res.status(500).json({ ok: false, error: (err as Error).message });

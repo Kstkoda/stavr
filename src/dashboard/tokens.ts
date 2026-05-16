@@ -35,5 +35,14 @@ export const TOKENS_CSS = `
   --profile-turbo:    #a78bfa;
   --profile-balanced: #60a5fa;
   --profile-eco:      #4ade80;
+  /* v8 additions (2026-05-17, Helm visual language) */
+  --rust:             #b8542a;
+  --rust-soft:        #c97a4f;
+  --rust-glow:        rgba(184, 84, 42, 0.4);
+  --bg-popover:       rgba(14, 16, 22, 0.92);
+  --glass-blur:       blur(24px) saturate(140%);
+  --health-ok:        #4ade80;
+  --health-warn:      #facc15;
+  --health-down:      #ef4444;
 }
 `;

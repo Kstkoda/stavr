@@ -20,6 +20,14 @@ export interface CapabilitiesData {
   activeMode: ProfileMode;
   /** Per-mode routing + budgets; defaults to DEFAULT_PROFILES when omitted. */
   profiles?: Record<ProfileMode, ProfileConfig>;
+  /**
+   * v0.4 — Ollama models currently available to the daemon (from
+   * `OllamaProvider.listAvailableModels()` at page-render time). Empty
+   * array means Ollama is unreachable or has no models pulled; the
+   * matrix view shows a hint when this is empty AND a local-friendly
+   * row is selected.
+   */
+  ollamaModels?: string[];
 }
 
 const MODE_PILL: Record<ProfileMode, PillVariant> = {
@@ -39,6 +47,10 @@ const CAPABILITY_LABEL: Record<CapabilityTag, string> = {
   'tool-use-heavy':   'tool-use-heavy',
   'simple-summary':   'simple summary',
   'no-model':         'no model',
+  'local-classifier': 'local · classifier',
+  'local-reasoning':  'local · reasoning',
+  'local-summary':    'local · summary',
+  'local-reading':    'local · reading',
 };
 
 function escapeHtml(s: string): string {
@@ -337,10 +349,198 @@ const CAP_JS = `
 })();
 `;
 
+// ============================================================
+// v0.4 — Steward pinned card + per-profile capability matrix
+// ============================================================
+
+function renderStewardCard(activeMode: ProfileMode, profiles: Record<ProfileMode, ProfileConfig>, ollamaModels: string[]): string {
+  const brain = profiles[activeMode].steward_brain;
+  const candidates = [
+    'claude-opus-4-7',
+    'claude-sonnet-4-6',
+    'claude-haiku-4-5',
+    ...ollamaModels,
+  ];
+  const options = candidates
+    .map((m) => `<option value="${escapeHtml(m)}"${m === brain ? ' selected' : ''}>${escapeHtml(shortModel(m))}</option>`)
+    .join('');
+  return [
+    `<section class="steward-pinned" data-role="steward-card">`,
+    `<div class="steward-rune" aria-hidden="true">ᛋ</div>`,
+    `<div class="steward-info">`,
+    `<div class="steward-name">Steward</div>`,
+    `<div class="steward-sub">Brain · <code>${escapeHtml(brain)}</code></div>`,
+    `</div>`,
+    `<label class="steward-pick">Model`,
+    `<select data-role="steward-model" aria-label="Steward brain model">${options}</select>`,
+    `</label>`,
+    `<label class="steward-pin"><input type="checkbox" data-role="steward-pin" /> 🔒 Pin across profiles</label>`,
+    `</section>`,
+  ].join('');
+}
+
+function renderCapMatrix(profiles: Record<ProfileMode, ProfileConfig>, ollamaModels: string[]): string {
+  const modes: ProfileMode[] = ['turbo', 'balanced', 'eco'];
+  const cells = CAPABILITY_TAGS.map((tag) => {
+    const tds = modes.map((mode) => {
+      const list = profiles[mode].routing[tag] ?? [];
+      const top = list[0] ?? '(no model)';
+      const tier = modelTier(top);
+      const isLocal = top !== '(no model)' && !top.startsWith('claude-');
+      const hasModelAvailable = isLocal ? ollamaModels.includes(top) : true;
+      const warn = isLocal && !hasModelAvailable;
+      return [
+        `<td class="cm-cell" data-mode="${mode}" data-tag="${escapeHtml(tag)}" data-tier="${tier}"${warn ? ' data-warn="missing"' : ''}>`,
+        `<button type="button" class="cm-pick" data-cell="${escapeHtml(tag)}|${mode}" aria-label="Pick model for ${escapeHtml(tag)} on ${mode}">`,
+        `<span class="cm-model">${escapeHtml(shortModel(top))}</span>`,
+        warn ? `<span class="cm-warn" title="Local model not pulled — falls back to next entry on dispatch">!</span>` : '',
+        `</button>`,
+        `</td>`,
+      ].join('');
+    }).join('');
+    return `<tr><th scope="row">${escapeHtml(CAPABILITY_LABEL[tag])}</th>${tds}</tr>`;
+  }).join('');
+  return [
+    `<section class="cm-matrix">`,
+    `<table class="cm-table">`,
+    `<thead><tr><th></th>`,
+    modes.map((m) => `<th class="cm-h" data-mode="${m}">${escapeHtml(profiles[m].label)}</th>`).join(''),
+    `</tr></thead>`,
+    `<tbody>${cells}</tbody>`,
+    `</table>`,
+    `</section>`,
+  ].join('');
+}
+
+const CAP_V8_CSS = `
+.steward-pinned {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  background: linear-gradient(135deg, var(--bg-surface), var(--bg-elevated));
+  border: 1px solid var(--rust-glow);
+  border-radius: 12px;
+  margin-bottom: 18px;
+  box-shadow: 0 0 0 1px var(--rust-glow);
+}
+.steward-rune {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--rust);
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  font-weight: 800;
+  color: #fff8f0;
+}
+.steward-info { flex: 1; }
+.steward-name { font-size: 14px; font-weight: 700; }
+.steward-sub  { font-size: 11px; color: var(--text-secondary); }
+.steward-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.steward-pick select {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.steward-pin { font-size: 11px; color: var(--text-secondary); }
+
+.cm-matrix { margin-bottom: 22px; }
+.cm-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.cm-table th, .cm-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.cm-h {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.cm-h[data-mode="turbo"]    { color: var(--profile-turbo); }
+.cm-h[data-mode="balanced"] { color: var(--profile-balanced); }
+.cm-h[data-mode="eco"]      { color: var(--profile-eco); }
+.cm-cell { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
+.cm-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 11px;
+}
+.cm-pick:hover { border-color: var(--rust); color: var(--rust-soft); }
+.cm-cell[data-tier="opus"]   .cm-pick { border-left: 3px solid var(--accent-ai-external); }
+.cm-cell[data-tier="sonnet"] .cm-pick { border-left: 3px solid var(--accent-mcp); }
+.cm-cell[data-tier="haiku"]  .cm-pick { border-left: 3px solid var(--accent-ai-internal); }
+.cm-cell[data-tier="other"]  .cm-pick { border-left: 3px solid var(--text-dim); }
+.cm-warn {
+  color: var(--health-warn);
+  font-weight: 700;
+}
+`;
+
+const CAP_V8_JS = `
+(function() {
+  // v0.4: pick button opens the floating inspector with a model-list and
+  // "pick" actions. Real save endpoint is v0.5 — for now we show the
+  // candidate list and the user picks; the choice is logged for the
+  // operator's awareness. This is the visual surface for the matrix.
+  const fi = window.__stavrFloatingInspector;
+  if (!fi) return;
+  const ollamaModels = (function() {
+    try {
+      const el = document.getElementById('cap-ollama');
+      return el ? JSON.parse(el.textContent || '[]') : [];
+    } catch (_) { return []; }
+  })();
+  const FRONTIER = ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5'];
+  const candidates = FRONTIER.concat(ollamaModels);
+
+  document.querySelectorAll('.cm-pick').forEach(function(b) {
+    b.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      const cell = b.getAttribute('data-cell') || '';
+      const parts = cell.split('|');
+      fi.openAt(b, {
+        icon: 'C',
+        title: parts[0] + ' · ' + parts[1],
+        sub: 'Pick model · v0.4 read-only (save flow is v0.5)',
+        sections: [
+          { label: 'Current', value: b.textContent.trim() },
+          { label: 'Available', value: candidates.join('\\n') },
+        ],
+      });
+    });
+  });
+})();
+`;
+
 export function renderCapabilitiesPage(data?: CapabilitiesData): string {
   const snapshot: CapabilitiesData = data ?? { activeMode: 'balanced' };
   const profiles = snapshot.profiles ?? DEFAULT_PROFILES;
   const active = snapshot.activeMode;
+  const ollamaModels = snapshot.ollamaModels ?? [];
   const modes: ProfileMode[] = ['turbo', 'balanced', 'eco'];
 
   const toggle = [
@@ -361,18 +561,22 @@ export function renderCapabilitiesPage(data?: CapabilitiesData): string {
     `<h1 class="page-title">Capabilities</h1>`,
     `<span class="page-sub">${CAPABILITY_TAGS.length} capability slot${CAPABILITY_TAGS.length === 1 ? '' : 's'} · 3 profile modes</span>`,
     `</div>`,
+    renderStewardCard(active, profiles, ollamaModels),
+    renderCapMatrix(profiles, ollamaModels),
+    `<h2 class="card-title" style="margin-top:18px;">Active profile baseplate</h2>`,
     toggle,
     baseplate,
     budgets,
-    `<div class="read-only-note">Read-only in v0.3. Editing assignments lands in v0.4 — for now, swap the active profile from <a href="/dashboard/settings" style="color:var(--accent-mcp);">Settings</a>.</div>`,
+    `<div class="read-only-note">v0.4 surfaces the matrix view + Ollama model list; persisting picks lands in v0.5 (ADR-032). Swap the active profile from <a href="/dashboard/settings" style="color:var(--accent-mcp);">Settings</a>.</div>`,
     `<script id="cap-profiles" type="application/json">${JSON.stringify(profiles)}</script>`,
+    `<script id="cap-ollama"   type="application/json">${JSON.stringify(ollamaModels)}</script>`,
   ].join('');
 
   return renderShell({
     title: 'Stavr — Capabilities',
     activePage: 'capabilities',
     body,
-    head: `<style>${CAP_CSS}</style>`,
-    script: CAP_JS,
+    head: `<style>${CAP_CSS}\n${CAP_V8_CSS}</style>`,
+    script: `${CAP_JS}\n${CAP_V8_JS}`,
   });
 }

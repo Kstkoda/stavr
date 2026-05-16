@@ -104,11 +104,23 @@ describe('computeTopology', () => {
 });
 
 describe('Topology page — unit', () => {
-  it('renders the steward at the centre and an SVG bus line', () => {
+  it('renders the daemon disc at the centre and an SVG bus line', () => {
     const html = renderTopologyPage(snapshot());
-    expect(html).toContain('STAVR</text>');
+    // v8: rust disc + STAVR DAEMON label (the v0.3 plain "STAVR" text was
+    // replaced when the central node grew the daemon-rune treatment).
+    expect(html).toContain('STAVR DAEMON');
+    expect(html).toContain('topo-daemon-disc');
     expect(html).toContain('class="topo-bus"');
     expect(html).toContain('enterprise bus');
+  });
+
+  it('renders the v8 mode-switcher chips (RADIAL active · HEAT/HISTORY placeholders)', () => {
+    const html = renderTopologyPage(snapshot());
+    expect(html).toContain('topo-mode-chips');
+    expect(html).toContain('data-mode="radial"');
+    expect(html).toContain('data-mode="heat"');
+    expect(html).toContain('data-mode="history"');
+    expect(html).toMatch(/data-mode="radial"\s+aria-pressed="true"/);
   });
 
   it('renders a node per worker tagged with started/ended-at for the scrubber', () => {

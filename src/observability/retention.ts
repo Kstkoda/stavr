@@ -126,6 +126,13 @@ export const AUDIT_KINDS: ReadonlySet<string> = new Set([
   'error',
   'progress',
   'bom_step_progress',
+  // v0.4 — diagnostic + capture audit kinds
+  'runtime_toggle_changed',
+  'runtime_toggle_expired',
+  'heap_snapshot_taken',
+  'cpu_profile_taken',
+  'diagnostic_report_taken',
+  'capture_filed',
 ]);
 
 export type RetentionClass = 'operational' | 'audit' | 'unknown';

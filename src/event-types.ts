@@ -90,6 +90,13 @@ export const EventKind = z.enum([
   'sse_session_force_removed',
   'mcp_session_deleted',
   'retention_swept',
+  // v0.4 — runtime toggles + capture + diagnostic-capture audit
+  'runtime_toggle_changed',
+  'runtime_toggle_expired',
+  'heap_snapshot_taken',
+  'cpu_profile_taken',
+  'diagnostic_report_taken',
+  'capture_filed',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 

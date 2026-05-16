@@ -260,7 +260,7 @@ export class StewardPlanner {
       'You are the stavr Steward planner. Given a goal and the available capabilities,',
       'produce a numbered Bill of Materials (BOM) of 1-12 steps. Each step has:',
       '  title (short), description (one sentence),',
-      "  capability (one of: 'reading', 'cheap-classifier', 'code-execution', 'code-reasoning', 'long-context', 'multimodal-vision', 'multimodal-audio', 'tool-use-heavy', 'simple-summary', 'no-model'),",
+      "  capability (one of: 'reading', 'cheap-classifier', 'code-execution', 'code-reasoning', 'long-context', 'multimodal-vision', 'multimodal-audio', 'tool-use-heavy', 'simple-summary', 'no-model', 'local-classifier', 'local-reasoning', 'local-summary', 'local-reading' — prefer the 'local-*' variants when a step is trivially eligible for a small local LLM),",
       "  risk_class (one of: 'read-only', 'write-local', 'write-remote', 'execute', 'external-comm', 'financial', 'credential', 'destructive'),",
       "  brick_id (must match one of the available capabilities' connectorId, or 'steward' / 'cc' for internal),",
       '  depends_on (array of prior step numbers; empty for sequential).',
@@ -421,15 +421,30 @@ export function estimateStepCost(model: string, capability: CapabilityTag): numb
     capability === 'multimodal-vision' ? [6000, 1000] :
     capability === 'tool-use-heavy' ? [6000, 2500] :
     capability === 'simple-summary' ? [1500, 400] :
+    capability === 'local-classifier' ? [800, 200] :
+    capability === 'local-reasoning' ? [4000, 1000] :
+    capability === 'local-summary' ? [1500, 400] :
+    capability === 'local-reading' ? [2000, 200] :
     [1500, 500];
   const pricePer1k: Record<string, [number, number]> = {
     'claude-opus-4-7': [0.015, 0.075],
     'claude-sonnet-4-6': [0.003, 0.015],
     'claude-haiku-4-5': [0.0008, 0.004],
+    // Local Ollama models — zero per-token cost. The local-runtime power +
+    // wall-clock cost is real but not USD-billable, and the dashboard's
+    // "wattage" card (v0.5) will track it separately.
+    'llama3.2:3b': [0, 0],
+    'llama3.3:8b': [0, 0],
+    'phi3:mini': [0, 0],
+    'deepseek-r1:32b': [0, 0],
+    // Legacy placeholders kept for backwards compat with seeded BOMs.
     'llama-3.1-8b': [0, 0],
     'llama-3.1-70b': [0, 0],
   };
-  const [pIn, pOut] = pricePer1k[model] ?? [0.003, 0.015];
+  // Local models lookup falls through to zero so any unknown `family:tag`
+  // shape produces $0 instead of a wrong frontier estimate.
+  const fallback: [number, number] = model.startsWith('claude-') ? [0.003, 0.015] : [0, 0];
+  const [pIn, pOut] = pricePer1k[model] ?? fallback;
   return (tokensInOut[0] / 1000) * pIn + (tokensInOut[1] / 1000) * pOut;
 }
 
@@ -455,5 +470,13 @@ export function estimateStepDuration(capability: CapabilityTag): number {
       return 10;
     case 'no-model':
       return 30;
+    case 'local-classifier':
+      return 8; // local 3B model: a touch slower than haiku on CPU-only hosts
+    case 'local-reasoning':
+      return 30;
+    case 'local-summary':
+      return 12;
+    case 'local-reading':
+      return 18;
   }
 }

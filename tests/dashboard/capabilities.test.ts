@@ -69,7 +69,9 @@ describe('Capabilities page — unit', () => {
 
   it('flags itself read-only with a link to Settings', () => {
     const html = renderCapabilitiesPage({ activeMode: 'balanced' });
-    expect(html).toContain('Read-only in v0.3');
+    // v0.4 changed the surface from "v0.3 read-only" to "matrix + Ollama models;
+    // persisting picks lands in v0.5"; the link to Settings stays.
+    expect(html).toContain('v0.4');
     expect(html).toContain('/dashboard/settings');
   });
 });

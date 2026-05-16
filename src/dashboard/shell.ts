@@ -14,14 +14,32 @@ import { BRICK_CSS } from './components/brick.js';
 import { INSPECTOR_CSS, INSPECTOR_JS, renderInspectorPanel } from './components/inspector.js';
 import { PILL_CSS } from './components/pill.js';
 import { SCRUBBER_CSS } from './components/scrubber.js';
+import {
+  FLOATING_INSPECTOR_CSS,
+  FLOATING_INSPECTOR_JS,
+  renderFloatingInspectorShell,
+} from './components/floating-inspector.js';
+import { TIMELINE_CSS, TIMELINE_JS, renderTimeline } from './components/timeline.js';
+import {
+  WATCHDOG_PIP_CSS,
+  WATCHDOG_PIP_JS,
+  renderWatchdogPip,
+} from './components/watchdog-pip.js';
+import {
+  CAPTURE_BUTTON_CSS,
+  CAPTURE_BUTTON_JS,
+  renderCaptureButton,
+} from './components/capture-button.js';
 
 export type DashboardPageId =
+  | 'helm'
   | 'home'
   | 'topology'
   | 'streams'
   | 'plans'
   | 'decide'
   | 'toolkit'
+  | 'mcps'
   | 'capabilities'
   | 'settings';
 
@@ -32,14 +50,24 @@ export interface NavEntry {
 }
 
 export const NAV_ENTRIES: NavEntry[] = [
-  { id: 'home',         label: 'Home',         href: '/dashboard/home' },
+  { id: 'helm',         label: 'Helm',         href: '/dashboard/helm' },
   { id: 'topology',     label: 'Topology',     href: '/dashboard/topology' },
   { id: 'streams',      label: 'Streams',      href: '/dashboard/streams' },
   { id: 'plans',        label: 'Plans',        href: '/dashboard/plans' },
   { id: 'decide',       label: 'Decide',       href: '/dashboard/decide' },
   { id: 'toolkit',      label: 'Toolkit',      href: '/dashboard/toolkit' },
+  { id: 'mcps',         label: 'MCPs',         href: '/dashboard/mcps' },
   { id: 'capabilities', label: 'Capabilities', href: '/dashboard/capabilities' },
   { id: 'settings',     label: 'Settings',     href: '/dashboard/settings' },
+];
+
+/**
+ * Pages that still have a route but are no longer surfaced in the primary
+ * top nav. `home` is the v0.3 predecessor of `helm`; it stays alive as a
+ * deep-linkable URL so existing bookmarks + integration tests keep working.
+ */
+export const LEGACY_NAV_ENTRIES: NavEntry[] = [
+  { id: 'home', label: 'Home (legacy)', href: '/dashboard/home' },
 ];
 
 export interface RenderShellInput {
@@ -104,6 +132,11 @@ button { font: inherit; }
   gap: 2px;
   flex: 1;
 }
+.topnav-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .nav-tab {
   padding: 8px 14px;
   border-radius: 6px;
@@ -119,6 +152,8 @@ button { font: inherit; }
 
 .page {
   padding: 24px 28px;
+  /* Allow space for the fixed-bottom smooth timeline (44px). */
+  padding-bottom: 60px;
   overflow: auto;
 }
 .page-head {
@@ -278,6 +313,10 @@ export function renderShell(input: RenderShellInput): string {
     INSPECTOR_CSS,
     PILL_CSS,
     SCRUBBER_CSS,
+    FLOATING_INSPECTOR_CSS,
+    TIMELINE_CSS,
+    WATCHDOG_PIP_CSS,
+    CAPTURE_BUTTON_CSS,
   ].join('\n');
 
   const script = input.script ? `<script>${input.script}</script>` : '';
@@ -296,15 +335,23 @@ export function renderShell(input: RenderShellInput): string {
     `<header class="topnav" role="navigation" aria-label="Primary">`,
     `<div class="brand"><span class="brand-mark">S</span>STAVR</div>`,
     `<nav class="nav-tabs">${renderNav(input.activePage)}</nav>`,
+    `<div class="topnav-right">${renderWatchdogPip()}</div>`,
     `</header>`,
     `<main class="page" role="main">${input.body}</main>`,
     renderInspectorPanel(),
+    renderFloatingInspectorShell(),
+    renderCaptureButton(),
+    renderTimeline(),
     `<div class="conn-banner" data-role="conn-banner" role="status" aria-live="polite">`,
     `<span class="conn-banner-dot" aria-hidden="true"></span>`,
     `<span data-role="conn-banner-msg">Live updates connected.</span>`,
     `</div>`,
     `<script>${INSPECTOR_JS}</script>`,
     `<script>${SHELL_CONN_JS}</script>`,
+    `<script>${FLOATING_INSPECTOR_JS}</script>`,
+    `<script>${TIMELINE_JS}</script>`,
+    `<script>${WATCHDOG_PIP_JS}</script>`,
+    `<script>${CAPTURE_BUTTON_JS}</script>`,
     script,
     `</body>`,
     `</html>`,

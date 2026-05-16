@@ -37,6 +37,16 @@ export interface SettingsData {
   scopes: SettingsScope[];
   noGo: NoGoRow[];
   bricks: InstalledBrickLite[];
+  /** v0.4 — runtime toggles for /debug/* endpoints. */
+  runtimeToggles?: Array<{
+    key: string;
+    value: string;
+    set_by: string;
+    set_at: number;
+    expires_at: number | null;
+  }>;
+  /** v0.4 — recent diagnostic captures (heap/cpu/report). */
+  recentDiagnostics?: Array<{ kind: string; at: string; payload: Record<string, unknown> }>;
 }
 
 const MODE_PILL: Record<ProfileMode, PillVariant> = {
@@ -483,6 +493,213 @@ const SETTINGS_JS = `
 })();
 `;
 
+function renderCapturesSection(): string {
+  // v0.4 — captures route config. For v0.4 every type routes to the local
+  // `~/.stavr/captures/<type>.jsonl` file. The Steward will overlay
+  // GitHub/Linear routing in v0.6+ (ADR-035 phase 1); the "Change" button
+  // is wired but inert.
+  const rows: Array<[string, string]> = [
+    ['bug',         '~/.stavr/captures/bug.jsonl'],
+    ['feature',     '~/.stavr/captures/feature.jsonl'],
+    ['investigate', '~/.stavr/captures/investigate.jsonl'],
+    ['todo',        '~/.stavr/captures/todo.jsonl'],
+  ];
+  const body = rows.map(([type, dest]) => `
+    <tr>
+      <td>${escapeHtml(type)}</td>
+      <td><code>${escapeHtml(dest)}</code></td>
+      <td class="row-actions"><button type="button" class="btn ghost" data-role="capture-route-change" data-type="${escapeHtml(type)}" disabled title="v0.6 — Steward routing">Change</button></td>
+    </tr>
+  `).join('');
+  return [
+    `<section class="settings-section" data-section="captures">`,
+    `<h2 class="card-title">Captures · route config</h2>`,
+    `<table class="settings-table">`,
+    `<thead><tr><th>Type</th><th>Destination</th><th></th></tr></thead>`,
+    `<tbody>${body}</tbody>`,
+    `</table>`,
+    `<p class="empty" style="font-style:normal;margin-top:8px;">v0.4 writes captures to a local jsonl. Steward routing to GitHub / Linear is v0.6+ (ADR-035 phase 1).</p>`,
+    `</section>`,
+  ].join('');
+}
+
+function renderDiagnosticsSection(
+  toggles: NonNullable<SettingsData['runtimeToggles']>,
+  recent: NonNullable<SettingsData['recentDiagnostics']>,
+): string {
+  // v0.4 runtime toggles — see memory/project_stavr_runtime_toggles.md.
+  // Three /debug/* endpoints, each with a switch + countdown + take-now
+  // action. Default TTL on enable = 60 min.
+  const byKey = new Map(toggles.map((t) => [t.key, t]));
+  const rows = [
+    { key: 'STAVR_DEBUG_HEAP',   label: 'Heap snapshot',     endpoint: '/debug/heap-snapshot' },
+    { key: 'STAVR_DEBUG_CPU',    label: 'CPU profile',       endpoint: '/debug/cpu-profile' },
+    { key: 'STAVR_DEBUG_REPORT', label: 'Diagnostic report', endpoint: '/debug/diagnostic-report' },
+  ];
+  const rowsHtml = rows.map((row) => {
+    const t = byKey.get(row.key);
+    const on = t?.value === '1' || t?.value === 'true';
+    const expiresAt = t?.expires_at ?? null;
+    return `
+      <tr data-role="diag-row" data-key="${escapeHtml(row.key)}">
+        <td>${escapeHtml(row.label)} <code style="margin-left:6px;font-size:10px;color:var(--text-dim);">${escapeHtml(row.endpoint)}</code></td>
+        <td>
+          <label class="diag-switch">
+            <input type="checkbox" data-role="diag-toggle" data-key="${escapeHtml(row.key)}"${on ? ' checked' : ''} />
+            <span class="diag-switch-track"><span class="diag-switch-knob"></span></span>
+          </label>
+        </td>
+        <td><span class="diag-countdown" data-role="diag-countdown" data-expires-at="${expiresAt ?? ''}">${expiresAt ? '' : '—'}</span></td>
+        <td class="row-actions">
+          <button type="button" class="btn" data-role="diag-extend" data-key="${escapeHtml(row.key)}">+1 h</button>
+          <button type="button" class="btn primary" data-role="diag-take-now" data-endpoint="${escapeHtml(row.endpoint)}">Take now</button>
+        </td>
+      </tr>`;
+  }).join('');
+
+  const recentHtml = recent.length === 0
+    ? '<p class="empty">Nothing in the last 24h.</p>'
+    : '<ul style="list-style:none;padding:0;margin:0;font-size:11px;font-family:ui-monospace, Menlo, Consolas, monospace;">'
+      + recent.slice(0, 10).map((e) => {
+        const file = typeof e.payload?.file === 'string' ? e.payload.file : '(no file)';
+        return `<li><span style="color:var(--rust-soft);">${escapeHtml(e.kind)}</span> <span style="color:var(--text-dim);">${escapeHtml(e.at.slice(11, 19))}</span> ${escapeHtml(file)}</li>`;
+      }).join('') + '</ul>';
+
+  return [
+    `<section class="settings-section" data-section="diagnostics">`,
+    `<h2 class="card-title">Diagnostics · runtime toggles</h2>`,
+    `<table class="settings-table">`,
+    `<thead><tr><th>Endpoint</th><th style="width:80px;">On</th><th style="width:120px;">Expires</th><th></th></tr></thead>`,
+    `<tbody>${rowsHtml}</tbody>`,
+    `</table>`,
+    `<p class="empty" style="font-style:normal;margin:8px 0 0;">Default TTL 60 minutes; eviction is audit-logged. Endpoints stay loopback-only regardless (ADR-006).</p>`,
+    `<h3 class="card-title" style="margin-top:18px;">Recent diagnostics (last 24h)</h3>`,
+    recentHtml,
+    `<div class="section-status" data-role="diagnostics-status"></div>`,
+    `</section>`,
+  ].join('');
+}
+
+const SETTINGS_DIAG_CSS = `
+.diag-switch { position: relative; display: inline-block; width: 36px; height: 18px; cursor: pointer; }
+.diag-switch input { opacity: 0; width: 0; height: 0; }
+.diag-switch-track {
+  position: absolute; inset: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.diag-switch-knob {
+  position: absolute; top: 1px; left: 1px;
+  width: 14px; height: 14px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.diag-switch input:checked + .diag-switch-track {
+  background: var(--rust-glow);
+  border-color: var(--rust);
+}
+.diag-switch input:checked + .diag-switch-track .diag-switch-knob {
+  transform: translateX(18px);
+  background: var(--rust-soft);
+}
+.diag-countdown {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+`;
+
+const SETTINGS_DIAG_JS = `
+(function() {
+  // Countdown ticker — formats expires_at as "MM:SS left".
+  function fmt(msLeft) {
+    if (msLeft <= 0) return 'expired';
+    const s = Math.floor(msLeft / 1000);
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return m + ':' + (r < 10 ? '0' : '') + r + ' left';
+  }
+  function tickCountdowns() {
+    document.querySelectorAll('[data-role="diag-countdown"]').forEach(function(el) {
+      const exp = Number(el.getAttribute('data-expires-at'));
+      if (!exp) { el.textContent = '—'; return; }
+      el.textContent = fmt(exp - Date.now());
+    });
+  }
+  setInterval(tickCountdowns, 1000);
+  tickCountdowns();
+
+  async function setToggle(key, on, ttlMinutes) {
+    const r = await fetch('/dashboard/settings/runtime-toggles', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: key, value: on ? '1' : '0', ttl_minutes: ttlMinutes }),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }
+
+  document.querySelectorAll('[data-role="diag-toggle"]').forEach(function(input) {
+    input.addEventListener('change', async function() {
+      const key = input.getAttribute('data-key');
+      const ttl = input.checked ? 60 : 0;
+      try {
+        const j = await setToggle(key, input.checked, ttl);
+        const row = input.closest('[data-role="diag-row"]');
+        const cd = row && row.querySelector('[data-role="diag-countdown"]');
+        if (cd) {
+          if (j.expires_at) {
+            cd.setAttribute('data-expires-at', String(j.expires_at));
+          } else {
+            cd.setAttribute('data-expires-at', '');
+            cd.textContent = input.checked ? 'no expiry' : '—';
+          }
+        }
+        tickCountdowns();
+      } catch (err) {
+        input.checked = !input.checked;
+        const status = document.querySelector('[data-role="diagnostics-status"]');
+        if (status) { status.textContent = 'Toggle failed: ' + err.message; status.className = 'section-status error'; }
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-role="diag-extend"]').forEach(function(b) {
+    b.addEventListener('click', async function() {
+      const key = b.getAttribute('data-key');
+      try {
+        const j = await setToggle(key, true, 60);
+        const row = b.closest('[data-role="diag-row"]');
+        const cd = row && row.querySelector('[data-role="diag-countdown"]');
+        if (cd && j.expires_at) cd.setAttribute('data-expires-at', String(j.expires_at));
+        tickCountdowns();
+      } catch (err) { /* swallow */ }
+    });
+  });
+
+  document.querySelectorAll('[data-role="diag-take-now"]').forEach(function(b) {
+    b.addEventListener('click', async function() {
+      const endpoint = b.getAttribute('data-endpoint');
+      const status = document.querySelector('[data-role="diagnostics-status"]');
+      if (status) { status.textContent = 'Triggering ' + endpoint + '…'; status.className = 'section-status'; }
+      try {
+        const r = await fetch(endpoint, { method: 'POST' });
+        const j = r.headers.get('content-type') && r.headers.get('content-type').indexOf('json') >= 0
+          ? await r.json()
+          : { ok: r.ok };
+        if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        if (status) { status.textContent = 'Wrote ' + (j.file || 'ok'); status.className = 'section-status ok'; }
+      } catch (err) {
+        if (status) { status.textContent = 'Failed: ' + err.message; status.className = 'section-status error'; }
+      }
+    });
+  });
+})();
+`;
+
 export function renderSettingsPage(data?: SettingsData): string {
   const snapshot: SettingsData = data ?? {
     activeMode: 'balanced',
@@ -490,21 +707,25 @@ export function renderSettingsPage(data?: SettingsData): string {
     noGo: [],
     bricks: [],
   };
+  const toggles = snapshot.runtimeToggles ?? [];
+  const recent = snapshot.recentDiagnostics ?? [];
   const body = [
     `<div class="page-head">`,
     `<h1 class="page-title">Settings</h1>`,
-    `<span class="page-sub">Profile · trust scopes · no-go list · bricks</span>`,
+    `<span class="page-sub">Profile · trust scopes · no-go list · captures · diagnostics · bricks</span>`,
     `</div>`,
     renderProfileSection(snapshot.activeMode),
     renderScopesSection(snapshot.scopes),
     renderNoGoSection(snapshot.noGo),
+    renderCapturesSection(),
+    renderDiagnosticsSection(toggles, recent),
     renderBricksSection(snapshot.bricks),
   ].join('');
   return renderShell({
     title: 'Stavr — Settings',
     activePage: 'settings',
     body,
-    head: `<style>${SETTINGS_CSS}</style>`,
-    script: SETTINGS_JS,
+    head: `<style>${SETTINGS_CSS}\n${SETTINGS_DIAG_CSS}</style>`,
+    script: `${SETTINGS_JS}\n${SETTINGS_DIAG_JS}`,
   });
 }

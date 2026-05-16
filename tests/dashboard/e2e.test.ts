@@ -66,10 +66,10 @@ afterAll(async () => {
 });
 
 describe('Dashboard e2e — every page reachable + shell intact', () => {
-  it('GET /dashboard redirects to /dashboard/home', async () => {
+  it('GET /dashboard redirects to /dashboard/helm', async () => {
     const r = await fetch(`${base}/dashboard`, { redirect: 'manual' });
     expect(r.status).toBe(302);
-    expect(r.headers.get('location')).toBe('/dashboard/home');
+    expect(r.headers.get('location')).toBe('/dashboard/helm');
   });
 
   for (const entry of NAV_ENTRIES) {

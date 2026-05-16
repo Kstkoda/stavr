@@ -96,6 +96,39 @@ export const stavrHttpRequestDuration = new Histogram({
   registers: [registry],
 });
 
+export const stavrProviderRequests = new Counter({
+  name: 'stavr_provider_requests_total',
+  help: 'LLM provider calls by provider/model/status',
+  labelNames: ['provider', 'model', 'status'],
+  registers: [registry],
+});
+
+export const stavrProviderLatency = new Histogram({
+  name: 'stavr_provider_latency_seconds',
+  help: 'LLM provider call latency',
+  labelNames: ['provider', 'model'],
+  // Local Ollama on CPU can take >30s; remote frontier models typically <10s.
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120],
+  registers: [registry],
+});
+
+export function recordProviderRequest(provider: string, model: string, status: string): void {
+  stavrProviderRequests.labels(provider, normalizeModelLabel(model), status).inc();
+}
+
+export function recordProviderLatency(provider: string, model: string, seconds: number): void {
+  stavrProviderLatency.labels(provider, normalizeModelLabel(model)).observe(seconds);
+}
+
+/** Keep model label cardinality bounded — strip a `:tag` suffix on local
+ *  models (e.g. `llama3.2:3b` → `llama3.2:3b` stays as-is; very long names
+ *  truncate). */
+function normalizeModelLabel(model: string): string {
+  if (!model) return 'unknown';
+  if (model.length > 48) return model.slice(0, 48);
+  return model;
+}
+
 // ---- Source-agent normalization ----
 
 const KNOWN_SOURCE_PREFIXES = [
