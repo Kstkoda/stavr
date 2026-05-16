@@ -118,12 +118,14 @@ const DECIDE_CSS = `
   gap: 14px;
 }
 .decide-card {
-  background: var(--bg-surface);
-  border: 1px solid var(--risk-medium);
-  border-radius: 10px;
+  background: var(--bg-glass);
+  border: 1px solid rgba(226,169,66,.35);
+  border-radius: 12px;
   padding: 16px;
-  box-shadow: 0 0 0 0 rgba(250,204,21,0.0);
+  box-shadow: 0 0 0 0 rgba(226,169,66,0.0);
   transition: box-shadow 0.3s ease;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
 }
 .decide-card[data-urgent="true"] {
   box-shadow: 0 0 0 2px rgba(250,204,21,0.35);

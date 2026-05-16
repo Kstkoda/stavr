@@ -120,28 +120,31 @@ const STREAMS_CSS = `
   gap: 12px;
 }
 .stream-pane {
-  background: #07080b;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: var(--bg-glass);
+  border: 1px solid var(--line);
+  border-radius: 10px;
   display: flex;
   flex-direction: column;
   min-height: 180px;
   position: relative;
   transition: opacity 0.2s ease, border-color 0.2s ease;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  overflow: hidden;
 }
 .stream-pane.quiet { opacity: 0.5; }
 .stream-pane.hidden { display: none; }
-.stream-pane[data-status="crashed"] { border-color: var(--risk-high); }
-.stream-pane[data-status="running"] { border-color: var(--accent-mcp); }
+.stream-pane[data-status="crashed"] { border-color: var(--crit); }
+.stream-pane[data-status="running"] { border-color: rgba(106,169,255,.35); }
 
 .pane-head {
   display: flex;
   gap: 8px;
   align-items: center;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-surface);
-  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255,255,255,.02);
+  border-radius: 10px 10px 0 0;
 }
 .pane-name { font-size: 12px; font-weight: 600; color: var(--text-primary); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pane-type {
@@ -187,10 +190,11 @@ const STREAMS_CSS = `
 .streams-empty {
   padding: 60px 24px;
   text-align: center;
-  color: var(--text-secondary);
-  background: var(--bg-surface);
-  border-radius: 10px;
-  border: 1px dashed var(--border-strong);
+  color: var(--ink-2);
+  background: var(--bg-glass);
+  border-radius: 12px;
+  border: 1px dashed var(--line-2);
+  backdrop-filter: blur(14px) saturate(140%);
 }
 
 .fullscreen-tail {

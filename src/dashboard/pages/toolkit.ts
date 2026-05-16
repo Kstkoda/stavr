@@ -87,15 +87,17 @@ const TOOLKIT_CSS = `
   .toolkit-frame { grid-template-columns: 1fr; }
 }
 .toolkit-canvas {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: var(--bg-glass);
+  border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 24px;
   min-height: 480px;
   display: grid;
-  grid-template-rows: 1fr auto 1fr;
+  grid-template-rows: 1fr 1fr;
   gap: 18px;
   position: relative;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
 }
 .brick-zone {
   display: flex;
@@ -115,39 +117,6 @@ const TOOLKIT_CSS = `
   font-size: 12px;
   font-style: italic;
   margin: auto;
-}
-.bus {
-  height: 3px;
-  background: var(--accent-steward);
-  border-radius: 3px;
-  position: relative;
-}
-.bus::before, .bus::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--accent-steward);
-  transform: translateY(-50%);
-}
-.bus::before { left: -6px; }
-.bus::after  { right: -6px; }
-.bus-label {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  background: var(--bg-surface);
-  padding: 4px 14px;
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--accent-steward);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  border: 1px solid var(--accent-steward);
-  border-radius: 14px;
 }
 .brick-tile {
   display: flex;
@@ -170,13 +139,15 @@ const TOOLKIT_CSS = `
 .brick-tile-name { font-size: 11px; color: var(--text-primary); font-weight: 600; }
 
 .toolkit-side {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: var(--bg-glass);
+  border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
 }
 .installer-input {
   width: 100%;
@@ -442,7 +413,6 @@ export function renderToolkitPage(data?: ToolkitData): string {
     `<div class="brick-zone above" data-position="above" data-empty="No external bricks installed yet.">`,
     above.map(renderBrickTile).join(''),
     `</div>`,
-    `<div class="bus"><span class="bus-label">enterprise bus · steward</span></div>`,
     `<div class="brick-zone below" data-position="below" data-empty="No internal bricks registered.">`,
     below.map(renderBrickTile).join(''),
     `</div>`,
