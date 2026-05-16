@@ -1,6 +1,9 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import type { Server as HttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { writeHeapSnapshot } from 'node:v8';
+import { mkdirSync, statSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createSwitchServer, getOrCreateTrustStore } from './server.js';
@@ -266,6 +269,28 @@ export async function mountTransports(
       });
     });
 
+    // OOM leak-hunt — loopback-only heap snapshot trigger. Defense-in-depth:
+    // even though the daemon binds 127.0.0.1 by default, we re-check the
+    // request origin so a misconfigured non-loopback bind cannot expose it.
+    // Snapshots are written to ./tmp/heap-snapshots/snapshot-<ts>.heapsnapshot
+    // — same directory the leak-repro script reads from. The file path comes
+    // back to the caller so curl/scripts know where to look.
+    app.post('/debug/heap-snapshot', (req: Request, res: Response) => {
+      if (!isLoopbackRequest(req)) {
+        res.status(403).json({ ok: false, error: 'loopback only' });
+        return;
+      }
+      try {
+        const dir = resolvePath(process.cwd(), 'tmp', 'heap-snapshots');
+        mkdirSync(dir, { recursive: true });
+        const file = writeHeapSnapshot(resolvePath(dir, `snapshot-${Date.now()}.heapsnapshot`));
+        const size = statSync(file).size;
+        res.json({ ok: true, file, size_bytes: size });
+      } catch (err) {
+        res.status(500).json({ ok: false, error: (err as Error).message });
+      }
+    });
+
     // Spec 50 Layer 1 — usage endpoint. Same auth posture as /dashboard/*
     // (127.0.0.1 only via the binding, no auth header).
     app.get('/usage', async (req, res) => {
@@ -293,6 +318,14 @@ export async function mountTransports(
     // and DELETE (session termination). The transport closes the SSE stream
     // between requests, so undici's bodyTimeout is never an issue — closes
     // audit major #2 cleanly without client-side dispatcher overrides.
+    //
+    // TODO(bom-oom-leak-hunt C2.4): app.all() funnels DELETE through the
+    // SDK's transport.handleRequest, which fires `onclose` async. C2 adds an
+    // explicit `app.delete('/mcp', …)` handler that synchronously tears down
+    // transport + broker subscription + tap + map entry, then emits
+    // `mcp_session_deleted` with the post-delete session count. Until then
+    // the `sse_session_closed` event below covers both onclose paths
+    // (network drop and explicit DELETE), but with looser timing semantics.
     app.all('/mcp', async (req: Request, res: Response) => {
       const incomingSid = req.header('mcp-session-id');
       let session = incomingSid ? sseSessions.get(incomingSid) : undefined;
@@ -313,6 +346,24 @@ export async function mountTransports(
           const tid = transport.sessionId;
           if (tid) sseSessions.delete(tid);
           broker.removeSession(handle.sessionId);
+          // OOM leak-hunt: proves cleanup is firing. The session count is
+          // captured AFTER removal so the value the operator sees in `stavr
+          // tail` matches the in-memory state immediately after the close.
+          void broker
+            .publish({
+              kind: 'sse_session_closed',
+              at: new Date().toISOString(),
+              source_agent: 'stavr-daemon',
+              correlation_id: tid ?? handle.sessionId,
+              payload: {
+                session_id: tid ?? handle.sessionId,
+                sse_sessions_size: sseSessions.size,
+                broker_session_count: broker.sessionCount(),
+              },
+            })
+            .catch(() => {
+              /* persistence-failed; broker.publish already logs */
+            });
         };
         session = { transport, handle };
         isNew = true;
@@ -325,6 +376,23 @@ export async function mountTransports(
       if (isNew && session.transport.sessionId) {
         sseSessions.set(session.transport.sessionId, session);
         log(`MCP session ${session.transport.sessionId} connected`);
+        // OOM leak-hunt: paired with `sse_session_closed` below. The count
+        // INCLUDES the just-registered session so it reflects the live map.
+        void broker
+          .publish({
+            kind: 'sse_session_opened',
+            at: new Date().toISOString(),
+            source_agent: 'stavr-daemon',
+            correlation_id: session.transport.sessionId,
+            payload: {
+              session_id: session.transport.sessionId,
+              sse_sessions_size: sseSessions.size,
+              broker_session_count: broker.sessionCount(),
+            },
+          })
+          .catch(() => {
+            /* persistence-failed; broker.publish already logs */
+          });
       }
     });
 

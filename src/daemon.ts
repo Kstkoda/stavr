@@ -27,6 +27,7 @@ import {
 import { start as startWorkerWatchdog } from './workers/watchdog.js';
 import { loadConfig } from './config.js';
 import { wireV02Subsystem, type V02SubsystemHandle } from './steward/v02-wiring.js';
+import { startMemoryPoller, type MemoryPollerStop } from './observability/memory-poller.js';
 
 export interface DaemonOptions {
   port: number;
@@ -279,6 +280,20 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
 
   const workerWatchdog = startWorkerWatchdog(broker, store);
 
+  // OOM leak-hunt (bom-oom-leak-hunt C1.3): emit a daemon_memory event every
+  // 60s so the dashboard / `stavr tail --kind daemon_memory` show heap, RSS
+  // and event-count growth over time. First sample fires immediately on boot.
+  let memoryPollerStop: MemoryPollerStop | undefined;
+  try {
+    memoryPollerStop = startMemoryPoller(broker, {
+      sseSessionCount: () => transports.sseSessionCount(),
+    });
+  } catch (err) {
+    logger.error('failed to start memory poller; daemon continues without it', {
+      error: (err as Error).message,
+    });
+  }
+
   // v0.2 — planner + executor + connector registry. Gated by experimental.planner.
   // When the flag is off, this whole subsystem stays dormant.
   let v02: V02SubsystemHandle | undefined;
@@ -311,6 +326,9 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
       }
     }
     workerWatchdog.stop();
+    if (memoryPollerStop) {
+      try { memoryPollerStop(); } catch { /* best effort */ }
+    }
     if (v02) {
       try { v02.stop(); } catch { /* best effort */ }
     }

@@ -82,6 +82,14 @@ export const EventKind = z.enum([
   'bom_step_skipped',
   'bom_step_promoted',
   'profile_mode_switched',
+  // OOM leak-hunt observability (bom-oom-leak-hunt)
+  'daemon_memory',
+  'daemon_eventloop',
+  'sse_session_opened',
+  'sse_session_closed',
+  'sse_session_force_removed',
+  'mcp_session_deleted',
+  'retention_swept',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
