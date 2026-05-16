@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>stavR · Helm v2 · Expanded Tiers</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root {
+    --bg-0: #0a0b10;
+    --bg-1: #0f1018;
+    --bg-2: #14161f;
+    --surface: rgba(20, 22, 31, 0.72);
+    --surface-2: rgba(28, 30, 42, 0.78);
+    --line: rgba(255, 255, 255, 0.06);
+    --line-2: rgba(255, 255, 255, 0.10);
+    --ink-0: #e8e9ef;
+    --ink-1: #b9bbc6;
+    --ink-2: #7e8090;
+    --ink-3: #4f5160;
+    --rust: #b8542a;
+    --rust-glow: rgba(184, 84, 42, 0.32);
+    --rust-soft: rgba(184, 84, 42, 0.14);
+    --ok: #6dd58c;
+    --warn: #e2a942;
+    --crit: #ef5a6f;
+    --info: #6aa9ff;
+    --purple: #a78bfa;
+    --sky: #6aa9ff;
+    --green: #6dd58c;
+    --amber: #e2a942;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: radial-gradient(1400px 900px at 18% -8%, #1a1326 0%, transparent 55%),
+                radial-gradient(1100px 800px at 110% 110%, #0f1d22 0%, transparent 55%),
+                var(--bg-0);
+    color: var(--ink-0);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  .app { display: grid; grid-template-rows: 44px 1fr; height: 100vh; }
+
+  /* topbar */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(15,16,24,.92), rgba(15,16,24,.65));
+    backdrop-filter: blur(24px);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: .04em; }
+  .brand .rune {
+    width: 22px; height: 22px;
+    display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--rust), #6e2e15);
+    border-radius: 6px;
+    font-family: var(--mono);
+    color: #ffe9dc; font-size: 13px; line-height: 1;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 4px 14px var(--rust-glow);
+  }
+  .brand .word b { color: var(--ink-0); font-weight: 700; }
+  .brand .word i { font-style: normal; color: var(--rust); font-family: var(--mono); }
+  .nav { display: flex; gap: 4px; font-size: 12.5px; color: var(--ink-1); }
+  .nav a { padding: 6px 10px; border-radius: 6px; text-decoration: none; color: inherit; cursor: pointer; }
+  .nav a.active { background: var(--rust-soft); color: #ffd9c4; }
+  .nav a:hover:not(.active) { background: rgba(255,255,255,.04); color: var(--ink-0); }
+  .top-right { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--ink-1); font-family: var(--mono); }
+  .top-right .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 9px; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--line-2);
+    font-size: 11px; letter-spacing: .04em;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.warn { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+  .dot.crit { background: var(--crit); box-shadow: 0 0 8px var(--crit); animation: pulse 1.4s ease-in-out infinite; }
+  .dot.info { background: var(--info); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+  /* page */
+  .helm-page {
+    padding: 14px 18px 16px;
+    display: grid; grid-template-rows: auto 1fr;
+    overflow: hidden;
+    gap: 12px;
+  }
+  .page-head {
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .page-head h1 {
+    margin: 0; font-size: 22px; font-weight: 450; letter-spacing: -.02em;
+  }
+  .page-head .sub { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+  .page-head .right {
+    display: flex; gap: 8px; align-items: center;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-2);
+  }
+
+  /* === HELM STACK — expanded, fills viewport === */
+  .helm-stack {
+    display: grid;
+    grid-template-rows: 150px 1fr 160px 160px 140px;
+    gap: 10px;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .band {
+    position: relative;
+    background: linear-gradient(180deg, rgba(20,22,31,.55), rgba(15,16,24,.4));
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 16px;
+    cursor: pointer;
+    transition: background .2s, border-color .2s, transform .2s;
+    overflow: hidden;
+    backdrop-filter: blur(14px);
+    display: flex; flex-direction: column; gap: 10px;
+    min-height: 0;
+  }
+  .band:hover {
+    background: linear-gradient(180deg, rgba(28,30,42,.6), rgba(20,22,31,.4));
+    border-color: var(--line-2);
+    transform: translateX(2px);
+  }
+  .band::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: linear-gradient(180deg, transparent, currentColor, transparent);
+    opacity: .55;
+  }
+  .band[data-level="L4"] { color: var(--purple); }
+  .band[data-level="L3"] { color: var(--sky); }
+  .band[data-level="L2"] { color: var(--green); }
+  .band[data-level="L1"] { color: var(--amber); }
+  .band[data-level="L0"] { color: var(--ink-1); }
+
+  /* band header row */
+  .band-head {
+    display: grid; grid-template-columns: 250px 1fr auto;
+    align-items: center; gap: 18px;
+    flex-shrink: 0;
+  }
+  .level-tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 11px;
+    letter-spacing: .18em; color: var(--ink-2);
+    margin-bottom: 3px;
+  }
+  .level-tag .num {
+    color: currentColor; font-weight: 600;
+    padding: 2px 7px; border-radius: 4px;
+    background: rgba(255,255,255,.06);
+  }
+  .level-name { font-size: 15px; color: var(--ink-0); font-weight: 450; }
+  .level-desc { font-size: 11px; color: var(--ink-3); margin-top: 2px; }
+
+  .band-agg .primary {
+    font-size: 24px; font-weight: 350; font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+    color: var(--ink-0);
+  }
+  .band-agg .secondary {
+    font-size: 11px; color: var(--ink-2); margin-top: 2px;
+  }
+  .band-agg .secondary .ok { color: var(--ok); }
+  .band-agg .secondary .warn { color: var(--warn); }
+  .band-agg .secondary .crit { color: var(--crit); }
+
+  .band-arrow {
+    font-family: var(--mono); font-size: 11px; color: currentColor;
+    opacity: .5;
+    padding: 4px 10px; border-radius: 6px;
+    border: 1px solid currentColor;
+    letter-spacing: .1em;
+  }
+  .band:hover .band-arrow { opacity: 1; }
+
+  /* band rich area — fills remaining height */
+  .band-rich { flex: 1; min-height: 0; display: flex; gap: 12px; }
+
+  /* ====================== L4 INTENT ====================== */
+  .l4-composer {
+    flex: 1.6;
+    background: rgba(0,0,0,.3);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .l4-composer .label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .14em;
+    color: var(--ink-3); text-transform: uppercase;
+  }
+  .l4-composer .input {
+    color: var(--ink-1); font-family: Inter; font-size: 14px;
+    font-style: italic;
+  }
+  .l4-composer .input::before { content: "▸ "; color: var(--purple); }
+  .l4-composer .meta {
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: var(--mono); font-size: 10px; color: var(--ink-3);
+  }
+  .l4-composer .meta .chips { display: flex; gap: 5px; }
+  .chip-tiny {
+    padding: 2px 7px; border-radius: 999px;
+    background: rgba(167,139,250,.12);
+    color: var(--purple);
+    font-size: 9.5px; letter-spacing: .04em;
+    border: 1px solid rgba(167,139,250,.3);
+  }
+
+  .l4-timeline {
+    flex: 1;
+    background: rgba(0,0,0,.2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .l4-timeline .label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .14em;
+    color: var(--ink-3); text-transform: uppercase;
+  }
+  .l4-intent-row {
+    display: grid; grid-template-columns: 60px 1fr auto;
+    gap: 8px; align-items: center;
+    font-family: var(--mono); font-size: 11px;
+  }
+  .l4-intent-row .ts { color: var(--ink-3); }
+  .l4-intent-row .what { color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .l4-intent-row .stat { color: var(--ok); font-size: 9.5px; }
+  .l4-intent-row .stat.run { color: var(--sky); }
+  .l4-intent-row .stat.wait { color: var(--warn); }
+
+  /* ====================== L3 PLANS — 4 cards + gantt strip ====================== */
+  .l3-cards {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  .l3-card {
+    background: rgba(0,0,0,.28);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 3px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  .l3-card:hover { background: rgba(0,0,0,.45); border-color: var(--line-2); }
+  .l3-card .lab {
+    font-family: var(--mono); font-size: 9.5px;
+    letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .l3-card .val {
+    font-size: 16px; color: var(--ink-0); margin: 2px 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .l3-card .val.warn { color: var(--amber); }
+  .l3-card .sub { color: var(--ink-2); font-size: 10px; font-family: var(--mono); }
+  .l3-card .link {
+    color: var(--sky); font-size: 10px; font-family: var(--mono);
+    margin-top: auto; padding-top: 6px;
+  }
+  .l3-card .link::before { content: "▸ "; }
+
+  .l3-gantt {
+    height: 60px;
+    background: rgba(0,0,0,.25);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 12px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .l3-gantt .label {
+    display: flex; justify-content: space-between;
+    font-family: var(--mono); font-size: 9.5px;
+    letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .l3-gantt-grid {
+    position: relative; flex: 1; min-height: 0;
+  }
+  .gantt-row {
+    position: relative; height: 8px; margin: 2px 0;
+    background: rgba(255,255,255,.04); border-radius: 2px;
+  }
+  .gantt-bar {
+    position: absolute; top: 0; bottom: 0;
+    border-radius: 2px;
+  }
+  .gantt-bar.run { background: linear-gradient(90deg, var(--sky), rgba(106,169,255,.3)); }
+  .gantt-bar.done { background: linear-gradient(90deg, var(--green), rgba(109,213,140,.3)); }
+  .gantt-bar.wait { background: linear-gradient(90deg, var(--amber), rgba(226,169,66,.3)); }
+  .gantt-bar .lbl {
+    position: absolute; left: 6px; top: -1px;
+    font-family: var(--mono); font-size: 8.5px; color: rgba(0,0,0,.8);
+    font-weight: 600; white-space: nowrap;
+  }
+  .gantt-now {
+    position: absolute; top: 0; bottom: 0; width: 1.5px;
+    background: var(--rust); box-shadow: 0 0 4px var(--rust);
+  }
+
+  /* ====================== L2 WORKERS — dots + cards row ====================== */
+  .l2-workers {
+    flex: 1; display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+  }
+  .l2-worker {
+    background: rgba(0,0,0,.28);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: flex; flex-direction: column; gap: 4px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+    min-width: 0;
+  }
+  .l2-worker:hover { background: rgba(0,0,0,.42); border-color: var(--line-2); }
+  .l2-worker .name {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-0);
+  }
+  .l2-worker .role { color: var(--ink-3); font-size: 9.5px; margin-left: auto; }
+  .l2-worker .progress {
+    height: 5px; background: rgba(255,255,255,.05); border-radius: 99px;
+    overflow: hidden;
+  }
+  .l2-worker .progress > div {
+    height: 100%; background: linear-gradient(90deg, var(--green), rgba(109,213,140,.3));
+  }
+  .l2-worker.warn .progress > div { background: linear-gradient(90deg, var(--amber), rgba(226,169,66,.3)); }
+  .l2-worker.crit .progress > div {
+    background: repeating-linear-gradient(45deg, rgba(239,90,111,.5) 0 4px, rgba(239,90,111,.2) 4px 8px);
+  }
+  .l2-worker.idle .progress > div { background: var(--line-2); }
+  .l2-worker .step {
+    font-family: var(--mono); font-size: 9.5px; color: var(--ink-2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .l2-worker .meta {
+    display: flex; justify-content: space-between;
+    font-family: var(--mono); font-size: 9.5px; color: var(--ink-3);
+  }
+  .l2-worker .meta .eta { color: var(--ink-1); }
+  .l2-worker.crit .meta .eta { color: var(--crit); }
+
+  /* ====================== L1 TOOL CALLS — histogram + top-5 + trends ====================== */
+  .l1-grid {
+    flex: 1; display: grid;
+    grid-template-columns: 1.3fr 1.3fr 1fr;
+    gap: 10px;
+    min-height: 0;
+  }
+  .l1-panel {
+    background: rgba(0,0,0,.28);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 12px;
+    display: flex; flex-direction: column; gap: 4px;
+    min-height: 0;
+  }
+  .l1-panel .label {
+    display: flex; justify-content: space-between;
+    font-family: var(--mono); font-size: 9.5px;
+    letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .histo {
+    display: flex; align-items: flex-end; gap: 2px;
+    flex: 1; min-height: 0;
+  }
+  .histo .bar {
+    flex: 1; background: linear-gradient(180deg, var(--amber), rgba(226,169,66,.25));
+    border-radius: 1.5px 1.5px 0 0; min-height: 2px;
+  }
+  .histo .bar.spike { background: linear-gradient(180deg, var(--crit), rgba(239,90,111,.3)); }
+
+  .top-tools {
+    display: flex; flex-direction: column; gap: 3px;
+    overflow: hidden;
+  }
+  .top-tool-row {
+    display: grid; grid-template-columns: 1fr auto 56px;
+    align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 11px;
+  }
+  .top-tool-row .nm { color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top-tool-row .ct { color: var(--ink-3); font-size: 10px; }
+  .top-tool-row .micro-bar {
+    height: 5px; background: rgba(255,255,255,.05); border-radius: 99px;
+    position: relative;
+  }
+  .top-tool-row .micro-bar > div {
+    height: 100%; background: var(--amber); border-radius: 99px;
+  }
+
+  .l1-trends { display: grid; grid-template-rows: 1fr 1fr 1fr; gap: 4px; min-height: 0; }
+  .l1-trend-row {
+    display: grid; grid-template-columns: 70px 1fr auto;
+    align-items: center; gap: 8px;
+  }
+  .l1-trend-row .k { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: .04em; }
+  .l1-trend-row .v {
+    font-family: var(--mono); font-size: 11px; color: var(--ink-1);
+    text-align: right;
+  }
+  .l1-trend-row .v.warn { color: var(--warn); }
+  .l1-trend-row svg { height: 18px; width: 100%; }
+
+  /* ====================== L0 SYSTEMS — chips + per-system sparklines ====================== */
+  .l0-grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+  }
+  .l0-sys {
+    background: rgba(0,0,0,.28);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: flex; flex-direction: column; gap: 5px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  .l0-sys:hover { background: rgba(0,0,0,.45); border-color: var(--line-2); }
+  .l0-sys.warn { border-color: rgba(226,169,66,.35); }
+  .l0-sys .nm {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-0);
+  }
+  .l0-sys .nm .lat {
+    margin-left: auto; color: var(--ink-3); font-size: 9.5px;
+  }
+  .l0-sys .nm .lat.warn { color: var(--warn); }
+  .l0-sys svg { height: 22px; width: 100%; opacity: .85; }
+  .l0-sys .last {
+    font-family: var(--mono); font-size: 9.5px; color: var(--ink-3);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="rune">ᚱ</span>
+      <span class="word"><b>stav</b><i>ᚱ</i></span>
+    </div>
+    <nav class="nav">
+      <a class="active">Helm</a>
+      <a>Topology</a>
+      <a>Streams</a>
+      <a>Decide</a>
+      <a>Toolkit</a>
+      <a>Capabilities</a>
+      <a>Diagnostics</a>
+      <a>Settings</a>
+    </nav>
+    <div class="top-right">
+      <span class="pill"><span class="dot ok"></span> daemon · 14d 06:22</span>
+      <span class="pill"><span class="dot info"></span> steward · opus-4.7</span>
+      <span>14:32:08 GST</span>
+    </div>
+  </header>
+
+  <!-- HELM PAGE -->
+  <main class="helm-page">
+    <div class="page-head">
+      <div>
+        <h1>Helm</h1>
+        <div class="sub">Take the wheel · L4 down to L0 · click any tier to drill into its page</div>
+      </div>
+      <div class="right">
+        <span>budget · $0.18 / $0.42 today</span>
+        <span style="color:var(--ink-3);">·</span>
+        <span style="color:var(--ok);">●</span> on track
+      </div>
+    </div>
+
+    <div class="helm-stack">
+
+      <!-- ================= L4 INTENT ================= -->
+      <div class="band" data-level="L4">
+        <div class="band-head">
+          <div>
+            <span class="level-tag"><span class="num">L4</span> INTENT</span>
+            <div class="level-name">User intent · talk to Steward</div>
+            <div class="level-desc">What you've asked stavR to accomplish</div>
+          </div>
+          <div class="band-agg">
+            <div class="primary">2 active goals</div>
+            <div class="secondary"><span class="ok">●</span> on track · last input 12m ago · 47 done · 7d</div>
+          </div>
+          <div class="band-arrow">› STEWARD</div>
+        </div>
+        <div class="band-rich">
+          <div class="l4-composer">
+            <div class="label">Current intent</div>
+            <div class="input">ship v0.4 scheduler — overnight CC run, accept quota risk</div>
+            <div class="meta">
+              <span>cmd+enter to send to steward · esc to dismiss</span>
+              <div class="chips">
+                <span class="chip-tiny">turbo</span>
+                <span class="chip-tiny">cap $4.10</span>
+              </div>
+            </div>
+          </div>
+          <div class="l4-timeline">
+            <div class="label">Last 5 intents</div>
+            <div class="l4-intent-row"><span class="ts">14:20</span><span class="what">ship v0.4 scheduler</span><span class="stat run">running</span></div>
+            <div class="l4-intent-row"><span class="ts">13:55</span><span class="what">review pt-b007 short_code cascade</span><span class="stat wait">approve?</span></div>
+            <div class="l4-intent-row"><span class="ts">11:12</span><span class="what">merge PR #30 dashboard panel</span><span class="stat">done ✓</span></div>
+            <div class="l4-intent-row"><span class="ts">09:48</span><span class="what">audit cowire architecture vs Tessera</span><span class="stat">done ✓</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= L3 PLANS ================= -->
+      <div class="band" data-level="L3">
+        <div class="band-head">
+          <div>
+            <span class="level-tag"><span class="num">L3</span> PLANS</span>
+            <div class="level-name">Bills of Materials</div>
+            <div class="level-desc">Approved workflows in execution</div>
+          </div>
+          <div class="band-agg">
+            <div class="primary">3 BOMs</div>
+            <div class="secondary">2 running · 1 <span class="warn">awaiting approval</span> · spent $0.18 / $0.42</div>
+          </div>
+          <div class="band-arrow">› PLANS</div>
+        </div>
+        <div class="band-rich" style="flex-direction: column;">
+          <div class="l3-cards">
+            <div class="l3-card">
+              <div class="lab">Active BOM</div>
+              <div class="val">cascade-merge</div>
+              <div class="sub">step 4 of 7 · push + wait CI</div>
+              <div class="link">open plan</div>
+            </div>
+            <div class="l3-card">
+              <div class="lab">Spent</div>
+              <div class="val">$0.18 / $0.42</div>
+              <div class="sub">43% of today's budget</div>
+              <div class="link">adjust budget</div>
+            </div>
+            <div class="l3-card">
+              <div class="lab">Trust scope</div>
+              <div class="val">ts-a4c1</div>
+              <div class="sub">7/10 used · 53m left</div>
+              <div class="link">extend scope</div>
+            </div>
+            <div class="l3-card">
+              <div class="lab">Awaiting</div>
+              <div class="val warn">v0.4 scheduler</div>
+              <div class="sub">12 steps · turbo · est $4.10</div>
+              <div class="link">go to decisions</div>
+            </div>
+          </div>
+          <div class="l3-gantt">
+            <div class="label"><span>BOMs · last 24h</span><span>now</span></div>
+            <div class="l3-gantt-grid">
+              <div class="gantt-row"><div class="gantt-bar done" style="left:5%;width:18%;"><span class="lbl">pt-b007</span></div></div>
+              <div class="gantt-row"><div class="gantt-bar done" style="left:24%;width:14%;"><span class="lbl">pt-b008</span></div></div>
+              <div class="gantt-row"><div class="gantt-bar run" style="left:48%;width:34%;"><span class="lbl">cascade-merge ▸</span></div></div>
+              <div class="gantt-row"><div class="gantt-bar wait" style="left:82%;width:14%;"><span class="lbl">v0.4 awaiting</span></div></div>
+              <div class="gantt-now" style="left:82%;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= L2 WORKERS ================= -->
+      <div class="band" data-level="L2">
+        <div class="band-head">
+          <div>
+            <span class="level-tag"><span class="num">L2</span> WORKERS</span>
+            <div class="level-name">Worker subprocesses</div>
+            <div class="level-desc">5 active of 7 capacity · click any worker to inspect</div>
+          </div>
+          <div class="band-agg">
+            <div class="primary">5 active</div>
+            <div class="secondary">1 <span class="warn">stuck 22m</span> · 1 idle · activity ↑ last 5m</div>
+          </div>
+          <div class="band-arrow">› WORKERS</div>
+        </div>
+        <div class="band-rich">
+          <div class="l2-workers">
+            <div class="l2-worker">
+              <div class="name"><span class="dot ok"></span>cc-resolver <span class="role">cc</span></div>
+              <div class="progress"><div style="width:72%;"></div></div>
+              <div class="step">step 9/12 · rebase + push</div>
+              <div class="meta"><span>00:08:41</span><span class="eta">eta 3m</span></div>
+            </div>
+            <div class="l2-worker">
+              <div class="name"><span class="dot ok"></span>pt-b007 <span class="role">cc</span></div>
+              <div class="progress"><div style="width:38%;"></div></div>
+              <div class="step">step 4/12 · short_code cascade</div>
+              <div class="meta"><span>00:03:12</span><span class="eta">eta 7m</span></div>
+            </div>
+            <div class="l2-worker">
+              <div class="name"><span class="dot ok"></span>pt-b008 <span class="role">cc</span></div>
+              <div class="progress"><div style="width:54%;"></div></div>
+              <div class="step">step 7/13 · CI db matrix</div>
+              <div class="meta"><span>00:05:07</span><span class="eta">eta 5m</span></div>
+            </div>
+            <div class="l2-worker">
+              <div class="name"><span class="dot ok"></span>unity <span class="role">cc</span></div>
+              <div class="progress"><div style="width:88%;"></div></div>
+              <div class="step">step 11/12 · final test pass</div>
+              <div class="meta"><span>00:14:23</span><span class="eta">eta 1m</span></div>
+            </div>
+            <div class="l2-worker crit">
+              <div class="name"><span class="dot crit"></span>cc-stuck <span class="role">cc</span></div>
+              <div class="progress"><div style="width:56%;"></div></div>
+              <div class="step">stuck · webhook.send · 14m</div>
+              <div class="meta"><span>00:22:08</span><span class="eta">steward queued ↻</span></div>
+            </div>
+            <div class="l2-worker idle">
+              <div class="name"><span class="dot" style="background:var(--ink-3)"></span>llama-1 <span class="role">hk</span></div>
+              <div class="progress"><div style="width:0%;"></div></div>
+              <div class="step">idle · ready</div>
+              <div class="meta"><span>—</span><span class="eta">—</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= L1 TOOL CALLS ================= -->
+      <div class="band" data-level="L1">
+        <div class="band-head">
+          <div>
+            <span class="level-tag"><span class="num">L1</span> TOOL CALLS</span>
+            <div class="level-name">MCP traffic · atomic ops</div>
+            <div class="level-desc">Read / write / exec across all connected MCPs</div>
+          </div>
+          <div class="band-agg">
+            <div class="primary">184 / min</div>
+            <div class="secondary">3 <span class="warn">stuck</span> · p99 412ms · 2.1% errors · qps ↑ 4%</div>
+          </div>
+          <div class="band-arrow">› DIAGNOSTICS</div>
+        </div>
+        <div class="band-rich">
+          <div class="l1-panel">
+            <div class="label"><span>Throughput · last 20m</span><span>184/min</span></div>
+            <div class="histo">
+              <div class="bar" style="height:30%"></div>
+              <div class="bar" style="height:45%"></div>
+              <div class="bar" style="height:60%"></div>
+              <div class="bar" style="height:50%"></div>
+              <div class="bar" style="height:75%"></div>
+              <div class="bar" style="height:88%"></div>
+              <div class="bar spike" style="height:100%"></div>
+              <div class="bar" style="height:70%"></div>
+              <div class="bar" style="height:65%"></div>
+              <div class="bar" style="height:80%"></div>
+              <div class="bar" style="height:92%"></div>
+              <div class="bar" style="height:85%"></div>
+              <div class="bar" style="height:70%"></div>
+              <div class="bar" style="height:55%"></div>
+              <div class="bar" style="height:60%"></div>
+              <div class="bar" style="height:45%"></div>
+              <div class="bar" style="height:50%"></div>
+              <div class="bar" style="height:70%"></div>
+              <div class="bar" style="height:95%"></div>
+              <div class="bar spike" style="height:100%"></div>
+            </div>
+          </div>
+          <div class="l1-panel">
+            <div class="label"><span>Top tools · last 1h</span><span>n calls</span></div>
+            <div class="top-tools">
+              <div class="top-tool-row"><span class="nm">github.read_pr</span><span class="micro-bar"><div style="width:92%;"></div></span><span class="ct">412</span></div>
+              <div class="top-tool-row"><span class="nm">drive.write</span><span class="micro-bar"><div style="width:68%;"></div></span><span class="ct">304</span></div>
+              <div class="top-tool-row"><span class="nm">ollama.generate</span><span class="micro-bar"><div style="width:55%;"></div></span><span class="ct">247</span></div>
+              <div class="top-tool-row"><span class="nm">slack.post</span><span class="micro-bar"><div style="width:38%;"></div></span><span class="ct">170</span></div>
+              <div class="top-tool-row"><span class="nm">linear.create_issue</span><span class="micro-bar"><div style="width:22%;"></div></span><span class="ct">98</span></div>
+            </div>
+          </div>
+          <div class="l1-panel">
+            <div class="label"><span>Trends · 1h</span><span>·</span></div>
+            <div class="l1-trends">
+              <div class="l1-trend-row">
+                <span class="k">qps</span>
+                <svg viewBox="0 0 100 18" preserveAspectRatio="none"><polyline fill="none" stroke="var(--green)" stroke-width="1.4" points="0,12 10,11 20,12 30,10 40,11 50,9 60,10 70,8 80,9 90,7 100,8"/></svg>
+                <span class="v">3.07</span>
+              </div>
+              <div class="l1-trend-row">
+                <span class="k">p95 ms</span>
+                <svg viewBox="0 0 100 18" preserveAspectRatio="none"><polyline fill="none" stroke="var(--sky)" stroke-width="1.4" points="0,10 10,9 20,10 30,11 40,9 50,10 60,9 70,11 80,10 90,9 100,10"/></svg>
+                <span class="v">412</span>
+              </div>
+              <div class="l1-trend-row">
+                <span class="k">err %</span>
+                <svg viewBox="0 0 100 18" preserveAspectRatio="none"><polyline fill="none" stroke="var(--amber)" stroke-width="1.4" points="0,14 10,13 20,13 30,12 40,11 50,10 60,9 70,8 80,7 90,6 100,5"/></svg>
+                <span class="v warn">2.1</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= L0 SYSTEMS ================= -->
+      <div class="band" data-level="L0">
+        <div class="band-head">
+          <div>
+            <span class="level-tag"><span class="num">L0</span> SYSTEMS</span>
+            <div class="level-name">External + local connectors</div>
+            <div class="level-desc">Things stavR ultimately touches · click chip to inspect</div>
+          </div>
+          <div class="band-agg">
+            <div class="primary">5 connected</div>
+            <div class="secondary">1 <span class="warn">degraded</span> · webhook auth lost 14m ago</div>
+          </div>
+          <div class="band-arrow">› TOPOLOGY</div>
+        </div>
+        <div class="band-rich">
+          <div class="l0-grid">
+            <div class="l0-sys">
+              <div class="nm"><span class="dot ok"></span>github <span class="lat">142ms</span></div>
+              <svg viewBox="0 0 100 22" preserveAspectRatio="none"><polyline fill="none" stroke="var(--green)" stroke-width="1.4" points="0,14 10,13 20,14 30,12 40,13 50,11 60,12 70,10 80,11 90,9 100,10"/></svg>
+              <div class="last">last · 14:32:08 · create_pr · 201</div>
+            </div>
+            <div class="l0-sys">
+              <div class="nm"><span class="dot ok"></span>slack <span class="lat">98ms</span></div>
+              <svg viewBox="0 0 100 22" preserveAspectRatio="none"><polyline fill="none" stroke="var(--green)" stroke-width="1.4" points="0,12 10,13 20,11 30,12 40,10 50,11 60,9 70,10 80,8 90,9 100,8"/></svg>
+              <div class="last">last · 14:31:42 · post · 200</div>
+            </div>
+            <div class="l0-sys">
+              <div class="nm"><span class="dot ok"></span>ollama <span class="lat">2.4s</span></div>
+              <svg viewBox="0 0 100 22" preserveAspectRatio="none"><polyline fill="none" stroke="var(--green)" stroke-width="1.4" points="0,10 10,12 20,11 30,9 40,10 50,8 60,11 70,9 80,10 90,7 100,9"/></svg>
+              <div class="last">last · 14:32:01 · generate</div>
+            </div>
+            <div class="l0-sys warn">
+              <div class="nm"><span class="dot warn"></span>filesystem <span class="lat warn">throttled</span></div>
+              <svg viewBox="0 0 100 22" preserveAspectRatio="none"><polyline fill="none" stroke="var(--amber)" stroke-width="1.4" points="0,9 10,10 20,9 30,11 40,12 50,11 60,12 70,13 80,12 90,13 100,13"/></svg>
+              <div class="last">last · 14:30:55 · read · 200</div>
+            </div>
+            <div class="l0-sys" style="border-color: rgba(239,90,111,.4);">
+              <div class="nm"><span class="dot crit"></span>webhook <span class="lat" style="color:var(--crit);">auth-lost</span></div>
+              <svg viewBox="0 0 100 22" preserveAspectRatio="none"><polyline fill="none" stroke="var(--crit)" stroke-width="1.4" points="0,5 10,6 20,5 30,7 40,6 50,9 60,12 70,13 80,13 90,14 100,14"/></svg>
+              <div class="last" style="color:var(--crit);">14m down · steward queued restart</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+</body>
+</html>
