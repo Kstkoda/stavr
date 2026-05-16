@@ -18,13 +18,13 @@
  *    events arrive (unchanged from v0.4).
  *  - Edit-mode parked with a v0.7 badge in the palette door.
  *
- * Test contract preserved: STAVR DAEMON label + topo-daemon-disc class on
- * the core node, topo-bus class + "enterprise bus" text (rendered behind
- * the graph as a faint structural axis), topo-mode-chips with RADIAL
- * pressed, worker nodes carry data-id + data-layer="worker" +
- * data-started-at, In-flight BOMs sidebar, Worker roster table, SSE
- * subscription. The bricks/workers data fed in still drives the node set,
- * but the visual layer is now graph-first instead of bus-row-stacked.
+ * Worker nodes carry data-id + data-layer="worker" + data-started-at;
+ * In-flight BOMs sidebar, Worker roster table, and SSE subscription are
+ * unchanged from v0.4. The bricks/workers data fed in still drives the
+ * node set, but the visual layer is now graph-first instead of
+ * bus-row-stacked. The v0.3/v8 legacy scaffolding (topo-bus structural
+ * axis, topo-mode-chips RADIAL/HEAT/HISTORY switcher, "STAVR DAEMON"
+ * core label) was removed in v0.4.1 — see CLAUDE.md invariant #1.
  */
 import type { WorkerRecord } from '../../persistence.js';
 import type { Bom } from '../../types/stavr-bom.js';
@@ -224,7 +224,7 @@ function renderNode(n: GraphNode, isCore: boolean): string {
     ? `<span class="topo-daemon-disc" aria-hidden="true"></span>`
     : '';
   const labelHtml = isCore
-    ? `<div class="node-label"><b>stavR-primary</b><span class="role">STAVR DAEMON</span></div>`
+    ? `<div class="node-label"><b>stavR-primary</b><span class="role">this · 8421</span></div>`
     : `<div class="node-label">${escapeHtml(n.displayName)}${n.role ? `<span class="role">${escapeHtml(n.role)}</span>` : ''}</div>`;
   const iconGlyph = isCore
     ? `<span class="glyph lg">ᚱ</span>`
@@ -260,16 +260,6 @@ function renderEdge(n: Map<string, GraphNode>, e: GraphEdge): string {
   const cls = `edge live ${e.kind === 'err' ? 'err' : e.kind === 'warn' ? 'warn' : 'ok'}`;
   return [
     `<path class="${cls}" d="M ${a.x} ${a.y} Q ${cx.toFixed(0)} ${cy.toFixed(0)} ${b.x} ${b.y}" data-edge="${escapeHtml(e.from)}__${escapeHtml(e.to)}" />`,
-  ].join('');
-}
-
-function renderModeChips(): string {
-  return [
-    `<div class="topo-mode-chips" role="tablist" aria-label="Topology mode">`,
-    `<button type="button" class="tm-chip" data-mode="radial" aria-pressed="true">RADIAL</button>`,
-    `<button type="button" class="tm-chip" data-mode="heat"    aria-pressed="false" disabled title="v0.5">HEAT</button>`,
-    `<button type="button" class="tm-chip" data-mode="history" aria-pressed="false" disabled title="v0.5">HISTORY</button>`,
-    `</div>`,
   ].join('');
 }
 
@@ -558,13 +548,6 @@ const TOPOLOGY_CSS = `
 .edge.live.ok   { stroke: var(--ok); }
 @keyframes edge-flow { to { stroke-dashoffset: -30; } }
 .topo-canvas[data-live="off"] .edge.live { animation: none; opacity: .4; }
-.topo-bus { /* canonical structural axis kept for tests + as a faint guideline */
-  stroke: var(--rust); stroke-width: 2; opacity: .25; stroke-dasharray: 5 7;
-}
-.topo-bus-label {
-  fill: var(--rust); font-family: var(--mono); font-size: 10px;
-  letter-spacing: .14em; text-transform: uppercase; opacity: .6;
-}
 
 /* node layer */
 .topo-nodes {
@@ -743,33 +726,6 @@ const TOPOLOGY_CSS = `
 .topo-legend .lr .dot.ok   { background: var(--ok);   box-shadow: 0 0 6px var(--ok); }
 .topo-legend .lr .dot.warn { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
 .topo-legend .lr .dot.crit { background: var(--crit); box-shadow: 0 0 6px var(--crit); }
-
-/* mode chips */
-.topo-mode-chips {
-  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
-  display: flex; gap: 6px;
-  background: var(--bg-glass); border: 1px solid var(--line-2);
-  border-radius: 999px; padding: 4px;
-  backdrop-filter: blur(14px);
-  z-index: 5;
-}
-.tm-chip {
-  padding: 5px 14px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--ink-2);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  cursor: pointer;
-  font-family: var(--mono);
-}
-.tm-chip[aria-pressed="true"] {
-  border-color: var(--rust);
-  color: #ffd9c4;
-  background: var(--rust-soft);
-}
-.tm-chip:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* side panel */
 .topo-side {
@@ -1251,15 +1207,11 @@ export function renderTopologyPage(data?: TopologyData): string {
   const filterStrip = renderFilterStrip(typeCounts);
   const paletteDoor = renderPaletteDoor();
   const legend = renderLegend();
-  const modeChips = renderModeChips();
 
-  // SVG edge layer: the structural "enterprise bus" line is kept as a
-  // faint dashed horizontal axis behind the radial. Tests assert the
-  // class + label literal substring.
+  // SVG edge layer: arc-quadratic edges only. The v0.3 horizontal
+  // "enterprise bus" axis was removed in v0.4.1 per CLAUDE.md invariant #1.
   const svg = [
     `<svg class="topo-svg-edges" viewBox="0 0 ${VBW} ${VBH}" preserveAspectRatio="xMidYMid meet">`,
-    `<line class="topo-bus" x1="40" y1="${CENTER_Y}" x2="${VBW - 40}" y2="${CENTER_Y}" />`,
-    `<text class="topo-bus-label" x="${VBW - 40}" y="${CENTER_Y - 8}" text-anchor="end">enterprise bus</text>`,
     edgeSvg,
     `</svg>`,
   ].join('');
@@ -1283,7 +1235,6 @@ export function renderTopologyPage(data?: TopologyData): string {
     `<div class="topo-nodes">${nodesHtml}</div>`,
     `</div>`,
     legend,
-    modeChips,
     scrubberWithTime,
     `</div>`,
     renderBomSidebar(snapshot),
