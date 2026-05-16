@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>stavR · Diagnostics v2-A — Composite Hex Grid + Trend Wall</title>
+<style>
+:root{
+  --bg:#0b0c10;--bg-panel:#13151b;--bg-panel-2:#181b22;
+  --border:rgba(255,255,255,0.06);--border-hi:rgba(255,255,255,0.14);
+  --text:#e8eaed;--text-mute:#8b94a3;--text-dim:#5c6675;
+  --rust:#B8542A;--rust-soft:rgba(184,84,42,0.15);--rust-glow:rgba(184,84,42,0.4);
+  --sky:#5cc6ff;--green:#5eea9c;--amber:#fbbf24;--red:#ff6b6b;--purple:#b394ff;--orange:#fb923c;
+  --mono:ui-monospace,'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;
+  --sans:'Inter',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:12px;font-weight:400;letter-spacing:0.01em;min-height:100vh}
+.panel{background:var(--bg-panel);border:1px solid var(--border);border-radius:8px}
+.panel-2{background:var(--bg-panel-2);border:1px solid var(--border);border-radius:6px}
+
+/* TOP RAIL */
+.rail{display:grid;grid-template-columns:200px 1fr auto;align-items:center;height:48px;padding:0 16px;background:var(--bg-panel);border-bottom:1px solid var(--border);gap:18px}
+.brand{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:14px;font-weight:500}
+.brand .rune{color:var(--rust);font-size:18px;filter:drop-shadow(0 0 6px var(--rust-glow))}
+.brand .label{font-family:var(--sans);font-size:9px;color:var(--text-dim);letter-spacing:0.2em;text-transform:uppercase}
+.status-strip{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;justify-self:start}
+.status-tile{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;background:var(--bg-panel-2);border:1px solid var(--border);border-radius:5px}
+.status-tile .dot{width:7px;height:7px;border-radius:50%}
+.status-tile.ok .dot{background:var(--green);box-shadow:0 0 6px var(--green)}
+.status-tile.warn .dot{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.status-tile.crit .dot{background:var(--red);box-shadow:0 0 6px var(--red)}
+.status-tile .v{color:var(--text);font-weight:500}
+.status-tile .l{color:var(--text-mute);font-size:10px}
+.fleet-select{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;background:rgba(184,84,42,0.1);border:1px solid rgba(184,84,42,0.3);border-radius:5px;color:var(--rust);cursor:pointer;font-family:var(--mono);font-size:11px;justify-self:end}
+.fleet-select::after{content:'▾';opacity:0.5;margin-left:2px}
+
+/* MAIN GRID */
+.main{display:grid;grid-template-columns:1.1fr 1fr;grid-template-rows:auto 1fr;gap:10px;padding:10px;height:calc(100vh - 48px)}
+
+/* HEX GRID PANEL */
+.hex-panel{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.panel-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.panel-title{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-mute)}
+.panel-meta{font-family:var(--mono);font-size:10px;color:var(--text-dim)}
+
+.hex-section{margin-bottom:10px}
+.hex-section-label{font-family:var(--mono);font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.15em;margin-bottom:6px}
+.hex-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.hex-cell{position:relative;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 4px;border-radius:8px;cursor:pointer;transition:all 0.15s;background:var(--bg-panel-2);border:1px solid var(--border)}
+.hex-cell:hover{transform:translateY(-2px);background:var(--bg-panel)}
+.hex-cell.ok{border-color:rgba(94,234,156,0.4);background:rgba(94,234,156,0.06)}
+.hex-cell.ok .hc-dot{background:var(--green);box-shadow:0 0 8px var(--green)}
+.hex-cell.warn{border-color:rgba(251,191,36,0.5);background:rgba(251,191,36,0.08)}
+.hex-cell.warn .hc-dot{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.hex-cell.crit{border-color:rgba(255,107,107,0.5);background:rgba(255,107,107,0.08);animation:critpulse 1.5s ease-in-out infinite}
+.hex-cell.crit .hc-dot{background:var(--red);box-shadow:0 0 8px var(--red)}
+.hex-cell.idle{opacity:0.5;border-style:dashed}
+.hex-cell.idle .hc-dot{background:var(--text-dim)}
+.hex-cell.fed{border-style:dashed;border-color:rgba(167,139,250,0.4);background:rgba(167,139,250,0.04)}
+.hex-cell.fed .hc-dot{background:var(--purple)}
+@keyframes critpulse{0%,100%{box-shadow:0 0 0 rgba(255,107,107,0.4)}50%{box-shadow:0 0 16px rgba(255,107,107,0.4)}}
+.hc-dot{width:8px;height:8px;border-radius:50%;margin-bottom:3px}
+.hc-name{font-family:var(--mono);font-size:9px;font-weight:500;text-align:center;line-height:1.1}
+.hc-meta{font-family:var(--mono);font-size:8px;color:var(--text-dim);margin-top:2px}
+.hc-lock{position:absolute;top:3px;right:4px;font-size:8px;color:var(--purple)}
+
+/* TREND CHARTS PANEL */
+.trends-panel{padding:14px 16px;display:flex;flex-direction:column;gap:12px;overflow:hidden}
+.trend-chart{flex:1;display:flex;flex-direction:column;gap:4px;min-height:0}
+.tc-head{display:flex;justify-content:space-between;align-items:baseline}
+.tc-title{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-mute)}
+.tc-value{font-family:var(--mono);font-size:14px;color:var(--text);font-variant-numeric:tabular-nums}
+.tc-value.warn{color:var(--amber)}
+.tc-value.crit{color:var(--red)}
+.tc-trend{font-family:var(--mono);font-size:10px;color:var(--text-mute)}
+.tc-trend.up{color:var(--red)}
+.tc-trend.down{color:var(--green)}
+.tc-svg{flex:1;width:100%;min-height:0}
+.tc-svg svg{width:100%;height:100%;display:block}
+
+/* ENTITY ROSTER PANEL */
+.roster-panel{padding:14px 16px;overflow:hidden;display:flex;flex-direction:column}
+.roster-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.roster-filters{display:flex;gap:4px;font-family:var(--mono);font-size:10px}
+.roster-filter{padding:3px 9px;background:var(--bg-panel-2);border:1px solid var(--border);border-radius:4px;color:var(--text-mute);cursor:pointer}
+.roster-filter.active{background:rgba(184,84,42,0.12);color:var(--rust);border-color:rgba(184,84,42,0.3)}
+.roster-table{flex:1;overflow-y:auto;font-family:var(--mono);font-size:11px}
+.roster-table table{width:100%;border-collapse:collapse}
+.roster-table th{text-align:left;padding:6px 8px;font-size:9px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);font-weight:500;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-panel);z-index:1}
+.roster-table td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,0.03);font-family:var(--mono)}
+.roster-table tr:hover td{background:rgba(255,255,255,0.03)}
+.r-status{font-size:9px;padding:2px 6px;border-radius:3px;text-transform:uppercase;letter-spacing:0.1em;font-weight:600}
+.r-status.ok{background:rgba(94,234,156,0.12);color:var(--green)}
+.r-status.warn{background:rgba(251,191,36,0.15);color:var(--amber)}
+.r-status.crit{background:rgba(255,107,107,0.15);color:var(--red)}
+.r-status.idle{background:rgba(155,155,155,0.1);color:var(--text-mute)}
+.r-status.fed{background:rgba(167,139,250,0.1);color:var(--purple)}
+.r-sparkline{width:60px;height:18px;display:inline-block;vertical-align:middle}
+.r-type{color:var(--text-dim);font-size:10px}
+.r-num{color:var(--text);font-variant-numeric:tabular-nums}
+.r-warn{color:var(--amber)}
+.r-crit{color:var(--red)}
+
+/* SELF-HEAL PANEL */
+.heal-panel{padding:12px 16px;display:flex;flex-direction:column;gap:6px;overflow:hidden}
+.heal-head{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.heal-rune{font-family:var(--mono);font-size:14px;color:var(--rust);filter:drop-shadow(0 0 6px var(--rust-glow))}
+.heal-title{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.1em;color:var(--text)}
+.heal-meta{font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-left:auto}
+.heal-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:5px}
+.heal-row{display:grid;grid-template-columns:60px 16px 1fr auto;gap:8px;padding:7px 9px;background:var(--bg-panel-2);border:1px solid var(--border);border-radius:5px;font-family:var(--mono);font-size:11px;align-items:center}
+.heal-row.crit{border-left:3px solid var(--red)}
+.heal-row.warn{border-left:3px solid var(--amber)}
+.heal-row.ok{border-left:3px solid var(--green)}
+.heal-time{color:var(--text-dim);font-size:10px}
+.heal-icon{font-size:12px}
+.heal-icon.crit{color:var(--red)}
+.heal-icon.warn{color:var(--amber)}
+.heal-icon.ok{color:var(--green)}
+.heal-msg{color:var(--text);font-size:11px}
+.heal-msg .target{color:var(--sky)}
+.heal-msg .reason{color:var(--text-mute);font-size:10px;display:block;margin-top:1px}
+.heal-action{padding:3px 8px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:3px;color:var(--text-mute);font-size:9px;cursor:pointer;letter-spacing:0.05em}
+.heal-action:hover{background:rgba(184,84,42,0.1);color:var(--rust);border-color:rgba(184,84,42,0.3)}
+
+.col-left{display:grid;grid-template-rows:1fr auto;gap:10px;min-height:0;overflow:hidden}
+.col-right{display:grid;grid-template-rows:auto 1fr;gap:10px;min-height:0;overflow:hidden}
+</style>
+</head>
+<body>
+
+<div class="rail">
+  <div class="brand">
+    <span class="rune">ᚱ</span><span>stav<span class="rune" style="font-size:14px">R</span></span><span class="label">Diagnostics</span>
+  </div>
+  <div class="status-strip">
+    <div class="status-tile ok"><span class="dot"></span><span class="v">Daemon</span><span class="l">4h 22m</span></div>
+    <div class="status-tile ok"><span class="dot"></span><span class="v">Steward</span><span class="l">opus 4.7</span></div>
+    <div class="status-tile ok"><span class="dot"></span><span class="v">Watchdog</span><span class="l">99.84%</span></div>
+    <div class="status-tile warn"><span class="dot"></span><span class="v">MCPs</span><span class="l">6/7</span></div>
+    <div class="status-tile ok"><span class="dot"></span><span class="v">Fleet</span><span class="l">5/5 + 1 fed</span></div>
+    <div class="status-tile ok"><span class="dot"></span><span class="v">OAuth</span><span class="l">67%</span></div>
+  </div>
+  <div class="fleet-select">scope: primary only</div>
+</div>
+
+<div class="main">
+
+  <!-- LEFT COLUMN: Hex grid (top) + Roster (bottom) -->
+  <div class="col-left">
+
+    <!-- COMPOSITE HEALTH HEX GRID -->
+    <div class="panel hex-panel">
+      <div class="panel-head">
+        <div class="panel-title">Composite Health · click any hex to drill</div>
+        <div class="panel-meta">21 entities · 1 critical · 2 warning</div>
+      </div>
+
+      <div class="hex-section">
+        <div class="hex-section-label">MCP servers (7 local · 1 federated)</div>
+        <div class="hex-grid">
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">github</div><div class="hc-meta">14/m</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">slack</div><div class="hc-meta">3/m</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">ollama</div><div class="hc-meta">8/m</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">fs</div><div class="hc-meta">142/m</div></div>
+          <div class="hex-cell crit"><div class="hc-dot"></div><div class="hc-name">webhook</div><div class="hc-meta">⚡ auth</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">terminal</div><div class="hc-meta">28/m</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">llama-mcp</div><div class="hc-meta">0/m</div></div>
+          <div class="hex-cell fed"><div class="hc-lock">🔒</div><div class="hc-dot"></div><div class="hc-name">alex@nas</div><div class="hc-meta">read-only</div></div>
+        </div>
+      </div>
+
+      <div class="hex-section">
+        <div class="hex-section-label">stavR fleet (1 primary · 4 local spawn · 1 federated peer)</div>
+        <div class="hex-grid">
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">primary</div><div class="hc-meta">this PC</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">mac</div><div class="hc-meta">22%</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">linux-gpu</div><div class="hc-meta">67%</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">gaming-pc-2</div><div class="hc-meta">8%</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">synology</div><div class="hc-meta">5%</div></div>
+          <div class="hex-cell fed"><div class="hc-lock">🔒</div><div class="hc-dot"></div><div class="hc-name">alex@home</div><div class="hc-meta">14% acl</div></div>
+        </div>
+      </div>
+
+      <div class="hex-section">
+        <div class="hex-section-label">workers + scopes</div>
+        <div class="hex-grid">
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">cc-resolver</div><div class="hc-meta">$0.18</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">pt-b007</div><div class="hc-meta">$0.31</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">pt-b008</div><div class="hc-meta">$0.09</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">unity-worker</div><div class="hc-meta">$0.34</div></div>
+          <div class="hex-cell warn"><div class="hc-dot"></div><div class="hc-name">cc-stuck-002</div><div class="hc-meta">⚠ 14m</div></div>
+          <div class="hex-cell idle"><div class="hc-dot"></div><div class="hc-name">llama-cls</div><div class="hc-meta">idle</div></div>
+          <div class="hex-cell ok"><div class="hc-dot"></div><div class="hc-name">ts-a4c1</div><div class="hc-meta">7/10</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ENTITY ROSTER -->
+    <div class="panel roster-panel">
+      <div class="roster-head">
+        <div class="panel-title">Entity roster · all the things</div>
+        <div class="roster-filters">
+          <span class="roster-filter active">all (21)</span>
+          <span class="roster-filter">MCP (8)</span>
+          <span class="roster-filter">stavR (6)</span>
+          <span class="roster-filter">workers (6)</span>
+          <span class="roster-filter">scopes (1)</span>
+          <span class="roster-filter" style="color:var(--red)">⚠ alerts (3)</span>
+        </div>
+      </div>
+      <div class="roster-table">
+        <table>
+          <thead><tr><th>name</th><th>type</th><th>status</th><th>calls/m</th><th>p99</th><th>err%</th><th>cost</th><th>trend · 1h</th></tr></thead>
+          <tbody>
+            <tr><td>github</td><td class="r-type">MCP local</td><td><span class="r-status ok">ok</span></td><td class="r-num">14</td><td class="r-num">142ms</td><td class="r-num">0.2%</td><td>—</td><td><svg class="r-sparkline" viewBox="0 0 60 18"><polyline points="0,12 6,10 12,11 18,9 24,10 30,8 36,9 42,7 48,8 54,6 60,7" fill="none" stroke="var(--green)" stroke-width="1.2"/></svg></td></tr>
+            <tr><td>webhook</td><td class="r-type">MCP local</td><td><span class="r-status crit">crit</span></td><td class="r-num">0</td><td>—</td><td class="r-crit">87%</td><td>—</td><td><svg class="r-sparkline" viewBox="0 0 60 18"><polyline points="0,4 6,3 12,5 18,4 24,3 30,4 36,2 42,15 48,16 54,16 60,16" fill="none" stroke="var(--red)" stroke-width="1.2"/></svg></td></tr>
+            <tr><td>ollama</td><td class="r-type">MCP local</td><td><span class="r-status ok">ok</span></td><td class="r-num">8</td><td class="r-num">1.8s</td><td class="r-num">0.0%</td><td>—</td><td><svg class="r-sparkline" viewBox="0 0 60 18"><polyline points="0,10 6,8 12,9 18,7 24,8 30,6 36,7 42,5 48,6 54,4 60,5" fill="none" stroke="var(--green)" stroke-width="1.2"/></svg></td></tr>
+            <tr><td>slack</td><td class="r-type">MCP local</td><td><span class="r-status ok">ok</span></td><td class="r-num">3</td><td class="r-num">98ms</td><td class="r-num">0.0%</td><td>—</td><td><svg class="r-sparkline" viewBox="0 0 60 18"><polyline points="0,14 6,12 12,13 18,11 24,12 30,11 36,13 42,12 48,11 54,10 60,12" fill="none" stroke="var(--green)" stroke-width="1.2"/></svg></td></tr>
+            <tr><td>fs</td><td class="r-type">MCP local</td><td><span class="r-status ok">ok</span></td><td class="r-num">142</td><td class="r-num">5ms</td><td class="r-num">0.0%</td><td>—</td><td><svg class="r-sparkline" viewBox="0 0 60 18"><polyline points="0,8 6,6 12,7 18,5 24,7 30,4 36,6 42,3 48,5 54,2 60,4" fill="none" stroke="var(--green)" stroke-width="1.2"/></svg></td></tr>
+            <tr><td>alex@nas</td><td class="r-type">MCP fed</td><td><span class="r-status fed">fed</span></td><td class="r-num">— acl</td><td>—</td><td>—</td><td>—</td><td style="color:var(--text-dim);font-size:10px">🔒 read-only</td></tr>
+            <tr><td>primary</td><td class="r-type">stavR self</td><td><span class="r-status ok">ok</span></td><td class="r-num">184</td><td class="r-num">412ms</td><td class="r-warn">2.1%</td><td class="r-num">$2.84</td><td><svg class="r-sparkline" viewBox="0 0 60 18"><polyline points="0,11 6,10 12,9 18,8 24,9 30,10 36,8 42,9 48,7 54,8 60,7" fill="none" stroke="var(--sky)" stroke-width="1.2"/></svg></td></tr>
+            <tr><td>mac · MLX</td><td class="r-type">stavr-spawn</td><td><span class="r-status ok">ok</span></td><td class="r-num">22</td><td class="r-num">220ms</td><td class="r-num">0%</td><td class="r-num">$0.40</td><td><svg class="r-sparkline" viewBox="0 0 60 18"><polyline points="0,13 6,12 12,14 18,12 24,13 30,11 36,12 42,11 48,13 54,12 60,11" fill="none" stroke="var(--sky)" stroke-width="1.2"/></svg></td></tr>
+            <tr><td>linux-gpu</td><td class="r-type">stavr-spawn</td><td><span class="r-status ok">ok</span></td><td class="r-num">8</td><td class="r-num">3.4s</td><td class="r-num">0%</td><td class="r-num">$0.00</td><td><svg class="r-sparkline" viewBox="0 0 60 18"><polyline points="0,15 6,14 12,12 18,10 24,8 30,9 36,11 42,12 48,11 54,10 60,9" fill="none" stroke="var(--sky)" stroke-width="1.2"/></svg></td></tr>
+            <tr><td>alex@home</td><td class="r-type">stavR fed</td><td><span class="r-status fed">fed</span></td><td class="r-num">— acl</td><td>—</td><td>—</td><td>—</td><td style="color:var(--text-dim);font-size:10px">🔒 ACL: read-bricks-only</td></tr>
+            <tr><td>cc-stuck-002</td><td class="r-type">worker</td><td><span class="r-status warn">stuck</span></td><td class="r-num">0</td><td class="r-crit">30s+</td><td class="r-crit">100%</td><td class="r-num">$0.05</td><td><svg class="r-sparkline" viewBox="0 0 60 18"><polyline points="0,8 6,9 12,10 18,12 24,15 30,16 36,16 42,17 48,17 54,17 60,17" fill="none" stroke="var(--amber)" stroke-width="1.2"/></svg></td></tr>
+            <tr><td>cc-resolver</td><td class="r-type">worker</td><td><span class="r-status ok">running</span></td><td class="r-num">12</td><td class="r-num">142ms</td><td class="r-num">0.2%</td><td class="r-num">$0.18</td><td><svg class="r-sparkline" viewBox="0 0 60 18"><polyline points="0,12 6,11 12,9 18,10 24,8 30,9 36,7 42,8 48,6 54,7 60,5" fill="none" stroke="var(--green)" stroke-width="1.2"/></svg></td></tr>
+            <tr><td>ts-a4c1</td><td class="r-type">scope</td><td><span class="r-status ok">7/10</span></td><td>—</td><td>—</td><td>—</td><td class="r-num">$0.18 used</td><td style="color:var(--text-dim);font-size:10px">53m remaining</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT COLUMN: Trend wall (top) + Self-heal (bottom) -->
+  <div class="col-right">
+
+    <!-- TREND CHARTS WALL -->
+    <div class="panel trends-panel">
+      <div class="panel-head">
+        <div class="panel-title">Trends · last 1h</div>
+        <div class="panel-meta">window: 60min · interval: 60s</div>
+      </div>
+
+      <div class="trend-chart">
+        <div class="tc-head">
+          <div><span class="tc-title">Throughput</span> <span class="tc-trend up">↑ 12% vs 1h ago</span></div>
+          <span class="tc-value">184/m</span>
+        </div>
+        <div class="tc-svg">
+          <svg viewBox="0 0 600 70" preserveAspectRatio="none">
+            <defs><linearGradient id="thr-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(92,198,255,0.4)"/><stop offset="100%" stop-color="rgba(92,198,255,0)"/></linearGradient></defs>
+            <path d="M0,50 L40,52 L80,48 L120,40 L160,42 L200,35 L240,32 L280,28 L320,30 L360,25 L400,22 L440,20 L480,18 L520,22 L560,16 L600,14 L600,70 L0,70 Z" fill="url(#thr-g)"/>
+            <path d="M0,50 L40,52 L80,48 L120,40 L160,42 L200,35 L240,32 L280,28 L320,30 L360,25 L400,22 L440,20 L480,18 L520,22 L560,16 L600,14" fill="none" stroke="var(--sky)" stroke-width="1.5"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="trend-chart">
+        <div class="tc-head">
+          <div><span class="tc-title">Latency p50 / p95 / p99</span> <span class="tc-trend up">p99 ↑ 38% vs 1h ago</span></div>
+          <span class="tc-value">38 / 247 / <span class="r-warn">412</span>ms</span>
+        </div>
+        <div class="tc-svg">
+          <svg viewBox="0 0 600 70" preserveAspectRatio="none">
+            <polyline points="0,60 50,62 100,58 150,55 200,50 250,48 300,45 350,42 400,40 450,42 500,45 550,50 600,55" fill="none" stroke="var(--green)" stroke-width="1"/>
+            <polyline points="0,40 50,42 100,38 150,35 200,30 250,28 300,25 350,22 400,20 450,22 500,25 550,30 600,35" fill="none" stroke="var(--sky)" stroke-width="1"/>
+            <polyline points="0,30 50,28 100,25 150,22 200,15 250,18 300,12 350,8 400,10 450,12 500,15 550,18 600,20" fill="none" stroke="var(--amber)" stroke-width="1.5"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="trend-chart">
+        <div class="tc-head">
+          <div><span class="tc-title">Error rate</span> <span class="tc-trend up">↑ +1.7pp vs 1h ago</span></div>
+          <span class="tc-value warn">2.1%</span>
+        </div>
+        <div class="tc-svg">
+          <svg viewBox="0 0 600 70" preserveAspectRatio="none">
+            <defs><linearGradient id="err-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(255,107,107,0.4)"/><stop offset="100%" stop-color="rgba(255,107,107,0)"/></linearGradient></defs>
+            <path d="M0,65 L80,63 L160,62 L240,60 L300,58 L360,50 L420,30 L480,25 L540,22 L600,20 L600,70 L0,70 Z" fill="url(#err-g)"/>
+            <path d="M0,65 L80,63 L160,62 L240,60 L300,58 L360,50 L420,30 L480,25 L540,22 L600,20" fill="none" stroke="var(--red)" stroke-width="1.5"/>
+            <line x1="0" y1="55" x2="600" y2="55" stroke="rgba(251,191,36,0.3)" stroke-dasharray="2,4"/>
+            <text x="595" y="53" text-anchor="end" font-family="monospace" font-size="8" fill="var(--amber)">1.0% threshold</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="trend-chart">
+        <div class="tc-head">
+          <div><span class="tc-title">Cost $ · OAuth quota</span> <span class="tc-trend down">↓ 38% vs yesterday</span></div>
+          <span class="tc-value">$2.84 / $20.00</span>
+        </div>
+        <div class="tc-svg">
+          <svg viewBox="0 0 600 70" preserveAspectRatio="none">
+            <defs><linearGradient id="cost-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(184,84,42,0.4)"/><stop offset="100%" stop-color="rgba(184,84,42,0)"/></linearGradient></defs>
+            <path d="M0,30 L40,32 L80,28 L120,25 L160,28 L200,30 L240,35 L280,40 L320,42 L360,45 L400,48 L440,50 L480,52 L520,54 L560,55 L600,56 L600,70 L0,70 Z" fill="url(#cost-g)"/>
+            <path d="M0,30 L40,32 L80,28 L120,25 L160,28 L200,30 L240,35 L280,40 L320,42 L360,45 L400,48 L440,50 L480,52 L520,54 L560,55 L600,56" fill="none" stroke="var(--rust)" stroke-width="1.5"/>
+            <polyline points="0,15 100,18 200,22 300,28 400,40 500,55 600,60" fill="none" stroke="var(--amber)" stroke-width="1.2" stroke-dasharray="3,3"/>
+            <text x="595" y="63" text-anchor="end" font-family="monospace" font-size="8" fill="var(--amber)">OAuth 67%</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEWARD SELF-HEAL -->
+    <div class="panel heal-panel">
+      <div class="heal-head">
+        <span class="heal-rune">ᚱ</span>
+        <span class="heal-title">Steward · self-heal actions</span>
+        <span class="heal-meta">last 24h · 7 auto-fixes</span>
+      </div>
+      <div class="heal-list">
+        <div class="heal-row crit">
+          <span class="heal-time">14:18</span>
+          <span class="heal-icon crit">✕</span>
+          <div class="heal-msg">killed <span class="target">cc-stuck-002</span><span class="reason">webhook.callback timeout 30s · scope respected · worker logs preserved</span></div>
+          <span class="heal-action">undo</span>
+        </div>
+        <div class="heal-row warn">
+          <span class="heal-time">13:42</span>
+          <span class="heal-icon warn">⚡</span>
+          <div class="heal-msg">re-authed <span class="target">webhook brick</span><span class="reason">OAuth token expired · auto-renewed · 1 worker resumed</span></div>
+          <span class="heal-action">undo</span>
+        </div>
+        <div class="heal-row ok">
+          <span class="heal-time">11:34</span>
+          <span class="heal-icon ok">✓</span>
+          <div class="heal-msg">daemon auto-restart via <span class="target">PM2 + stavr-watch</span><span class="reason">OOM at heap 4.0GB · heap snapshot saved to tmp/heap-snapshots/snap-1734</span></div>
+          <span class="heal-action">details</span>
+        </div>
+        <div class="heal-row warn">
+          <span class="heal-time">10:22</span>
+          <span class="heal-icon warn">⚡</span>
+          <div class="heal-msg">promoted step to <span class="target">opus 4.7</span><span class="reason">sonnet failed on bom-04a2 step 3 · auto-promote per Turbo rules</span></div>
+          <span class="heal-action">undo</span>
+        </div>
+        <div class="heal-row ok">
+          <span class="heal-time">09:11</span>
+          <span class="heal-icon ok">✓</span>
+          <div class="heal-msg">retention sweep · purged <span class="target">12,847 events</span><span class="reason">operational kinds &gt; 7d · audit kinds preserved</span></div>
+          <span class="heal-action">details</span>
+        </div>
+        <div class="heal-row warn">
+          <span class="heal-time">08:42</span>
+          <span class="heal-icon warn">⚡</span>
+          <div class="heal-msg">throttled dispatch to <span class="target">linux-gpu</span><span class="reason">VRAM 92% · paused new Ollama spawns until &lt;80%</span></div>
+          <span class="heal-action">undo</span>
+        </div>
+        <div class="heal-row ok">
+          <span class="heal-time">07:15</span>
+          <span class="heal-icon ok">✓</span>
+          <div class="heal-msg">cleared SSE subscriber leak · <span class="target">23 ghost connections</span><span class="reason">5min janitor fired · subscribers reaped</span></div>
+          <span class="heal-action">details</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>
