@@ -34,6 +34,13 @@ module.exports = {
         '--report-directory=./tmp/diag-reports',
       ],
       cwd: __dirname,
+      // Diagnostic endpoints (POST /debug/heap-snapshot, /debug/cpu-profile,
+      // /debug/diagnostic-report). Locked behind this flag — daemon returns
+      // 404 (not 403) when unset to avoid leaking endpoint existence.
+      // Personal-machine + loopback-only (ADR-006) makes always-on safe.
+      env: {
+        STAVR_DEBUG_ENABLED: "1",
+      },
       // Auto-restart with bounds: 3 restarts max, 30s gap. Past that, PM2
       // stops respawning â€” gives a clear signal something's actually broken
       // rather than masking it with infinite respawn loops.
