@@ -52,7 +52,7 @@ describe('host_exec — MCP tool registration', () => {
     );
   });
 
-  it('skeleton handler responds without crashing the server', async () => {
+  it('handler refuses without an active scope (SCOPE_DENIED)', async () => {
     const res = await client.callTool({
       name: 'host_exec',
       arguments: { command: 'git', args: ['status'] },
@@ -61,8 +61,8 @@ describe('host_exec — MCP tool registration', () => {
       .map((c) => c.text ?? '')
       .join('');
     const parsed = JSON.parse(text);
-    // P2 skeleton echoes back; P3/P4 will replace the body. We just assert
-    // the call round-trips successfully — the contract holds.
-    expect(parsed).toHaveProperty('echoed');
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error_code).toBe('SCOPE_DENIED');
+    expect(parsed.correlation_id).toBeTypeOf('string');
   });
 });

@@ -97,6 +97,10 @@ export const EventKind = z.enum([
   'cpu_profile_taken',
   'diagnostic_report_taken',
   'capture_filed',
+  // host_exec — scoped + audited shell execution (BOM: host-exec-tool-bom.md)
+  'host_exec_started',
+  'host_exec_completed',
+  'host_exec_denied',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -660,6 +664,42 @@ export const BomStepPromotedPayload = z.object({
   reason: z.string(),
 });
 
+// host_exec audit payloads (BOM: proposed/host-exec-tool-bom.md).
+
+export const HostExecStartedPayload = z.object({
+  correlation_id: z.string(),
+  scope_id: z.string(),
+  command: z.string(),
+  args_hash: z.string(),
+  args_count: z.number().int().nonnegative(),
+  cwd: z.string().optional(),
+  timeout_ms: z.number().int().positive(),
+  caller: z.string().optional(),
+});
+
+export const HostExecCompletedPayload = z.object({
+  correlation_id: z.string(),
+  scope_id: z.string(),
+  command: z.string(),
+  exit_code: z.number().int().nullable(),
+  duration_ms: z.number().nonnegative(),
+  stdout_len: z.number().int().nonnegative(),
+  stderr_len: z.number().int().nonnegative(),
+  stdout_truncated: z.boolean(),
+  stderr_truncated: z.boolean(),
+  timed_out: z.boolean(),
+});
+
+export const HostExecDeniedPayload = z.object({
+  correlation_id: z.string(),
+  command: z.string(),
+  args_hash: z.string(),
+  args_count: z.number().int().nonnegative(),
+  reason: z.string(),
+  error_code: z.enum(['SCOPE_DENIED', 'ALLOWLIST_DENIED', 'CWD_DENIED']),
+  caller: z.string().optional(),
+});
+
 export const ProfileModeSwitchedPayload = z.object({
   from_mode: ProfileModeEnum,
   to_mode: ProfileModeEnum,
@@ -750,6 +790,9 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     bom_step_skipped: BomStepSkippedPayload,
     bom_step_promoted: BomStepPromotedPayload,
     profile_mode_switched: ProfileModeSwitchedPayload,
+    host_exec_started: HostExecStartedPayload,
+    host_exec_completed: HostExecCompletedPayload,
+    host_exec_denied: HostExecDeniedPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);
