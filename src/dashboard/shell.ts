@@ -36,6 +36,7 @@ import {
   CAPTURE_BUTTON_JS,
   renderCaptureButton,
 } from './components/capture-button.js';
+import { ICON_SPRITE_SVG } from './components/icon-sprite.js';
 
 export type DashboardPageId =
   | 'helm'
@@ -213,6 +214,14 @@ button { font: inherit; }
 .status-pill .dot.crit { background: var(--crit); box-shadow: 0 0 6px var(--crit); }
 .status-pill .dot.info { background: var(--info); }
 .status-pill .clk { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* Brand icon glyphs (from icon-sprite.ts) */
+svg.icon {
+  width: 16px; height: 16px;
+  color: currentColor; fill: currentColor;
+  display: inline-block; vertical-align: middle;
+}
+svg.icon-lg { width: 22px; height: 22px; }
 
 /* === PAGE === */
 .page {
@@ -430,6 +439,7 @@ export function renderShell(input: RenderShellInput): string {
     input.head ?? '',
     `</head>`,
     `<body data-active-page="${input.activePage}">`,
+    ICON_SPRITE_SVG,
     `<header class="topnav" role="navigation" aria-label="Primary">`,
     renderBrand(),
     `<nav class="nav-tabs">${renderNav(input.activePage)}</nav>`,
