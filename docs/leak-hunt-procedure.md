@@ -11,7 +11,7 @@ persistence / dashboard hot paths.
 | --- | --- | --- |
 | `daemon_memory` events every 60s | `src/observability/memory-poller.ts` | `stavr tail --kind daemon_memory` |
 | SSE session open/close events | `src/transports.ts` `app.all('/mcp')` | `stavr tail --kind sse_session_opened --kind sse_session_closed` |
-| POST `/debug/heap-snapshot` (loopback) | `src/transports.ts` | `curl -X POST http://127.0.0.1:7777/debug/heap-snapshot` |
+| POST `/debug/heap-snapshot` (loopback + `STAVR_DEBUG_ENABLED=1`) | `src/observability/debug-endpoints.ts` | `STAVR_DEBUG_ENABLED=1 curl -X POST http://127.0.0.1:7777/debug/heap-snapshot` |
 | Crash-time heap dump | `npm start` flags `--heapsnapshot-near-heap-limit=2`, `--report-on-fatalerror`, `--report-directory=./tmp/diag-reports` | Files land in `./tmp/heap-snapshots` and `./tmp/diag-reports` |
 | Controlled repro | `scripts/leak-repro.ts` | `npx tsx scripts/leak-repro.ts` |
 | Kind-aware retention (every 60 min) | `src/observability/retention.ts` + `EventStore.pruneEvents` | `stavr tail --kind retention_swept` |
@@ -32,13 +32,18 @@ persistence / dashboard hot paths.
 ## Triggering a snapshot against a running daemon
 
 ```sh
+# Set STAVR_DEBUG_ENABLED=1 on the daemon process (e.g. in `ecosystem.config.cjs`
+# env, or `STAVR_DEBUG_ENABLED=1 npm start`) before the endpoints respond.
 curl -X POST http://127.0.0.1:7777/debug/heap-snapshot
 # {"ok":true,"file":"C:\\dev\\cowire\\tmp\\heap-snapshots\\snapshot-1715896234123.heapsnapshot","size_bytes":12345678}
 ```
 
-The endpoint is **loopback only** — `isLoopbackRequest` is re-checked even
-though the daemon binds 127.0.0.1 by default. If you've widened the bind via
-`network.bind`, snapshotting still has to be initiated locally.
+The endpoint is **loopback only** AND gated by `STAVR_DEBUG_ENABLED=1` (default
+off). When either condition fails the route returns 404 — we don't want to leak
+endpoint existence to an unauthenticated probe. The loopback check stays in
+place as defense-in-depth even though the daemon binds 127.0.0.1 by default.
+Rate-limited to one snapshot per minute per endpoint. See `docs/observability.md`
+for the full `/debug/*` surface.
 
 Open the resulting `.heapsnapshot` file in Chrome DevTools → Memory →
 *Load*. Sort by *Retained Size*. The leak-hunt evidence doc
