@@ -1,0 +1,1036 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>stavR · Topology v2 · Walkable Graph</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root {
+    --bg-0: #0a0b10;
+    --bg-1: #0f1018;
+    --bg-2: #14161f;
+    --surface: rgba(20, 22, 31, 0.72);
+    --surface-2: rgba(28, 30, 42, 0.78);
+    --line: rgba(255, 255, 255, 0.06);
+    --line-2: rgba(255, 255, 255, 0.10);
+    --line-3: rgba(255, 255, 255, 0.18);
+    --ink-0: #e8e9ef;
+    --ink-1: #b9bbc6;
+    --ink-2: #7e8090;
+    --ink-3: #4f5160;
+
+    /* status (halos only) */
+    --ok: #6dd58c;
+    --warn: #e2a942;
+    --crit: #ef5a6f;
+    --info: #6aa9ff;
+
+    /* TYPE colors — the brand-defining palette */
+    --t-core: #b8542a;        /* rust — stavR daemon, spawn */
+    --t-core-soft: rgba(184,84,42,.18);
+    --t-mcp-remote: #6aa9ff;  /* blue — remote MCP servers */
+    --t-mcp-remote-soft: rgba(106,169,255,.18);
+    --t-mcp-local: #6dd58c;   /* green — local MCP servers */
+    --t-mcp-local-soft: rgba(109,213,140,.18);
+    --t-webhook: #e2a942;     /* amber — webhooks / triggers */
+    --t-webhook-soft: rgba(226,169,66,.18);
+    --t-db: #a78bfa;          /* purple — databases */
+    --t-db-soft: rgba(167,139,250,.18);
+    --t-model: #4dd0c2;       /* teal — models */
+    --t-model-soft: rgba(77,208,194,.18);
+    --t-worker: #f06292;      /* pink — worker processes */
+    --t-worker-soft: rgba(240,98,146,.18);
+    --t-peer: #80d4ff;        /* light cyan — federated peers */
+    --t-peer-soft: rgba(128,212,255,.18);
+
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: radial-gradient(1400px 900px at 18% -8%, #1a1326 0%, transparent 55%),
+                radial-gradient(1100px 800px at 110% 110%, #0f1d22 0%, transparent 55%),
+                var(--bg-0);
+    color: var(--ink-0);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  .app {
+    display: grid;
+    grid-template-rows: 44px 38px 1fr 34px;
+    height: 100vh;
+  }
+
+  /* ============ topbar ============ */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(15,16,24,.92), rgba(15,16,24,.65));
+    backdrop-filter: blur(24px);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: .04em; }
+  .brand .rune {
+    width: 22px; height: 22px;
+    display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--t-core), #6e2e15);
+    border-radius: 6px;
+    font-family: var(--mono);
+    color: #ffe9dc; font-size: 13px; line-height: 1;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 4px 14px rgba(184,84,42,.32);
+  }
+  .brand .word b { color: var(--ink-0); font-weight: 700; }
+  .brand .word i { font-style: normal; color: var(--t-core); font-family: var(--mono); }
+  .nav { display: flex; gap: 4px; font-size: 12.5px; color: var(--ink-1); }
+  .nav a { padding: 6px 10px; border-radius: 6px; text-decoration: none; color: inherit; cursor: pointer; }
+  .nav a.active { background: var(--t-core-soft); color: #ffd9c4; }
+  .nav a:hover:not(.active) { background: rgba(255,255,255,.04); color: var(--ink-0); }
+  .top-right { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--ink-1); font-family: var(--mono); }
+  .top-right .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 9px; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--line-2);
+    font-size: 11px; letter-spacing: .04em;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.warn { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+  .dot.crit { background: var(--crit); box-shadow: 0 0 8px var(--crit); animation: pulse 1.4s ease-in-out infinite; }
+  .dot.info { background: var(--info); box-shadow: 0 0 8px var(--info); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+  /* ============ filter strip ============ */
+  .strip {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(10,11,16,.6);
+    font-family: var(--mono); font-size: 11px; color: var(--ink-1);
+  }
+  .ns-tabs { display: flex; gap: 0; border: 1px solid var(--line-2); border-radius: 6px; overflow: hidden; }
+  .ns-tabs button {
+    background: transparent; color: var(--ink-2);
+    border: 0; padding: 4px 11px; font-family: var(--mono); font-size: 11px;
+    cursor: pointer; border-right: 1px solid var(--line);
+  }
+  .ns-tabs button:last-child { border-right: 0; }
+  .ns-tabs button.on { background: var(--t-core-soft); color: #ffd9c4; }
+
+  .type-chips { display: flex; gap: 5px; flex-wrap: nowrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 8px; border-radius: 999px;
+    border: 1px solid var(--line-2);
+    background: var(--surface);
+    font-size: 10.5px; color: var(--ink-1);
+    cursor: pointer;
+    user-select: none;
+  }
+  .chip.off { opacity: .4; }
+  .chip .sw { width: 8px; height: 8px; border-radius: 2px; }
+  .chip.core .sw { background: var(--t-core); }
+  .chip.mcp-remote .sw { background: var(--t-mcp-remote); }
+  .chip.mcp-local .sw { background: var(--t-mcp-local); }
+  .chip.webhook .sw { background: var(--t-webhook); }
+  .chip.db .sw { background: var(--t-db); }
+  .chip.model .sw { background: var(--t-model); }
+  .chip.worker .sw { background: var(--t-worker); }
+  .chip.peer .sw { background: var(--t-peer); }
+  .chip .ct { color: var(--ink-3); font-size: 9.5px; margin-left: 3px; }
+
+  .grow { flex: 1; }
+
+  .live-toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px;
+    background: linear-gradient(180deg, rgba(184,84,42,.25), rgba(184,84,42,.08));
+    border: 1px solid var(--t-core);
+    color: #ffd9c4; font-size: 11px; cursor: pointer; font-family: var(--mono);
+  }
+  .live-toggle .blip { width: 7px; height: 7px; border-radius: 50%; background: var(--t-core); box-shadow: 0 0 10px var(--t-core); animation: pulse 1s ease-in-out infinite; }
+
+  .search {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface); border: 1px solid var(--line-2);
+    padding: 3px 9px; border-radius: 6px;
+    color: var(--ink-2); font-family: var(--mono); font-size: 11px;
+    min-width: 220px;
+  }
+  .search .kbd { color: var(--ink-3); font-size: 10px; }
+
+  /* ============ main canvas ============ */
+  .main { position: relative; overflow: hidden; }
+  .canvas-wrap { position: absolute; inset: 0; }
+  .grid-bg {
+    position: absolute; inset: 0;
+    background-image:
+      radial-gradient(circle, rgba(255,255,255,.04) 1px, transparent 1px);
+    background-size: 28px 28px;
+    mask-image: radial-gradient(ellipse 90% 80% at 50% 50%, #000 60%, transparent 100%);
+    pointer-events: none;
+  }
+
+  .canvas-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* edges */
+  .edge {
+    fill: none; stroke: var(--line-2); stroke-width: 1.2;
+  }
+  .edge.dim { stroke: rgba(255,255,255,.04); }
+  .edge.live {
+    stroke-dasharray: 3 7;
+    animation: flow 1.4s linear infinite;
+  }
+  .edge.live.err { stroke: var(--crit); }
+  .edge.live.warn { stroke: var(--warn); }
+  .edge.live.ok { stroke: var(--ok); }
+  @keyframes flow { to { stroke-dashoffset: -30; } }
+  .edge.parent { stroke: rgba(255,255,255,.08); stroke-dasharray: 1 3; }
+
+  /* edge particles (live flowing dots) */
+  .particle {
+    r: 2.2;
+    fill: var(--ok);
+    filter: drop-shadow(0 0 4px rgba(109,213,140,.7));
+  }
+  .particle.warn { fill: var(--warn); filter: drop-shadow(0 0 4px rgba(226,169,66,.7)); }
+  .particle.err { fill: var(--crit); filter: drop-shadow(0 0 4px rgba(239,90,111,.8)); }
+
+  .edge-label {
+    fill: var(--ink-3); font-family: var(--mono); font-size: 9px;
+  }
+
+  /* nodes */
+  .nodes { position: absolute; inset: 0; pointer-events: none; }
+  .node {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    pointer-events: auto;
+    cursor: grab;
+    user-select: none;
+    z-index: 2;
+  }
+  .node:active { cursor: grabbing; }
+  .node:hover { z-index: 5; }
+  .node:hover .shape { filter: brightness(1.15); }
+
+  .shape {
+    position: relative;
+    width: 44px; height: 44px;
+    display: grid; place-items: center;
+    background: var(--surface-2);
+    border: 1.5px solid currentColor;
+    box-shadow: 0 4px 14px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.04);
+    transition: transform .15s ease;
+  }
+  .shape.hex {
+    clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0 50%);
+    border: 0;
+    background:
+      linear-gradient(135deg, var(--surface-2), var(--surface));
+    box-shadow: 0 4px 14px rgba(0,0,0,.45);
+  }
+  .shape.hex::before {
+    content: "";
+    position: absolute; inset: 0;
+    clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0 50%);
+    background: currentColor;
+    opacity: .14;
+  }
+  .shape.round { border-radius: 50%; }
+  .shape.square { border-radius: 8px; }
+
+  .glyph {
+    font-family: var(--mono); font-size: 11px;
+    color: currentColor;
+    z-index: 1;
+    letter-spacing: .03em;
+  }
+  .glyph.lg { font-size: 13px; font-weight: 700; }
+
+  /* status halo (overlays node, doesn't change color but adds a glow ring) */
+  .halo {
+    position: absolute; inset: -7px;
+    border-radius: inherit;
+    border: 1.5px solid transparent;
+    pointer-events: none;
+  }
+  .shape.hex .halo {
+    clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0 50%);
+    border: 0;
+    background: transparent;
+  }
+  .shape .halo.ok   { border-color: rgba(109,213,140,.40); box-shadow: 0 0 0 1px rgba(109,213,140,.15); }
+  .shape .halo.warn { border-color: rgba(226,169,66,.55); animation: ringpulse 2.4s ease-in-out infinite; }
+  .shape .halo.crit { border-color: rgba(239,90,111,.65); animation: ringpulse 1.2s ease-in-out infinite; }
+  @keyframes ringpulse {
+    0%,100% { transform: scale(1); opacity: .9; }
+    50% { transform: scale(1.15); opacity: .25; }
+  }
+
+  /* badges: lock (ACL), pin, chevron, status dot */
+  .badge {
+    position: absolute;
+    width: 13px; height: 13px; border-radius: 4px;
+    background: var(--bg-1);
+    display: grid; place-items: center;
+    font-family: var(--mono); font-size: 9px; color: var(--ink-1);
+    border: 1px solid var(--line-2);
+  }
+  .badge.lock { top: -4px; right: -4px; color: var(--t-peer); border-color: rgba(128,212,255,.4); }
+  .badge.pin  { bottom: -4px; right: -4px; color: var(--t-core); border-color: rgba(184,84,42,.4); }
+  .badge.chev { bottom: -4px; left: -4px; color: var(--ink-1); }
+  .badge.stat {
+    width: 10px; height: 10px; border-radius: 50%;
+    top: -3px; left: -3px;
+    border: 2px solid var(--bg-1);
+    background: var(--ok);
+  }
+  .badge.stat.warn { background: var(--warn); }
+  .badge.stat.crit { background: var(--crit); animation: pulse 1.2s ease-in-out infinite; }
+
+  /* type-color classes set --tc */
+  .t-core      { color: var(--t-core); }
+  .t-mcp-remote{ color: var(--t-mcp-remote); }
+  .t-mcp-local { color: var(--t-mcp-local); }
+  .t-webhook   { color: var(--t-webhook); }
+  .t-db        { color: var(--t-db); }
+  .t-model     { color: var(--t-model); }
+  .t-worker    { color: var(--t-worker); }
+  .t-peer      { color: var(--t-peer); }
+
+  .node-label {
+    font-family: var(--mono); font-size: 10.5px;
+    color: var(--ink-0);
+    text-shadow: 0 1px 3px rgba(0,0,0,.7);
+    white-space: nowrap;
+  }
+  .node-label .role {
+    color: var(--ink-3); font-size: 9.5px; margin-left: 3px;
+  }
+  .node.selected .shape { box-shadow: 0 0 0 2px var(--t-core), 0 0 26px rgba(184,84,42,.5); }
+
+  /* cluster halos behind clusters (subtle blob) */
+  .cluster-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(40px);
+    opacity: .35;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* palette door */
+  .palette-door {
+    position: absolute; top: 12px; right: 12px;
+    display: flex; flex-direction: column; gap: 6px;
+    z-index: 6;
+  }
+  .palette-door button {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: var(--surface);
+    border: 1px solid var(--line-2);
+    color: var(--ink-1);
+    font-family: var(--mono); font-size: 14px;
+    cursor: pointer;
+    display: grid; place-items: center;
+    position: relative;
+  }
+  .palette-door button:hover { color: var(--ink-0); border-color: var(--t-core); }
+  .palette-door button .tip {
+    position: absolute; right: 38px; top: 50%; transform: translateY(-50%);
+    background: var(--bg-2); color: var(--ink-1);
+    padding: 4px 8px; border-radius: 4px;
+    font-family: var(--mono); font-size: 10px;
+    border: 1px solid var(--line-2);
+    white-space: nowrap;
+    opacity: 0; pointer-events: none;
+    transition: opacity .15s;
+  }
+  .palette-door button:hover .tip { opacity: 1; }
+  .palette-door button.parked { color: var(--ink-3); }
+  .palette-door button.parked::after {
+    content: "v0.7";
+    position: absolute; bottom: -3px; right: -3px;
+    background: var(--t-core); color: white;
+    font-family: var(--mono); font-size: 8px;
+    padding: 0 3px; border-radius: 3px;
+  }
+
+  /* viewport controls bottom-left */
+  .viewport {
+    position: absolute; bottom: 12px; left: 12px;
+    display: flex; gap: 4px;
+    z-index: 6;
+  }
+  .viewport button {
+    background: var(--surface); border: 1px solid var(--line-2);
+    color: var(--ink-1); width: 28px; height: 28px; border-radius: 6px;
+    font-family: var(--mono); font-size: 14px; cursor: pointer;
+  }
+  .viewport button:hover { color: var(--ink-0); border-color: var(--t-core); }
+
+  /* ============ inspector drawer ============ */
+  .drawer {
+    position: absolute; top: 12px; bottom: 12px; right: -460px;
+    width: 440px;
+    background: linear-gradient(180deg, rgba(20,22,31,.94), rgba(15,16,24,.94));
+    border: 1px solid var(--line-2);
+    border-radius: 14px;
+    backdrop-filter: blur(28px);
+    box-shadow: -16px 0 40px rgba(0,0,0,.5);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    transition: right .25s cubic-bezier(.2,.7,.2,1);
+    z-index: 10;
+  }
+  .drawer.open { right: 12px; }
+
+  .drawer-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .drawer-head .type-mark {
+    width: 36px; height: 36px;
+    background: var(--t-mcp-remote-soft);
+    color: var(--t-mcp-remote);
+    display: grid; place-items: center;
+    border-radius: 9px;
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    border: 1px solid currentColor;
+  }
+  .drawer-head .id { display: flex; flex-direction: column; flex: 1; }
+  .drawer-head .id .row1 {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 13px; color: var(--ink-0);
+  }
+  .drawer-head .id .row1 .pill-type {
+    font-size: 9.5px; padding: 1px 6px; border-radius: 999px;
+    background: var(--t-mcp-remote-soft); color: var(--t-mcp-remote);
+    border: 1px solid currentColor;
+    letter-spacing: .04em; text-transform: uppercase;
+  }
+  .drawer-head .id .row1 .pill-stat {
+    font-size: 9.5px; padding: 1px 6px; border-radius: 999px;
+    background: rgba(109,213,140,.18); color: var(--ok);
+    border: 1px solid var(--ok);
+    letter-spacing: .04em;
+  }
+  .drawer-head .id .row2 {
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
+    margin-top: 3px;
+  }
+  .drawer-head .close {
+    background: transparent; border: 1px solid var(--line-2);
+    color: var(--ink-2); width: 26px; height: 26px; border-radius: 6px;
+    font-size: 13px; cursor: pointer;
+  }
+
+  .drawer-tabs {
+    display: flex; gap: 0;
+    padding: 10px 14px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .drawer-tabs button {
+    background: transparent; color: var(--ink-2);
+    border: 0; border-bottom: 2px solid transparent;
+    padding: 6px 12px 8px; font-family: var(--mono); font-size: 11px;
+    cursor: pointer;
+  }
+  .drawer-tabs button.on { color: var(--ink-0); border-bottom-color: var(--t-core); }
+
+  .drawer-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+  .drawer-body::-webkit-scrollbar { width: 8px; }
+  .drawer-body::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+
+  /* Health tab content */
+  .mini-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .mini-chart {
+    background: rgba(10,11,16,.5);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px 4px;
+  }
+  .mini-chart .mc-head {
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: var(--mono); font-size: 9.5px; color: var(--ink-2);
+    letter-spacing: .08em; text-transform: uppercase;
+  }
+  .mini-chart .mc-val {
+    font-family: var(--mono); font-size: 14px; color: var(--ink-0);
+    margin: 1px 0 4px;
+  }
+  .mini-chart .mc-val .delta { font-size: 10px; margin-left: 5px; color: var(--ok); }
+  .mini-chart .mc-val .delta.up { color: var(--crit); }
+  .mini-chart .mc-val .delta.dn { color: var(--ok); }
+
+  .window-toggle {
+    display: flex; gap: 0; border: 1px solid var(--line-2); border-radius: 6px;
+    overflow: hidden; margin: 10px 0 8px;
+    width: fit-content;
+  }
+  .window-toggle button {
+    background: transparent; color: var(--ink-2); border: 0;
+    padding: 3px 9px; font-family: var(--mono); font-size: 10.5px;
+    cursor: pointer; border-right: 1px solid var(--line);
+  }
+  .window-toggle button:last-child { border-right: 0; }
+  .window-toggle button.on { background: var(--t-core-soft); color: #ffd9c4; }
+
+  .open-diag-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin: 10px 0 4px;
+    font-family: var(--mono); font-size: 10.5px; color: var(--t-core);
+    text-decoration: none;
+    padding: 4px 8px; border-radius: 5px; border: 1px solid var(--t-core);
+    background: var(--t-core-soft); cursor: pointer;
+  }
+
+  /* Config tab content */
+  .kv-row {
+    display: grid; grid-template-columns: 130px 1fr 24px;
+    gap: 8px; padding: 6px 0;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 10.5px;
+  }
+  .kv-row .k { color: var(--ink-2); }
+  .kv-row .v { color: var(--ink-0); }
+  .kv-row .ed {
+    color: var(--ink-3); cursor: not-allowed;
+    text-align: right;
+  }
+
+  .edit-banner {
+    background: rgba(167,139,250,.10);
+    border: 1px dashed rgba(167,139,250,.4);
+    color: var(--t-db);
+    padding: 6px 9px; border-radius: 6px;
+    font-family: var(--mono); font-size: 10px;
+    margin-bottom: 8px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .edit-banner .badge-v7 {
+    background: var(--t-db); color: white;
+    font-size: 9px; padding: 1px 5px; border-radius: 3px;
+    letter-spacing: .04em;
+  }
+
+  /* Events tab */
+  .ev-row {
+    display: grid; grid-template-columns: 56px 60px 1fr;
+    gap: 8px; padding: 4px 0;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 10.5px;
+  }
+  .ev-row .ts { color: var(--ink-3); }
+  .ev-row .lvl {
+    align-self: start; font-size: 9.5px; padding: 1px 5px; border-radius: 4px;
+  }
+  .ev-row .lvl.info { background: rgba(106,169,255,.18); color: var(--info); }
+  .ev-row .lvl.ok { background: rgba(109,213,140,.18); color: var(--ok); }
+  .ev-row .lvl.warn { background: rgba(226,169,66,.18); color: var(--warn); }
+  .ev-row .lvl.crit { background: rgba(239,90,111,.18); color: var(--crit); }
+  .ev-row .msg { color: var(--ink-1); }
+
+  /* Actions */
+  .actions {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-top: 6px;
+  }
+  .actions button {
+    background: var(--surface-2); color: var(--ink-0);
+    border: 1px solid var(--line-2); border-radius: 6px;
+    padding: 5px 10px; font-family: var(--mono); font-size: 11px;
+    cursor: pointer;
+  }
+  .actions button.primary {
+    background: var(--t-core-soft); border-color: var(--t-core); color: #ffd9c4;
+  }
+  .actions button.danger { color: var(--crit); border-color: rgba(239,90,111,.35); }
+
+  /* ============ legend bar (row 4) ============ */
+  .legend-bar {
+    border-top: 1px solid var(--line);
+    background: rgba(10,11,16,.65);
+    display: flex; align-items: center; gap: 16px;
+    padding: 0 18px;
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
+  }
+  .legend-bar .lg {
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .legend-bar .lg .sw { width: 9px; height: 9px; border-radius: 2px; }
+  .legend-bar .grow-r { flex: 1; }
+  .legend-bar .ko { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-3); }
+  .legend-bar .ko kbd {
+    background: var(--surface-2); border: 1px solid var(--line-2);
+    padding: 0 4px; border-radius: 3px; color: var(--ink-1); font-size: 10px;
+  }
+
+  /* selected node ring (for the github node in drawer) */
+  .node.selected .glyph { color: var(--ink-0); }
+
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ TOPBAR ============ -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="rune">ᚱ</span>
+      <span class="word"><b>stav</b><i>ᚱ</i></span>
+    </div>
+    <nav class="nav">
+      <a>Helm</a>
+      <a class="active">Topology</a>
+      <a>Streams</a>
+      <a>Decide</a>
+      <a>Toolkit</a>
+      <a>Capabilities</a>
+      <a>Diagnostics</a>
+      <a>Settings</a>
+    </nav>
+    <div class="top-right">
+      <span class="pill"><span class="dot ok"></span> daemon · 14d 06:22</span>
+      <span class="pill"><span class="dot info"></span> steward · opus-4.7</span>
+      <span>14:32:08 GST</span>
+    </div>
+  </header>
+
+  <!-- ============ FILTER STRIP ============ -->
+  <div class="strip">
+    <div class="ns-tabs">
+      <button class="on">All</button>
+      <button>Local</button>
+      <button>Federated</button>
+      <button>External</button>
+    </div>
+
+    <div class="type-chips">
+      <span class="chip core"><span class="sw"></span>Core<span class="ct">2</span></span>
+      <span class="chip mcp-remote"><span class="sw"></span>MCP·remote<span class="ct">4</span></span>
+      <span class="chip mcp-local"><span class="sw"></span>MCP·local<span class="ct">2</span></span>
+      <span class="chip webhook"><span class="sw"></span>Webhook<span class="ct">1</span></span>
+      <span class="chip db"><span class="sw"></span>DB<span class="ct">1</span></span>
+      <span class="chip model"><span class="sw"></span>Model<span class="ct">3</span></span>
+      <span class="chip worker"><span class="sw"></span>Worker<span class="ct">4</span></span>
+      <span class="chip peer"><span class="sw"></span>Peer<span class="ct">1</span></span>
+    </div>
+
+    <div class="grow"></div>
+
+    <span class="search">/  <span style="color:var(--ink-3);">find node…</span> <span class="kbd">⌘K</span></span>
+    <span class="live-toggle"><span class="blip"></span> LIVE · streaming</span>
+  </div>
+
+  <!-- ============ MAIN CANVAS ============ -->
+  <main class="main">
+    <div class="canvas-wrap">
+      <div class="grid-bg"></div>
+
+      <!-- subtle cluster blobs behind the clusters -->
+      <div class="cluster-blob" style="background: radial-gradient(var(--t-mcp-remote), transparent 60%); width: 380px; height: 260px; top: 50px; left: 60px;"></div>
+      <div class="cluster-blob" style="background: radial-gradient(var(--t-worker), transparent 60%); width: 320px; height: 220px; top: 380px; left: 110px;"></div>
+      <div class="cluster-blob" style="background: radial-gradient(var(--t-model), transparent 60%); width: 280px; height: 200px; top: 110px; right: 230px;"></div>
+      <div class="cluster-blob" style="background: radial-gradient(var(--t-peer), transparent 60%); width: 240px; height: 200px; top: 420px; right: 280px;"></div>
+      <div class="cluster-blob" style="background: radial-gradient(var(--t-db), transparent 60%); width: 180px; height: 160px; top: 280px; left: 460px;"></div>
+
+      <!-- SVG edge layer -->
+      <svg class="canvas-svg" viewBox="0 0 1200 700" preserveAspectRatio="xMidYMid meet">
+        <!-- stavR-primary at center (560, 350) -->
+        <!-- structural / parent-child edges (dashed thin) -->
+        <path class="edge parent" d="M 560 350 L 210 470" />
+        <path class="edge parent" d="M 560 350 L 280 540" />
+        <path class="edge parent" d="M 560 350 L 350 590" />
+        <path class="edge parent" d="M 560 350 L 240 600" />
+
+        <!-- core call edges (live) -->
+        <path class="edge live ok" d="M 560 350 Q 380 220 200 130" id="e-gh"/>
+        <path class="edge live ok" d="M 560 350 Q 400 200 280 90" id="e-sl"/>
+        <path class="edge live ok" d="M 560 350 Q 460 200 360 80" id="e-li"/>
+        <path class="edge live ok" d="M 560 350 Q 320 280 130 230" id="e-dr"/>
+
+        <path class="edge live ok" d="M 560 350 Q 660 230 780 120" id="e-ol"/>
+        <path class="edge live warn" d="M 560 350 Q 470 410 240 350" id="e-fs"/>
+        <path class="edge live err" d="M 560 350 Q 560 540 320 660" id="e-wh"/>
+
+        <path class="edge" d="M 560 350 Q 680 340 770 240"/>
+        <path class="edge" d="M 560 350 Q 700 360 820 320"/>
+        <path class="edge live ok" d="M 560 350 Q 760 380 900 470" id="e-peer"/>
+
+        <path class="edge" d="M 560 350 L 670 360"/>  <!-- to DB runestone -->
+        <path class="edge" d="M 560 350 Q 770 410 870 380"/>  <!-- to model deepseek -->
+
+        <!-- ANIMATED PARTICLES (live) — flowing dots along edges -->
+        <!-- github edge -->
+        <circle class="particle" r="2.2" cx="0" cy="0">
+          <animateMotion dur="2.4s" repeatCount="indefinite">
+            <mpath href="#e-gh"/>
+          </animateMotion>
+        </circle>
+        <circle class="particle" r="2.2" cx="0" cy="0">
+          <animateMotion dur="2.4s" begin="0.8s" repeatCount="indefinite">
+            <mpath href="#e-gh"/>
+          </animateMotion>
+        </circle>
+        <!-- slack -->
+        <circle class="particle" r="2.2">
+          <animateMotion dur="3.2s" repeatCount="indefinite">
+            <mpath href="#e-sl"/>
+          </animateMotion>
+        </circle>
+        <!-- linear -->
+        <circle class="particle" r="2.2">
+          <animateMotion dur="2.8s" repeatCount="indefinite">
+            <mpath href="#e-li"/>
+          </animateMotion>
+        </circle>
+        <!-- ollama -->
+        <circle class="particle" r="2.2">
+          <animateMotion dur="2s" repeatCount="indefinite">
+            <mpath href="#e-ol"/>
+          </animateMotion>
+        </circle>
+        <circle class="particle" r="2.2">
+          <animateMotion dur="2s" begin="0.6s" repeatCount="indefinite">
+            <mpath href="#e-ol"/>
+          </animateMotion>
+        </circle>
+        <!-- filesystem (warn) -->
+        <circle class="particle warn" r="2.2">
+          <animateMotion dur="3.6s" repeatCount="indefinite">
+            <mpath href="#e-fs"/>
+          </animateMotion>
+        </circle>
+        <!-- webhook (error) -->
+        <circle class="particle err" r="2.4">
+          <animateMotion dur="1.6s" repeatCount="indefinite">
+            <mpath href="#e-wh"/>
+          </animateMotion>
+        </circle>
+        <!-- peer -->
+        <circle class="particle" r="2.2">
+          <animateMotion dur="3s" repeatCount="indefinite">
+            <mpath href="#e-peer"/>
+          </animateMotion>
+        </circle>
+
+        <!-- edge labels -->
+        <text class="edge-label" x="370" y="178">0.42 qps · p95 142ms</text>
+        <text class="edge-label" x="320" y="430" fill="#e2a942">throttled · 0.08</text>
+        <text class="edge-label" x="440" y="540" fill="#ef5a6f">auth-lost · 14m</text>
+        <text class="edge-label" x="750" y="450">a2a · acl-gated</text>
+      </svg>
+
+      <!-- NODE LAYER -->
+      <div class="nodes">
+
+        <!-- ============ CORE (rust hex) ============ -->
+        <div class="node selected" style="top: 50%; left: 46.7%;">
+          <div class="shape hex t-core">
+            <span class="glyph lg">ᚱ</span>
+            <span class="halo"></span>
+            <span class="badge stat"></span>
+            <span class="badge pin">📌</span>
+          </div>
+          <div class="node-label"><b>stavR-primary</b><span class="role">this · 8421</span></div>
+        </div>
+
+        <!-- ============ MCPs · REMOTE (blue circles, top-left cluster) ============ -->
+        <div class="node" style="top: 18.5%; left: 16.7%;">
+          <div class="shape round t-mcp-remote">
+            <span class="glyph">gh</span>
+            <span class="halo ok"></span>
+            <span class="badge stat"></span>
+            <span class="badge chev">›</span>
+          </div>
+          <div class="node-label">github<span class="role">v3.1.0</span></div>
+        </div>
+        <div class="node" style="top: 12.8%; left: 23.3%;">
+          <div class="shape round t-mcp-remote">
+            <span class="glyph">sl</span>
+            <span class="halo ok"></span>
+            <span class="badge stat"></span>
+          </div>
+          <div class="node-label">slack</div>
+        </div>
+        <div class="node" style="top: 11.4%; left: 30%;">
+          <div class="shape round t-mcp-remote">
+            <span class="glyph">li</span>
+            <span class="halo ok"></span>
+            <span class="badge stat"></span>
+          </div>
+          <div class="node-label">linear</div>
+        </div>
+        <div class="node" style="top: 32.8%; left: 10.8%;">
+          <div class="shape round t-mcp-remote">
+            <span class="glyph">dr</span>
+            <span class="halo ok"></span>
+            <span class="badge stat"></span>
+          </div>
+          <div class="node-label">drive</div>
+        </div>
+
+        <!-- ============ MCPs · LOCAL (green circles) ============ -->
+        <div class="node" style="top: 17.1%; left: 65%;">
+          <div class="shape round t-mcp-local">
+            <span class="glyph">ol</span>
+            <span class="halo ok"></span>
+            <span class="badge stat"></span>
+            <span class="badge chev">›</span>
+          </div>
+          <div class="node-label">ollama<span class="role">:11434</span></div>
+        </div>
+        <div class="node" style="top: 50%; left: 20%;">
+          <div class="shape round t-mcp-local">
+            <span class="glyph">fs</span>
+            <span class="halo warn"></span>
+            <span class="badge stat warn"></span>
+          </div>
+          <div class="node-label">filesystem<span class="role">throttled</span></div>
+        </div>
+
+        <!-- ============ WEBHOOK (amber, crit) ============ -->
+        <div class="node" style="top: 94.3%; left: 26.7%;">
+          <div class="shape square t-webhook">
+            <span class="glyph">wh</span>
+            <span class="halo crit"></span>
+            <span class="badge stat crit"></span>
+          </div>
+          <div class="node-label" style="color:var(--crit);">webhook<span class="role">auth-lost 14m</span></div>
+        </div>
+
+        <!-- ============ DB (purple, runestone sqlite) ============ -->
+        <div class="node" style="top: 51.4%; left: 55.8%;">
+          <div class="shape square t-db">
+            <span class="glyph">db</span>
+            <span class="halo ok"></span>
+            <span class="badge stat"></span>
+          </div>
+          <div class="node-label">runestone<span class="role">sqlite · 84mb</span></div>
+        </div>
+
+        <!-- ============ MODELS (teal, top-right cluster) ============ -->
+        <div class="node" style="top: 34.3%; left: 64.2%;">
+          <div class="shape hex t-model">
+            <span class="glyph lg">M</span>
+            <span class="halo ok"></span>
+            <span class="badge stat"></span>
+          </div>
+          <div class="node-label">opus-4.7<span class="role">api</span></div>
+        </div>
+        <div class="node" style="top: 45.7%; left: 68.3%;">
+          <div class="shape hex t-model">
+            <span class="glyph lg">M</span>
+            <span class="halo ok"></span>
+            <span class="badge stat"></span>
+          </div>
+          <div class="node-label">llama-3.1-8b<span class="role">local</span></div>
+        </div>
+        <div class="node" style="top: 54.3%; left: 72.5%;">
+          <div class="shape hex t-model">
+            <span class="glyph lg">M</span>
+            <span class="halo ok"></span>
+            <span class="badge stat"></span>
+          </div>
+          <div class="node-label">deepseek-70b<span class="role">on gpu-rig-01</span></div>
+        </div>
+
+        <!-- ============ WORKERS (pink, bottom-left lane) ============ -->
+        <div class="node" style="top: 67.1%; left: 17.5%;">
+          <div class="shape round t-worker">
+            <span class="glyph">cc</span>
+            <span class="halo ok"></span>
+            <span class="badge stat"></span>
+            <span class="badge chev">›</span>
+          </div>
+          <div class="node-label">cc-001<span class="role">73%</span></div>
+        </div>
+        <div class="node" style="top: 77.1%; left: 23.3%;">
+          <div class="shape round t-worker">
+            <span class="glyph">cc</span>
+            <span class="halo ok"></span>
+            <span class="badge stat"></span>
+          </div>
+          <div class="node-label">cc-002<span class="role">38%</span></div>
+        </div>
+        <div class="node" style="top: 84.3%; left: 29.2%;">
+          <div class="shape round t-worker">
+            <span class="glyph">hk</span>
+            <span class="halo warn"></span>
+            <span class="badge stat warn"></span>
+          </div>
+          <div class="node-label">haiku-1<span class="role">decision-wait</span></div>
+        </div>
+        <div class="node" style="top: 85.7%; left: 20%;">
+          <div class="shape round t-worker">
+            <span class="glyph">cc</span>
+            <span class="halo crit"></span>
+            <span class="badge stat crit"></span>
+          </div>
+          <div class="node-label" style="color:var(--crit);">cc-stuck-002<span class="role">14:22</span></div>
+        </div>
+
+        <!-- ============ FEDERATED PEER + SPAWN (right side) ============ -->
+        <div class="node" style="top: 65.7%; left: 75%;">
+          <div class="shape hex t-peer">
+            <span class="glyph lg">A</span>
+            <span class="halo warn"></span>
+            <span class="badge stat warn"></span>
+            <span class="badge lock">🔒</span>
+          </div>
+          <div class="node-label">alex@home<span class="role">peer · acl</span></div>
+        </div>
+        <div class="node" style="top: 24.3%; left: 81.7%;">
+          <div class="shape hex t-core">
+            <span class="glyph lg">ᚱ</span>
+            <span class="halo ok"></span>
+            <span class="badge stat"></span>
+          </div>
+          <div class="node-label">gpu-rig-01<span class="role">spawn</span></div>
+        </div>
+
+      </div>
+
+      <!-- PALETTE DOOR -->
+      <div class="palette-door">
+        <button title="reset layout"><span style="font-size:16px;">⤾</span></button>
+        <button class="parked"><span style="font-size:16px;">＋</span><span class="tip">Add node from catalog</span></button>
+        <button class="parked"><span style="font-size:14px;">✎</span><span class="tip">Enable edit mode</span></button>
+      </div>
+
+      <!-- VIEWPORT -->
+      <div class="viewport">
+        <button>−</button>
+        <button>+</button>
+        <button>⤢</button>
+      </div>
+
+      <!-- ============ INSPECTOR DRAWER ============ -->
+      <aside class="drawer open">
+        <div class="drawer-head">
+          <div class="type-mark">gh</div>
+          <div class="id">
+            <div class="row1">
+              <span>github</span>
+              <span class="pill-type">mcp · remote</span>
+              <span class="pill-stat">ok</span>
+            </div>
+            <div class="row2">github-mcp@3.1.0 · streamable-http · 14 tools</div>
+          </div>
+          <button class="close" title="esc">×</button>
+        </div>
+
+        <div class="drawer-tabs">
+          <button class="on">Health</button>
+          <button>Config</button>
+          <button>Events</button>
+          <button>Actions</button>
+        </div>
+
+        <div class="drawer-body">
+
+          <!-- Health tab visible -->
+          <div class="window-toggle">
+            <button>5m</button><button class="on">1h</button><button>24h</button><button>7d</button>
+          </div>
+
+          <div class="mini-charts">
+            <div class="mini-chart">
+              <div class="mc-head"><span>qps</span><span>1h</span></div>
+              <div class="mc-val">0.42 <span class="delta dn">−4%</span></div>
+              <svg viewBox="0 0 180 36" width="100%" height="36">
+                <defs>
+                  <linearGradient id="g-qps" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0" stop-color="#6dd58c" stop-opacity=".5"/>
+                    <stop offset="1" stop-color="#6dd58c" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0,22 L15,20 L30,22 L45,18 L60,19 L75,16 L90,17 L105,15 L120,18 L135,16 L150,17 L165,15 L180,16 L180,36 L0,36 Z" fill="url(#g-qps)"/>
+                <polyline fill="none" stroke="#6dd58c" stroke-width="1.4" points="0,22 15,20 30,22 45,18 60,19 75,16 90,17 105,15 120,18 135,16 150,17 165,15 180,16"/>
+              </svg>
+            </div>
+
+            <div class="mini-chart">
+              <div class="mc-head"><span>p95 ms</span><span>1h</span></div>
+              <div class="mc-val">142 <span class="delta dn">−6ms</span></div>
+              <svg viewBox="0 0 180 36" width="100%" height="36">
+                <polyline fill="none" stroke="#6aa9ff" stroke-width="1.4" points="0,18 15,17 30,16 45,18 60,17 75,15 90,16 105,14 120,15 135,14 150,15 165,13 180,14"/>
+              </svg>
+            </div>
+
+            <div class="mini-chart">
+              <div class="mc-head"><span>err rate</span><span>1h</span></div>
+              <div class="mc-val">0.1% <span class="delta dn">−0.2</span></div>
+              <svg viewBox="0 0 180 36" width="100%" height="36">
+                <polyline fill="none" stroke="#e2a942" stroke-width="1.4" points="0,30 15,29 30,30 45,28 60,29 75,30 90,28 105,29 120,30 135,28 150,29 165,30 180,30"/>
+              </svg>
+            </div>
+
+            <div class="mini-chart">
+              <div class="mc-head"><span>retries</span><span>1h</span></div>
+              <div class="mc-val">3 <span class="delta dn">−1</span></div>
+              <svg viewBox="0 0 180 36" width="100%" height="36">
+                <polyline fill="none" stroke="#a78bfa" stroke-width="1.4" points="0,28 15,30 30,29 45,28 60,30 75,29 90,28 105,30 120,28 135,29 150,30 165,28 180,30"/>
+              </svg>
+            </div>
+          </div>
+
+          <a class="open-diag-link">→ open in Diagnostics (full trends)</a>
+
+          <div style="margin-top: 12px;">
+            <div style="font-family: var(--mono); font-size: 10px; color: var(--ink-2); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 6px;">
+              Connected to
+            </div>
+            <div class="kv-row"><span class="k">callers</span><span class="v">cc-001 · cc-002 · steward</span><span></span></div>
+            <div class="kv-row"><span class="k">tools used (1h)</span><span class="v">create_pr (8) · read_pr (12) · list_commits (4)</span><span></span></div>
+            <div class="kv-row"><span class="k">oauth scope</span><span class="v">repo · pull_request · workflow</span><span></span></div>
+            <div class="kv-row" style="border-bottom: 0;"><span class="k">last call</span><span class="v">14:32:08 · github.create_pr · 201 · 142ms</span><span></span></div>
+          </div>
+
+          <div class="edit-banner">
+            <span class="badge-v7">v0.7</span>
+            Inspector edit mode (rename · ACL · OAuth scope · retry policy) ships with palette drop-drop.
+          </div>
+
+        </div>
+      </aside>
+
+    </div>
+  </main>
+
+  <!-- ============ LEGEND BAR ============ -->
+  <div class="legend-bar">
+    <span style="color: var(--ink-3); letter-spacing: .08em; text-transform: uppercase; font-size: 9.5px;">type ·</span>
+    <span class="lg" style="color:var(--t-core);"><span class="sw" style="background:var(--t-core);"></span>core</span>
+    <span class="lg" style="color:var(--t-mcp-remote);"><span class="sw" style="background:var(--t-mcp-remote);"></span>mcp·remote</span>
+    <span class="lg" style="color:var(--t-mcp-local);"><span class="sw" style="background:var(--t-mcp-local);"></span>mcp·local</span>
+    <span class="lg" style="color:var(--t-webhook);"><span class="sw" style="background:var(--t-webhook);"></span>webhook</span>
+    <span class="lg" style="color:var(--t-db);"><span class="sw" style="background:var(--t-db);"></span>db</span>
+    <span class="lg" style="color:var(--t-model);"><span class="sw" style="background:var(--t-model);"></span>model</span>
+    <span class="lg" style="color:var(--t-worker);"><span class="sw" style="background:var(--t-worker);"></span>worker</span>
+    <span class="lg" style="color:var(--t-peer);"><span class="sw" style="background:var(--t-peer);"></span>peer</span>
+
+    <span style="margin-left: 14px; color: var(--ink-3); letter-spacing: .08em; text-transform: uppercase; font-size: 9.5px;">status ·</span>
+    <span class="lg"><span class="dot ok"></span>ok</span>
+    <span class="lg"><span class="dot warn"></span>warn</span>
+    <span class="lg"><span class="dot crit"></span>crit</span>
+
+    <span class="grow-r"></span>
+
+    <span class="ko"><kbd>drag</kbd> reposition</span>
+    <span class="ko"><kbd>›</kbd> expand children</span>
+    <span class="ko"><kbd>click</kbd> inspect</span>
+    <span class="ko"><kbd>L</kbd> toggle live</span>
+    <span class="ko"><kbd>⌘K</kbd> find</span>
+  </div>
+
+</div>
+</body>
+</html>
