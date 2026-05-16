@@ -28,6 +28,7 @@ import { start as startWorkerWatchdog } from './workers/watchdog.js';
 import { loadConfig } from './config.js';
 import { wireV02Subsystem, type V02SubsystemHandle } from './steward/v02-wiring.js';
 import { startMemoryPoller, type MemoryPollerStop } from './observability/memory-poller.js';
+import { resolveRetentionOpts } from './observability/retention.js';
 
 export interface DaemonOptions {
   port: number;
@@ -294,6 +295,43 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
+  // bom-oom-leak-hunt C2.1 — events table retention. Run once at boot
+  // (covers daemons restarted after long downtime) and then every hour.
+  // The pruneEvents call is best-effort: any DB hiccup is caught inside
+  // EventStore.pruneEvents and logged, never thrown.
+  const runRetention = async (trigger: 'boot' | 'scheduled'): Promise<void> => {
+    try {
+      const result = store.pruneEvents();
+      await broker
+        .publish({
+          kind: 'retention_swept',
+          at: new Date().toISOString(),
+          source_agent: 'stavr-daemon',
+          payload: {
+            trigger,
+            deleted_operational: result.deletedOperational,
+            deleted_audit: result.deletedAudit,
+            unknown_preserved: result.unknownPreserved,
+            before_count: result.beforeCount,
+            after_count: result.afterCount,
+            duration_ms: result.duration_ms,
+            policy: resolveRetentionOpts(),
+          },
+        })
+        .catch(() => {
+          /* publish() never throws; .catch silences any race anyway */
+        });
+    } catch (err) {
+      logger.error('retention sweep failed; daemon continues', { error: (err as Error).message });
+    }
+  };
+  void runRetention('boot');
+  const retentionHandle: ReturnType<typeof setInterval> = setInterval(
+    () => void runRetention('scheduled'),
+    60 * 60_000,
+  );
+  retentionHandle.unref?.();
+
   // v0.2 — planner + executor + connector registry. Gated by experimental.planner.
   // When the flag is off, this whole subsystem stays dormant.
   let v02: V02SubsystemHandle | undefined;
@@ -329,6 +367,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     if (memoryPollerStop) {
       try { memoryPollerStop(); } catch { /* best effort */ }
     }
+    try { clearInterval(retentionHandle); } catch { /* best effort */ }
     if (v02) {
       try { v02.stop(); } catch { /* best effort */ }
     }

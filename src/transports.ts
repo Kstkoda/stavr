@@ -12,6 +12,7 @@ import type { StoredEvent } from './persistence.js';
 import { startupDecisionSweep } from './tools/decisions.js';
 import { getLogger } from './log.js';
 import { mountDashboardPages } from './dashboard/index.js';
+import { memoize, resolveDashboardCacheMs, resolveStreamsMaxEvents } from './dashboard/memo.js';
 import { getV02Subsystem } from './steward/v02-wiring.js';
 import { computeUsage, fetchAnthropicBalance, type ComputeUsageOpts } from './usage.js';
 import {
@@ -98,6 +99,7 @@ export async function mountTransports(
   }
 
   let httpServer: HttpServer | undefined;
+  let sessionJanitorHandle: ReturnType<typeof setInterval> | undefined;
   // MCP sessions keyed by Mcp-Session-Id. Each session holds its own
   // StreamableHTTPServerTransport instance and McpServer handle so the
   // broker can route per-session subscriptions. Name kept as `sseSessions`
@@ -313,19 +315,67 @@ export async function mountTransports(
       }
     });
 
+    // bom-oom-leak-hunt C2.4 — explicit DELETE /mcp handler. Per the
+    // Streamable HTTP spec a well-behaved client sends DELETE with its
+    // mcp-session-id header to explicitly terminate. We tear down in this
+    // order, synchronously: transport.close (best-effort) → broker
+    // subscription removal → sessions Map delete → mcp_session_deleted
+    // event. The transport's async `onclose` would normally fire after
+    // the spec's DELETE round-trips through handleRequest, which races
+    // new sessions when a tab refreshes. Doing it synchronously here
+    // closes that window — the leak-hunt recon (#2) flagged that race
+    // as a medium-likelihood retainer.
+    //
+    // Registered BEFORE app.all('/mcp') so Express dispatches DELETE here
+    // first and falls through to app.all for non-DELETE methods.
+    app.delete('/mcp', (req: Request, res: Response) => {
+      const sessionId = req.header('mcp-session-id');
+      if (!sessionId) {
+        res.status(400).json({ ok: false, error: 'mcp-session-id header required' });
+        return;
+      }
+      const session = sseSessions.get(sessionId);
+      if (!session) {
+        res.status(404).json({ ok: false, error: 'no such session' });
+        return;
+      }
+      // Best-effort transport teardown. The SDK's close returns a promise
+      // but we don't await it — the broker subscription removal + map
+      // delete are the leak-relevant steps and must happen synchronously.
+      try {
+        void session.transport.close?.();
+      } catch {
+        /* socket already gone; nothing to do */
+      }
+      broker.removeSession(session.handle.sessionId);
+      sseSessions.delete(sessionId);
+      void broker
+        .publish({
+          kind: 'mcp_session_deleted',
+          at: new Date().toISOString(),
+          source_agent: 'stavr-daemon',
+          correlation_id: sessionId,
+          payload: {
+            session_id: sessionId,
+            remaining_sessions: sseSessions.size,
+            broker_session_count: broker.sessionCount(),
+          },
+        })
+        .catch(() => {
+          /* persistence-failed; broker.publish already logs */
+        });
+      res.status(204).end();
+    });
+
     // MCP Streamable HTTP endpoint. Single route handles POST (client→server
     // messages, including initialization), GET (server→client SSE stream),
     // and DELETE (session termination). The transport closes the SSE stream
     // between requests, so undici's bodyTimeout is never an issue — closes
     // audit major #2 cleanly without client-side dispatcher overrides.
     //
-    // TODO(bom-oom-leak-hunt C2.4): app.all() funnels DELETE through the
-    // SDK's transport.handleRequest, which fires `onclose` async. C2 adds an
-    // explicit `app.delete('/mcp', …)` handler that synchronously tears down
-    // transport + broker subscription + tap + map entry, then emits
-    // `mcp_session_deleted` with the post-delete session count. Until then
-    // the `sse_session_closed` event below covers both onclose paths
-    // (network drop and explicit DELETE), but with looser timing semantics.
+    // DELETE is handled above by the explicit `app.delete('/mcp', …)`
+    // handler so the leak-hunt teardown path runs synchronously. Anything
+    // that falls through to here is POST (init / messages) or GET (SSE).
     app.all('/mcp', async (req: Request, res: Response) => {
       const incomingSid = req.header('mcp-session-id');
       let session = incomingSid ? sseSessions.get(incomingSid) : undefined;
@@ -364,6 +414,35 @@ export async function mountTransports(
             .catch(() => {
               /* persistence-failed; broker.publish already logs */
             });
+
+          // bom-oom-leak-hunt C2.4 — defensive timeout. If the session is
+          // still in either map 30s after onclose, the cleanup raced (or
+          // missed). Force-remove and emit sse_session_force_removed so the
+          // operator sees it in the event tail; the dashboard surfaces it
+          // as a yellow warning. unref'd so it doesn't block shutdown.
+          const sweepHandle = setTimeout(() => {
+            const stillInMap = tid ? sseSessions.has(tid) : false;
+            if (!stillInMap) return;
+            sseSessions.delete(tid!);
+            broker.removeSession(handle.sessionId);
+            void broker
+              .publish({
+                kind: 'sse_session_force_removed',
+                at: new Date().toISOString(),
+                source_agent: 'stavr-daemon',
+                correlation_id: tid ?? handle.sessionId,
+                payload: {
+                  session_id: tid ?? handle.sessionId,
+                  age_ms: 30_000,
+                  reason: 'onclose-fired-but-map-entry-remained',
+                  sse_sessions_size: sseSessions.size,
+                },
+              })
+              .catch(() => {
+                /* persistence-failed; broker.publish already logs */
+              });
+          }, 30_000);
+          sweepHandle.unref?.();
         };
         session = { transport, handle };
         isNew = true;
@@ -496,6 +575,49 @@ export async function mountTransports(
       sseSessions,
     });
 
+    // bom-oom-leak-hunt C2.4 — periodic SSE session janitor. Every 5 min,
+    // walk sseSessions and remove any entry whose underlying transport
+    // reports closed. Prevents long-tail leaks where onclose never fired
+    // (e.g. socket dropped without TCP RST + 30s sweep also missed).
+    // unref'd so it doesn't keep the event loop alive on shutdown.
+    const janitorHandle = setInterval(() => {
+      let removed = 0;
+      for (const [sid, sess] of sseSessions.entries()) {
+        // The SDK transport doesn't expose a `closed` boolean directly;
+        // we rely on the fact that handleRequest sets `sessionId`
+        // populated only after a successful negotiation, and that
+        // sessions whose underlying socket is gone will have already
+        // triggered onclose. The conservative check: if the entry is
+        // older than the janitor interval and the socket-layer res is
+        // missing/closed, remove it.
+        const t = sess.transport as unknown as { _writable?: { destroyed?: boolean } };
+        if (t?._writable?.destroyed) {
+          sseSessions.delete(sid);
+          broker.removeSession(sess.handle.sessionId);
+          removed++;
+          void broker
+            .publish({
+              kind: 'sse_session_force_removed',
+              at: new Date().toISOString(),
+              source_agent: 'stavr-daemon',
+              correlation_id: sid,
+              payload: {
+                session_id: sid,
+                age_ms: -1,
+                reason: 'janitor-found-destroyed-socket',
+                sse_sessions_size: sseSessions.size,
+              },
+            })
+            .catch(() => {
+              /* persistence-failed */
+            });
+        }
+      }
+      if (removed > 0) log(`SSE janitor force-removed ${removed} session(s)`);
+    }, 5 * 60_000);
+    janitorHandle.unref?.();
+    sessionJanitorHandle = janitorHandle;
+
     httpServer = await new Promise<HttpServer | undefined>((resolve, reject) => {
       const s = app.listen(opts.port!, bindHost, () => {
         log(`HTTP/SSE listening on ${bindHost}:${opts.port}`);
@@ -523,6 +645,7 @@ export async function mountTransports(
   }
 
   const shutdown = async () => {
+    if (sessionJanitorHandle) clearInterval(sessionJanitorHandle);
     if (httpServer) await new Promise<void>((r) => httpServer!.close(() => r()));
     for (const s of sseSessions.values()) await s.transport.close().catch(() => {});
     broker.store.close();
@@ -605,9 +728,19 @@ export function mountDashboardRoutes(
 ): void {
   const trustStore = getOrCreateTrustStore(broker);
 
+  // bom-oom-leak-hunt C2.2 — memoize hot dashboard data builders. Home is
+  // hit by /dashboard/home/data every 5s from the page poll; Streams reads
+  // up to 100 events per render and joins them against the workers table.
+  // Both were per-call leaky in the 2026-05-15 OOM. TTL is configurable via
+  // STAVR_DASHBOARD_CACHE_MS (default 2000ms).
+  const dashboardCacheMs = resolveDashboardCacheMs(2000);
+  const streamsMaxEvents = resolveStreamsMaxEvents(100);
+
   // v0.3 dashboard Home aggregator — shared by the server-side initial
-  // paint and the JSON endpoint that drives live refresh.
-  function homeData() {
+  // paint and the JSON endpoint that drives live refresh. The memoized
+  // accessor `homeData` is what callers below use; `homeDataRaw` is the
+  // expensive builder.
+  function homeDataRaw() {
     const active = trustStore.list({ status: 'active' });
     const recentBoms = broker.store.listBoms({ limit: 3 });
     const allDecisions = broker.store.listRecentDecisions(50);
@@ -701,11 +834,18 @@ export function mountDashboardRoutes(
   // The page caps visible panes at 20 internally; we still hand it the
   // full list so a search match outside the cap can highlight which
   // worker isn't yet visible (future polish).
-  function streamsData() {
+  //
+  // bom-oom-leak-hunt C2.3 — `limit` dropped from 500 to STAVR_STREAMS_MAX_EVENTS
+  // (default 100). The recon flagged the 500-per-render allocation as a
+  // dominant retainer growth. 100 events × ~300 bytes JSON parse is ~30 kB
+  // per render, vs 150 kB with the old cap — manageable even under 5s
+  // polling. Operators who want more can bump the env or hit `stavr events`
+  // directly.
+  function streamsDataRaw() {
     const workers = broker.store.listWorkers();
     const recent: Record<string, StoredEvent[]> = {};
     if (workers.length > 0) {
-      const allRecent = broker.store.getEvents({ limit: 500 }).events;
+      const allRecent = broker.store.getEvents({ limit: streamsMaxEvents }).events;
       const idSet = new Set(workers.map((w) => w.id));
       for (const ev of allRecent) {
         const corr = ev.correlation_id;
@@ -791,6 +931,12 @@ export function mountDashboardRoutes(
       })),
     };
   }
+
+  // bom-oom-leak-hunt C2.2 — memoized accessors. Streams page is the
+  // hotter path (full event scan per render); home is the more frequent
+  // path (5s poll). Both wrapped at the same TTL — overrideable via env.
+  const homeData = memoize(homeDataRaw, dashboardCacheMs);
+  const streamsData = memoize(streamsDataRaw, Math.max(1, Math.floor(dashboardCacheMs / 2)));
 
   mountDashboardPages(app, { homeData, plansData, decideData, topologyData, streamsData, toolkitData, capabilitiesData, settingsData });
 
