@@ -1,11 +1,16 @@
 /**
  * Tiny structured logger. Two modes:
  *  - 'text': legacy `[stavr] <msg>` to stderr (backward-compatible default).
- *  - 'json': newline-delimited JSON `{ts, level, msg, ...metadata}` to stderr.
+ *  - 'json': newline-delimited JSON via pino, with `correlation_id` auto-attached
+ *           from the AsyncLocalStorage in `observability/logger.ts` whenever the
+ *           call site is inside a `runWithCorrelation()` scope (BOM diagnostics
+ *           2026 C1.5/1.6).
  *
  * Process-wide singleton, configurable once at startup via `configureLogger`.
  * `getLogger` returns the active instance for any module that needs it.
  */
+
+import { pinoLog } from './observability/logger.js';
 
 export type LogFormat = 'text' | 'json';
 
@@ -54,11 +59,23 @@ function safeJson(v: unknown): string {
 
 export function makeLogger(opts: LoggerOptions): Logger {
   const cfg = { format: opts.format, component: opts.component ?? 'stavr' };
-  const sink = opts.sink ?? defaultSink;
+  const sink = opts.sink;
+  // JSON mode delegates to pino so structured fields (correlation_id, service,
+  // version, pid) land automatically — unless the caller supplied a custom sink,
+  // in which case we keep the legacy in-process formatter so tests/test seams
+  // still observe lines synchronously.
+  if (cfg.format === 'json' && !sink) {
+    return {
+      info: (msg, metadata) => pinoLog('info', msg, metadata),
+      warn: (msg, metadata) => pinoLog('warn', msg, metadata),
+      error: (msg, metadata) => pinoLog('error', msg, metadata),
+    };
+  }
+  const write = sink ?? defaultSink;
   return {
-    info: (msg, metadata) => sink(format(cfg, 'info', msg, metadata)),
-    warn: (msg, metadata) => sink(format(cfg, 'warn', msg, metadata)),
-    error: (msg, metadata) => sink(format(cfg, 'error', msg, metadata)),
+    info: (msg, metadata) => write(format(cfg, 'info', msg, metadata)),
+    warn: (msg, metadata) => write(format(cfg, 'warn', msg, metadata)),
+    error: (msg, metadata) => write(format(cfg, 'error', msg, metadata)),
   };
 }
 

@@ -13,6 +13,13 @@ import { startupDecisionSweep } from './tools/decisions.js';
 import { getLogger } from './log.js';
 import { mountDashboardPages } from './dashboard/index.js';
 import { memoize, resolveDashboardCacheMs, resolveStreamsMaxEvents } from './dashboard/memo.js';
+import {
+  normalizeRoute,
+  registry as metricsRegistry,
+  setSseSessionsGauge,
+  stavrHttpRequestDuration,
+} from './observability/metrics.js';
+import { logContext } from './observability/logger.js';
 import { getV02Subsystem } from './steward/v02-wiring.js';
 import { computeUsage, fetchAnthropicBalance, type ComputeUsageOpts } from './usage.js';
 import {
@@ -110,6 +117,8 @@ export async function mountTransports(
     handle: ReturnType<typeof createSwitchServer>;
   };
   const sseSessions = new Map<string, McpSession>();
+  const refreshSseGauge = (): void => setSseSessionsGauge(sseSessions.size);
+  refreshSseGauge();
   // Always create the registry — `pair --bootstrap` may run in this same
   // process even when HTTP isn't mounted (rare, but the shape is uniform).
   const pairingRegistry = opts.pairingRegistry ?? new PendingPairingRegistry();
@@ -131,6 +140,44 @@ export async function mountTransports(
 
     const app = express();
     app.use(express.json({ limit: '4mb' }));
+
+    // BOM diagnostics 2026 C1.6 — every HTTP request runs inside an
+    // AsyncLocalStorage scope stamped with a correlation_id. Clients may pass
+    // `x-correlation-id`; otherwise we generate a UUID per request. Anything
+    // logged via getLogger() while the request handler is on the stack
+    // automatically gets the field attached.
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      const incoming = req.header('x-correlation-id');
+      const cid = incoming && incoming.trim() ? incoming.trim() : randomUUID();
+      res.setHeader('x-correlation-id', cid);
+      logContext.run({ correlation_id: cid }, () => next());
+    });
+
+    // BOM diagnostics 2026 C1.3 — record HTTP request duration histogram.
+    // Route labels are normalized (see `normalizeRoute`) to keep cardinality
+    // bounded; /metrics itself is excluded so a scrape doesn't pollute the
+    // histogram of its own metric.
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.path === '/metrics') return next();
+      const endTimer = stavrHttpRequestDuration.startTimer({ method: req.method });
+      const route = normalizeRoute(req.path);
+      res.on('finish', () => {
+        endTimer({ route, status: String(res.statusCode) });
+      });
+      next();
+    });
+
+    // BOM diagnostics 2026 C1.4 — Prometheus scrape endpoint. Returns the
+    // process-wide registry's text serialization. Mounted before /healthz so
+    // a scraper hammering it doesn't get blocked by other middleware order.
+    app.get('/metrics', async (_req: Request, res: Response) => {
+      try {
+        res.setHeader('content-type', metricsRegistry.contentType);
+        res.end(await metricsRegistry.metrics());
+      } catch (err) {
+        res.status(500).end((err as Error).message);
+      }
+    });
 
     const daemonStartedAt = new Date();
     const version = process.env.STAVR_VERSION ?? '0.1.0';
@@ -349,6 +396,7 @@ export async function mountTransports(
       }
       broker.removeSession(session.handle.sessionId);
       sseSessions.delete(sessionId);
+      refreshSseGauge();
       void broker
         .publish({
           kind: 'mcp_session_deleted',
@@ -396,6 +444,7 @@ export async function mountTransports(
           const tid = transport.sessionId;
           if (tid) sseSessions.delete(tid);
           broker.removeSession(handle.sessionId);
+          refreshSseGauge();
           // OOM leak-hunt: proves cleanup is firing. The session count is
           // captured AFTER removal so the value the operator sees in `stavr
           // tail` matches the in-memory state immediately after the close.
@@ -425,6 +474,7 @@ export async function mountTransports(
             if (!stillInMap) return;
             sseSessions.delete(tid!);
             broker.removeSession(handle.sessionId);
+            refreshSseGauge();
             void broker
               .publish({
                 kind: 'sse_session_force_removed',
@@ -454,6 +504,7 @@ export async function mountTransports(
       // Register so subsequent requests find the same session.
       if (isNew && session.transport.sessionId) {
         sseSessions.set(session.transport.sessionId, session);
+        refreshSseGauge();
         log(`MCP session ${session.transport.sessionId} connected`);
         // OOM leak-hunt: paired with `sse_session_closed` below. The count
         // INCLUDES the just-registered session so it reflects the live map.
@@ -594,6 +645,7 @@ export async function mountTransports(
         if (t?._writable?.destroyed) {
           sseSessions.delete(sid);
           broker.removeSession(sess.handle.sessionId);
+          refreshSseGauge();
           removed++;
           void broker
             .publish({
