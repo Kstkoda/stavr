@@ -1,0 +1,1624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>stavR · v8 canonical mockup</title>
+<style>
+:root{
+  --bg-deep:#04050a;
+  --bg-glass:rgba(255,255,255,0.035);
+  --bg-glass-2:rgba(255,255,255,0.06);
+  --bg-sheet:rgba(10,12,18,0.78);
+  --bg-popover:rgba(14,16,22,0.92);
+  --border:rgba(255,255,255,0.07);
+  --border-hi:rgba(255,255,255,0.16);
+  --text:#f1f3f6;
+  --text-mute:#9aa3b2;
+  --text-dim:#5c6675;
+  --rust:#B8542A;
+  --rust-soft:rgba(184,84,42,0.12);
+  --rust-glow:rgba(184,84,42,0.4);
+  --sky:#5cc6ff;
+  --green:#5eea9c;
+  --amber:#fbbf24;
+  --red:#ff7a7a;
+  --purple:#b394ff;
+  --orange:#fb923c;
+  --glass-blur:24px;
+  --mono:ui-monospace,'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;
+  --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{
+  margin:0;padding:0;
+  background:
+    radial-gradient(ellipse 1400px 900px at 50% 30%,rgba(184,84,42,0.06) 0%,transparent 60%),
+    radial-gradient(ellipse 800px 600px at 90% 80%,rgba(92,198,255,0.04) 0%,transparent 60%),
+    var(--bg-deep);
+  color:var(--text);
+  font-family:var(--sans);
+  font-size:13px;font-weight:350;letter-spacing:0.01em;
+  min-height:100vh;
+  padding-bottom:80px;
+}
+.glass{
+  background:var(--bg-glass);
+  backdrop-filter:blur(var(--glass-blur)) saturate(140%);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(140%);
+  border:1px solid var(--border);
+  border-radius:14px;
+}
+.glass-strong{
+  background:var(--bg-glass-2);
+  backdrop-filter:blur(28px) saturate(150%);
+  -webkit-backdrop-filter:blur(28px) saturate(150%);
+  border:1px solid var(--border-hi);
+  border-radius:14px;
+}
+
+/* ==================== TOP RAIL ==================== */
+.rail-top{
+  display:grid;
+  grid-template-columns:260px 1fr 260px;
+  align-items:center;
+  height:64px;
+  padding:8px 18px;
+  margin:12px 12px 0;
+  font-size:12px;
+  position:sticky;top:12px;z-index:100;
+  gap:18px;
+}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:17px;font-weight:500}
+.brand .stav{color:var(--text)}
+.brand .rune{
+  color:var(--rust);font-size:22px;
+  filter:drop-shadow(0 0 8px var(--rust-glow));
+  animation:pulse 4s ease-in-out infinite;
+}
+@keyframes pulse{
+  0%,100%{filter:drop-shadow(0 0 6px var(--rust-glow))}
+  50%{filter:drop-shadow(0 0 14px var(--rust-glow))}
+}
+.brand .label{
+  font-family:var(--sans);font-size:10px;color:var(--text-dim);
+  letter-spacing:0.18em;text-transform:uppercase;
+}
+.watchdog-pip{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:5px 10px;
+  background:rgba(94,234,156,0.08);
+  border:1px solid rgba(94,234,156,0.25);
+  border-radius:999px;
+  font-family:var(--mono);font-size:10px;letter-spacing:0.1em;color:var(--green);
+  cursor:pointer;position:relative;
+}
+.watchdog-pip .pip-dot{
+  width:7px;height:7px;border-radius:50%;
+  background:var(--green);box-shadow:0 0 6px var(--green);
+}
+.watchdog-pip:hover .wd-tooltip{opacity:1;transform:translateY(0);pointer-events:auto}
+.wd-tooltip{
+  position:absolute;top:32px;left:0;width:280px;
+  background:var(--bg-sheet);backdrop-filter:blur(20px);
+  border:1px solid var(--border-hi);border-radius:10px;
+  padding:12px 14px;
+  font-family:var(--sans);font-size:11px;color:var(--text);
+  text-align:left;letter-spacing:0;text-transform:none;
+  opacity:0;transform:translateY(-4px);pointer-events:none;
+  transition:all 0.2s;z-index:1000;
+  box-shadow:0 12px 32px rgba(0,0,0,0.6);
+}
+.wd-tooltip h5{margin:0 0 6px;font-size:12px;font-weight:500}
+.wd-tooltip .wd-row{
+  display:flex;justify-content:space-between;
+  padding:3px 0;font-family:var(--mono);font-size:10px;color:var(--text-mute);
+}
+.wd-tooltip .wd-foot{
+  margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);
+  font-size:10px;color:var(--text-dim);font-family:var(--mono);
+}
+
+/* Usage cockpit (middle of top rail) */
+.usage-cockpit{
+  display:grid;grid-template-columns:1fr 1.4fr 1fr 1fr;gap:16px;
+  padding:0 16px;height:100%;
+  border-left:1px solid var(--border);border-right:1px solid var(--border);
+  align-items:center;
+}
+.usage-cell{display:flex;flex-direction:column;gap:3px}
+.usage-cell .lbl{
+  font-size:9px;text-transform:uppercase;letter-spacing:0.18em;color:var(--text-dim);
+}
+.usage-cell .val{
+  font-family:var(--mono);font-size:15px;font-variant-numeric:tabular-nums;letter-spacing:-0.01em;
+}
+.usage-cell .sub{font-size:10px;color:var(--text-mute);font-family:var(--mono)}
+.usage-cell .val.warn{color:var(--amber)}
+.cost-bar{
+  height:6px;border-radius:3px;display:flex;overflow:hidden;
+  margin-top:4px;background:rgba(255,255,255,0.05);
+}
+.cost-bar .seg{height:100%}
+.cost-bar .seg.opus{background:var(--purple)}
+.cost-bar .seg.sonnet{background:var(--sky)}
+.cost-bar .seg.haiku{background:var(--green)}
+.cost-bar .seg.local{background:var(--amber)}
+.cost-bar .seg.headroom{background:rgba(255,255,255,0.03)}
+.cost-legend{
+  display:flex;gap:8px;margin-top:4px;
+  font-size:9px;font-family:var(--mono);color:var(--text-mute);
+}
+.cost-legend span{display:inline-flex;align-items:center;gap:3px}
+.cost-legend .swatch{width:6px;height:6px;border-radius:2px}
+.quota-meter{
+  height:4px;background:rgba(255,255,255,0.05);border-radius:2px;
+  overflow:hidden;margin-top:6px;
+}
+.quota-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--sky),var(--green))}
+
+/* Right side: alarms + profile + ⌘K */
+.status-right{
+  justify-self:end;display:flex;align-items:center;gap:10px;
+  color:var(--text-mute);font-family:var(--mono);
+}
+.alarm-bubbles{display:flex;gap:6px}
+.alarm-bubble{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:3px 8px;border-radius:999px;
+  background:rgba(255,255,255,0.04);border:1px solid var(--border);
+  font-size:11px;font-family:var(--mono);
+}
+.alarm-bubble .dot{width:5px;height:5px;border-radius:50%}
+.alarm-bubble.crit{color:var(--red);border-color:rgba(255,122,122,0.3)}
+.alarm-bubble.crit .dot{background:var(--red);box-shadow:0 0 6px var(--red)}
+.alarm-bubble.warn{color:var(--amber);border-color:rgba(251,191,36,0.3)}
+.alarm-bubble.warn .dot{background:var(--amber)}
+.profile-badge{
+  padding:4px 10px;border-radius:999px;
+  background:rgba(92,198,255,0.1);border:1px solid rgba(92,198,255,0.25);
+  color:var(--sky);font-size:11px;font-weight:500;letter-spacing:0.1em;
+}
+.kbd{
+  padding:3px 7px;border-radius:5px;
+  background:rgba(255,255,255,0.06);border:1px solid var(--border);
+  font-family:var(--mono);font-size:10px;color:var(--text-mute);
+}
+
+/* ==================== NAV ROW ==================== */
+.nav-row{
+  margin:8px 12px 0;display:flex;justify-content:center;gap:4px;padding:6px;
+}
+.nav-row button{
+  background:transparent;border:1px solid transparent;
+  color:var(--text-mute);font-family:var(--sans);font-size:12px;
+  padding:6px 14px;border-radius:8px;cursor:pointer;
+  transition:all 0.2s;
+}
+.nav-row button:hover{color:var(--text);background:rgba(255,255,255,0.04)}
+.nav-row button.active{
+  color:var(--text);
+  background:rgba(184,84,42,0.1);
+  border-color:rgba(184,84,42,0.3);
+}
+
+/* ==================== PAGES ==================== */
+.page{display:none;margin:12px}
+.page.active{display:block}
+.page-head{
+  margin-bottom:16px;padding:16px 20px;
+  display:flex;justify-content:space-between;align-items:baseline;
+}
+.page-head h1{margin:0;font-size:22px;font-weight:400;letter-spacing:-0.02em}
+.page-head .sub{color:var(--text-mute);font-size:12px}
+.page-action{
+  background:var(--rust);border:none;color:white;
+  padding:9px 16px;border-radius:8px;
+  font-family:var(--sans);font-size:12px;font-weight:500;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;
+}
+.page-action:hover{background:#a04822}
+
+/* ==================== HELM · 5-band stack ==================== */
+.helm-stack{display:flex;flex-direction:column;gap:10px}
+.band{
+  position:relative;padding:16px 20px;
+  display:grid;grid-template-columns:220px 1fr 1.2fr 24px;
+  gap:18px;align-items:center;min-height:80px;
+  cursor:pointer;transition:all 0.25s cubic-bezier(.4,0,.2,1);overflow:hidden;
+}
+.band::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:linear-gradient(180deg,transparent,currentColor,transparent);
+  opacity:0.4;
+}
+.band[data-level="L4"]{color:var(--purple)}
+.band[data-level="L3"]{color:var(--sky)}
+.band[data-level="L2"]{color:var(--green)}
+.band[data-level="L1"]{color:var(--amber)}
+.band[data-level="L0"]{color:var(--text-mute)}
+.band:hover{background:rgba(255,255,255,0.06);border-color:var(--border-hi);transform:translateX(2px)}
+.band:hover::after{
+  content:'→ go to page';position:absolute;right:50px;top:50%;transform:translateY(-50%);
+  font-family:var(--mono);font-size:10px;color:currentColor;letter-spacing:0.1em;opacity:0.6;
+}
+.band .arrow{color:currentColor;font-size:20px;opacity:0.3;transition:opacity 0.2s}
+.band:hover .arrow{opacity:0.8}
+
+/* L3 inline-rich band */
+.band.band-rich{display:block;padding:16px 20px;cursor:default}
+.band.band-rich:hover{transform:none}
+.band.band-rich:hover::after{content:''}
+.band-rich .br-top{
+  display:grid;grid-template-columns:220px 1fr 1.2fr;
+  gap:18px;align-items:center;margin-bottom:14px;
+  cursor:pointer;padding:4px 0;
+}
+.band-rich .br-arrow{
+  position:absolute;top:18px;right:18px;
+  color:var(--sky);font-size:11px;font-family:var(--mono);
+  opacity:0.5;cursor:pointer;letter-spacing:0.1em;
+}
+.band-rich:hover .br-arrow{opacity:1}
+.br-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.br-card{
+  background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:8px;
+  padding:12px 14px;font-family:var(--mono);font-size:11px;cursor:pointer;
+  transition:all 0.15s;
+}
+.br-card:hover{background:rgba(0,0,0,0.4);border-color:var(--border-hi)}
+.br-card .br-lab{
+  font-size:9px;text-transform:uppercase;letter-spacing:0.18em;
+  color:var(--text-dim);margin-bottom:4px;
+}
+.br-card .br-val{font-size:14px;color:var(--text);margin-bottom:3px}
+.br-card .br-sub{color:var(--text-mute);font-size:10px;line-height:1.3}
+.br-card .br-link{color:var(--sky);font-size:10px;margin-top:6px;font-family:var(--sans)}
+.br-card .br-link::before{content:'▸ '}
+
+.band-level{display:flex;flex-direction:column;gap:3px}
+.level-tag{
+  display:inline-flex;align-items:center;gap:8px;
+  font-family:var(--mono);font-size:11px;letter-spacing:0.18em;color:var(--text-mute);
+}
+.level-tag .num{
+  color:currentColor;font-weight:600;padding:2px 6px;
+  border-radius:4px;background:rgba(255,255,255,0.06);
+}
+.level-name{font-size:15px;font-weight:450;color:var(--text);letter-spacing:-0.01em}
+.level-desc{font-size:11px;color:var(--text-dim)}
+
+.band-agg .primary{
+  font-size:22px;font-weight:350;font-variant-numeric:tabular-nums;
+  letter-spacing:-0.02em;margin-bottom:2px;
+}
+.band-agg .secondary{font-size:11px;color:var(--text-mute)}
+.band-agg .secondary .ok{color:var(--green)}
+.band-agg .secondary .warn{color:var(--amber)}
+
+.band-live{display:flex;align-items:center;gap:10px;justify-content:flex-end;flex-wrap:wrap}
+
+.bom-chip{
+  padding:6px 10px;border-radius:8px;font-family:var(--mono);font-size:11px;
+  background:rgba(255,255,255,0.04);border:1px solid var(--border);
+  display:inline-flex;align-items:center;gap:6px;
+}
+.bom-chip.running{
+  border-color:rgba(92,198,255,0.3);background:rgba(92,198,255,0.08);color:var(--sky);
+}
+.bom-chip.running::before{content:'▸';animation:blink 1.5s infinite}
+@keyframes blink{50%{opacity:0.4}}
+.bom-chip.done{border-color:rgba(94,234,156,0.3);background:rgba(94,234,156,0.08);color:var(--green)}
+.bom-chip.pending{border-color:rgba(251,191,36,0.3);background:rgba(251,191,36,0.08);color:var(--amber)}
+
+.worker-dots{display:flex;align-items:center;gap:6px}
+.w-dot{
+  width:11px;height:11px;border-radius:50%;display:inline-block;
+  cursor:pointer;transition:transform 0.15s;
+}
+.w-dot:hover{transform:scale(1.4)}
+.w-dot.ok{background:var(--green);box-shadow:0 0 6px var(--green)}
+.w-dot.warn{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.w-dot.idle{background:var(--text-dim)}
+.spark-mini{width:80px;height:24px}
+
+.sys-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:5px 9px;border-radius:6px;
+  background:rgba(255,255,255,0.04);border:1px solid var(--border);
+  font-size:11px;font-family:var(--mono);cursor:pointer;
+}
+.sys-chip:hover{border-color:var(--border-hi)}
+.sys-chip .indicator{width:6px;height:6px;border-radius:50%}
+.sys-chip.ok .indicator{background:var(--green)}
+.sys-chip.warn .indicator{background:var(--amber)}
+.sys-chip.warn{border-color:rgba(251,191,36,0.3)}
+
+.histo{display:flex;align-items:flex-end;gap:1.5px;height:28px;width:130px}
+.histo .bar{
+  flex:1;background:linear-gradient(180deg,var(--amber) 0%,rgba(251,191,36,0.3) 100%);
+  border-radius:1px 1px 0 0;min-height:2px;
+}
+.histo .bar.spike{background:linear-gradient(180deg,var(--red) 0%,rgba(255,122,122,0.4) 100%)}
+
+/* ==================== TOPOLOGY · radial daemon-center ==================== */
+.topo-stage{
+  position:relative;height:calc(100vh - 280px);min-height:660px;padding:0;overflow:hidden;
+}
+.topo-svg{width:100%;height:100%;display:block}
+.topo-meta{
+  position:absolute;top:18px;left:20px;display:flex;gap:8px;z-index:5;
+}
+.topo-meta .meta-chip{
+  padding:5px 12px;background:rgba(0,0,0,0.4);backdrop-filter:blur(10px);
+  border:1px solid var(--border);border-radius:6px;
+  font-family:var(--mono);font-size:10px;color:var(--text-mute);letter-spacing:0.1em;
+}
+.topo-meta .meta-chip.live{color:var(--green)}
+.topo-meta .meta-chip.live::before{content:'● ';animation:blink 1.5s infinite}
+
+.topo-legend{
+  position:absolute;top:18px;right:20px;
+  background:rgba(0,0,0,0.4);backdrop-filter:blur(10px);
+  border:1px solid var(--border);border-radius:8px;
+  padding:12px 14px;font-family:var(--sans);font-size:11px;
+  z-index:5;min-width:180px;
+}
+.topo-legend .lh{
+  font-size:9px;text-transform:uppercase;letter-spacing:0.15em;
+  color:var(--text-dim);margin-bottom:8px;
+}
+.topo-legend .lr{
+  display:flex;align-items:center;gap:8px;padding:3px 0;
+  font-family:var(--mono);font-size:10px;color:var(--text-mute);
+}
+.topo-legend .lr .swatch{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+.topo-mode{
+  position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
+  display:flex;gap:4px;background:rgba(0,0,0,0.5);backdrop-filter:blur(14px);
+  border:1px solid var(--border-hi);border-radius:8px;padding:4px;z-index:5;
+}
+.topo-mode button{
+  background:transparent;border:none;color:var(--text-mute);
+  font-family:var(--mono);font-size:10px;padding:6px 14px;border-radius:5px;
+  cursor:pointer;letter-spacing:0.12em;
+}
+.topo-mode button.active{background:rgba(184,84,42,0.18);color:var(--rust)}
+
+/* ==================== PLANS · food-label cards ==================== */
+.plans-section{margin-bottom:18px}
+.plans-section-head{
+  display:flex;justify-content:space-between;align-items:baseline;
+  margin-bottom:10px;padding:0 4px;
+}
+.plans-section-head h3{
+  margin:0;font-size:14px;font-weight:450;
+  display:flex;align-items:center;gap:10px;
+}
+.plans-section-head h3 .count{
+  font-family:var(--mono);font-size:11px;color:var(--text-mute);font-weight:400;
+}
+.plans-section-head .keys{font-family:var(--mono);font-size:10px;color:var(--text-dim);letter-spacing:0.1em}
+.plans-section-head .keys .kbd-mini{
+  padding:1px 5px;background:rgba(255,255,255,0.06);border:1px solid var(--border);
+  border-radius:3px;color:var(--text-mute);margin:0 2px;
+}
+.fl-card{padding:0;overflow:hidden;border:2px solid var(--border-hi)!important;margin-bottom:12px}
+.fl-card.focused{
+  border-color:rgba(251,191,36,0.5)!important;
+  box-shadow:0 0 32px -8px rgba(251,191,36,0.3);
+}
+.fl-head{
+  padding:18px 22px;display:flex;justify-content:space-between;align-items:start;
+  gap:14px;border-bottom:1px solid var(--border);
+}
+.fl-name{
+  font-size:18px;font-weight:450;line-height:1.3;flex:1;letter-spacing:-0.01em;
+}
+.fl-name .sub-id{
+  font-family:var(--mono);font-size:11px;color:var(--text-dim);font-weight:400;
+  display:block;margin-top:4px;letter-spacing:0.05em;
+}
+.fl-countdown{
+  font-family:var(--mono);font-size:13px;color:var(--amber);
+  padding:6px 12px;border:1px solid rgba(251,191,36,0.3);border-radius:999px;
+  background:rgba(251,191,36,0.08);white-space:nowrap;font-weight:500;
+}
+.fl-cells{
+  display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:1px;background:var(--border);
+}
+.fl-cell{background:rgba(0,0,0,0.25);padding:14px 18px}
+.fl-cell .lab{
+  font-size:10px;text-transform:uppercase;letter-spacing:0.18em;
+  color:var(--text-dim);margin-bottom:6px;
+}
+.fl-cell .val{
+  font-size:18px;font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:400;
+}
+.fl-cell .val.high{color:var(--red)}
+.fl-cell .val.med{color:var(--amber)}
+.fl-cell .val.low{color:var(--green)}
+.fl-cell .val.cost{color:var(--text)}
+.fl-cell .val-sub{
+  font-size:11px;color:var(--text-mute);margin-top:4px;
+  font-family:var(--mono);line-height:1.3;
+}
+.fl-actions{
+  padding:14px 22px;display:flex;gap:8px;align-items:center;
+  background:rgba(0,0,0,0.15);
+}
+.fl-action{
+  padding:10px 16px;border:1px solid var(--border);border-radius:8px;
+  font-family:var(--sans);font-size:12px;font-weight:500;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;
+}
+.fl-action .key{
+  font-family:var(--mono);font-size:9px;padding:1px 5px;
+  background:rgba(0,0,0,0.4);border-radius:3px;letter-spacing:0.1em;color:var(--text-mute);
+}
+.fl-action.primary{
+  background:var(--rust);border-color:var(--rust);color:white;flex:1.5;
+}
+.fl-action.primary .key{background:rgba(0,0,0,0.3);color:rgba(255,255,255,0.7)}
+.fl-action.amend{background:rgba(255,255,255,0.04);color:var(--text);flex:1}
+.fl-action.decline{
+  background:rgba(255,122,122,0.08);color:var(--red);
+  border-color:rgba(255,122,122,0.3);flex:0.7;
+}
+
+.inflight-row{
+  display:grid;grid-template-columns:30px 1fr 200px 120px 120px 80px;
+  gap:14px;padding:12px 18px;align-items:center;margin-bottom:8px;font-size:12px;cursor:pointer;
+}
+.inflight-row:hover{background:rgba(255,255,255,0.04);border-color:var(--border-hi)}
+.inflight-row .step-badge{
+  font-family:var(--mono);font-size:10px;color:var(--sky);
+  background:rgba(92,198,255,0.1);border:1px solid rgba(92,198,255,0.25);
+  padding:3px 7px;border-radius:6px;text-align:center;
+}
+.inflight-row .ifname{font-weight:450}
+.inflight-row .ifname .ifsub{
+  display:block;font-size:10px;color:var(--text-mute);font-family:var(--mono);margin-top:2px;
+}
+.inflight-row .ifprogress{
+  height:5px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden;
+}
+.inflight-row .ifprogress-fill{
+  height:100%;background:var(--sky);border-radius:3px;transition:width 0.3s;
+}
+.inflight-row .ifcost{
+  font-family:var(--mono);font-size:11px;color:var(--text-mute);text-align:right;
+}
+.inflight-row .ifcost b{color:var(--text);font-weight:500}
+.inflight-row .ifprofile{
+  font-family:var(--mono);font-size:10px;letter-spacing:0.1em;
+  text-align:center;color:var(--sky);
+}
+
+.new-plan-card{
+  padding:24px;text-align:center;border:1px dashed var(--border-hi)!important;
+  background:linear-gradient(135deg,rgba(184,84,42,0.04),rgba(255,255,255,0.01))!important;
+}
+.new-plan-card h4{margin:0 0 6px;font-size:15px;font-weight:450}
+.new-plan-card p{margin:0 0 14px;color:var(--text-mute);font-size:12px;line-height:1.5}
+.new-plan-card .invite-rune{
+  font-size:32px;color:var(--rust);margin-bottom:8px;display:block;
+  filter:drop-shadow(0 0 12px var(--rust-glow));
+}
+
+/* ==================== STREAMS · 3-column terminal ==================== */
+.streams-grid{display:grid;grid-template-columns:240px 1fr 280px;gap:12px;min-height:600px}
+.stream-list{padding:8px}
+.stream-item{
+  display:flex;align-items:center;gap:8px;
+  padding:9px 11px;border-radius:6px;cursor:pointer;font-size:12px;
+}
+.stream-item:hover{background:rgba(255,255,255,0.04)}
+.stream-item.active{background:rgba(184,84,42,0.12);border-left:2px solid var(--rust)}
+.stream-item .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.stream-item .name{flex:1;font-family:var(--mono);font-size:11px}
+.stream-item .meta{font-size:10px;color:var(--text-dim);font-family:var(--mono)}
+.stream-terminal{
+  background:#06070a;border:1px solid var(--border);border-radius:8px;
+  padding:14px;font-family:var(--mono);font-size:11px;line-height:1.6;overflow:hidden;
+}
+.stream-line{white-space:pre-wrap}
+.stream-line .ts{color:var(--text-dim)}
+.stream-line.stdout{color:var(--text)}
+.stream-line.mcp{color:var(--purple)}
+.stream-line.ann{color:var(--rust)}
+.stream-line.ok{color:var(--green)}
+.stream-line.err{color:var(--red)}
+.stream-context{padding:14px;font-size:12px}
+.ctx-row{padding:6px 0;border-bottom:1px dashed var(--border)}
+.ctx-row:last-child{border-bottom:none}
+.ctx-label{
+  font-size:10px;text-transform:uppercase;color:var(--text-dim);letter-spacing:0.5px;
+}
+.ctx-val{font-family:var(--mono);font-size:12px;color:var(--text);margin-top:2px}
+
+/* ==================== DECIDE · food-label decision cards ==================== */
+.decide-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.nogo-banner{
+  background:rgba(248,113,113,0.06);border:1px solid rgba(248,113,113,0.2);
+  border-radius:8px;padding:14px 16px;margin-top:20px;font-size:12px;color:var(--text-mute);
+}
+.nogo-banner .lab{
+  color:var(--red);font-family:var(--mono);font-size:11px;letter-spacing:0.1em;
+}
+
+/* ==================== TOOLKIT · DUPLO scene with glass discs ==================== */
+.toolkit-preview{
+  padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--text-mute);
+}
+.toolkit-preview b{color:var(--text);font-weight:500}
+.scene{
+  background:
+    radial-gradient(ellipse at center,rgba(255,255,255,0.02) 0%,transparent 70%),
+    var(--bg-glass);
+  border:1px solid var(--border);border-radius:14px;
+  padding:40px;position:relative;min-height:520px;
+}
+.row-label{
+  position:absolute;left:16px;
+  font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:1px;
+  color:var(--text-dim);
+}
+.row-label.above{top:80px}
+.row-label.below{bottom:80px}
+.bus-track{
+  position:relative;height:80px;margin:80px 0;
+  display:flex;align-items:center;justify-content:center;
+}
+.steward-disc{
+  width:120px;height:120px;border-radius:50%;
+  background:radial-gradient(circle,var(--rust) 0%,#7a3618 70%);
+  border:2px solid rgba(184,84,42,0.6);
+  box-shadow:0 0 40px var(--rust-glow);
+  display:flex;align-items:center;justify-content:center;flex-direction:column;
+  color:white;font-weight:600;font-family:var(--mono);
+  position:relative;
+}
+.steward-disc::after{
+  content:'';position:absolute;inset:-12px;border-radius:50%;
+  border:1px solid var(--rust);opacity:0.4;
+  animation:pulse-ring 2.4s ease-out infinite;
+}
+@keyframes pulse-ring{
+  0%{transform:scale(1);opacity:0.6}
+  100%{transform:scale(1.3);opacity:0}
+}
+.steward-disc .rune-big{font-size:36px}
+.steward-disc .label-small{
+  font-size:9px;letter-spacing:0.2em;margin-top:4px;opacity:0.85;
+}
+.bus-row{display:flex;justify-content:center;gap:18px;margin:0 60px;flex-wrap:wrap}
+.glass-brick{
+  width:140px;padding:14px 16px;border-radius:14px;
+  background:rgba(255,255,255,0.05);
+  backdrop-filter:blur(20px);
+  border:1px solid var(--border-hi);
+  position:relative;cursor:pointer;
+  transition:all 0.2s;
+}
+.glass-brick:hover{
+  background:rgba(255,255,255,0.09);
+  transform:translateY(-2px);
+  box-shadow:0 8px 24px rgba(0,0,0,0.4);
+}
+.glass-brick .b-status{position:absolute;top:8px;right:10px;font-size:13px}
+.glass-brick .b-title{font-weight:500;font-size:13px;margin-bottom:4px}
+.glass-brick .b-meta{font-family:var(--mono);font-size:10px;color:var(--text-mute)}
+.glass-brick.purple{border-color:rgba(167,139,250,0.4);box-shadow:0 0 24px rgba(167,139,250,0.15)}
+.glass-brick.purple .b-title{color:var(--purple)}
+.glass-brick.yellow{border-color:rgba(251,191,36,0.4);box-shadow:0 0 24px rgba(251,191,36,0.15)}
+.glass-brick.yellow .b-title{color:var(--amber)}
+.glass-brick.blue{border-color:rgba(92,198,255,0.4);box-shadow:0 0 24px rgba(92,198,255,0.15)}
+.glass-brick.blue .b-title{color:var(--sky)}
+.glass-brick.green{border-color:rgba(94,234,156,0.4);box-shadow:0 0 24px rgba(94,234,156,0.15)}
+.glass-brick.green .b-title{color:var(--green)}
+.glass-brick.orange{border-color:rgba(251,146,60,0.4);box-shadow:0 0 24px rgba(251,146,60,0.15)}
+.glass-brick.orange .b-title{color:var(--orange)}
+.glass-brick.gray{border-color:rgba(155,155,155,0.3);box-shadow:0 0 24px rgba(155,155,155,0.1)}
+.glass-brick.gray .b-title{color:var(--text-mute)}
+
+.shelf-btn{
+  position:absolute;right:24px;bottom:24px;
+  background:var(--bg-glass-2);
+  backdrop-filter:blur(20px);
+  border:1px solid var(--border-hi);color:var(--text);
+  padding:10px 16px;border-radius:8px;
+  font-size:12px;cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,0.3);
+}
+.shelf-btn::before{content:'📦 '}
+
+/* ==================== MCPs · registry browser ==================== */
+.mcps-tabs{display:flex;gap:4px;margin-bottom:14px;padding:4px}
+.mcps-tabs button{
+  background:transparent;border:1px solid transparent;color:var(--text-mute);
+  font-size:12px;padding:7px 14px;border-radius:6px;cursor:pointer;
+  font-family:var(--sans);display:inline-flex;align-items:center;gap:6px;
+}
+.mcps-tabs button.active{background:rgba(255,255,255,0.06);color:var(--text);border-color:var(--border)}
+.mcps-tabs button .num{
+  font-family:var(--mono);font-size:10px;background:rgba(255,255,255,0.06);
+  padding:1px 6px;border-radius:999px;color:var(--text-mute);
+}
+.mcps-search{display:flex;gap:8px;margin-bottom:16px}
+.mcps-search input{
+  flex:1;background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text);
+  padding:9px 14px;border-radius:8px;font-family:var(--sans);font-size:13px;outline:none;
+}
+.mcps-search input:focus{border-color:var(--rust)}
+.mcps-search input::placeholder{color:var(--text-dim)}
+.mcps-search select{
+  background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text);
+  padding:9px 14px;border-radius:8px;font-family:var(--sans);font-size:12px;cursor:pointer;
+}
+.mcp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.mcp-card{
+  padding:14px 16px;cursor:pointer;transition:all 0.2s;
+  display:grid;grid-template-rows:auto 1fr auto;gap:8px;min-height:140px;
+}
+.mcp-card:hover{border-color:var(--border-hi);background:rgba(255,255,255,0.06)}
+.mcp-card .mcp-head{display:flex;align-items:center;gap:10px}
+.mcp-card .mcp-logo{
+  width:32px;height:32px;border-radius:8px;
+  background:rgba(255,255,255,0.06);
+  display:grid;place-items:center;font-size:18px;flex-shrink:0;
+}
+.mcp-card .mcp-name{font-size:13px;font-weight:500}
+.mcp-card .mcp-by{font-size:10px;color:var(--text-dim);font-family:var(--mono);margin-top:1px}
+.mcp-card .mcp-desc{font-size:11px;color:var(--text-mute);line-height:1.5}
+.mcp-card .mcp-foot{
+  display:flex;justify-content:space-between;align-items:center;
+  border-top:1px dashed var(--border);padding-top:8px;
+}
+.mcp-card .mcp-pop{
+  font-family:var(--mono);font-size:10px;color:var(--text-dim);
+  display:inline-flex;align-items:center;gap:4px;
+}
+.mcp-card .mcp-install{
+  background:rgba(184,84,42,0.12);color:var(--rust);
+  border:1px solid rgba(184,84,42,0.3);
+  padding:5px 12px;border-radius:6px;font-size:11px;font-family:var(--sans);cursor:pointer;font-weight:500;
+}
+.mcp-card .mcp-install:hover{background:rgba(184,84,42,0.2)}
+.mcp-card.installed .mcp-install{
+  background:rgba(94,234,156,0.08);color:var(--green);border-color:rgba(94,234,156,0.3);
+}
+.mcp-card.installed .mcp-install::before{content:'✓ '}
+
+/* ==================== SMOOTH AREA-CHART TIMELINE ==================== */
+.timeline-fixed{
+  position:fixed;left:12px;right:100px;bottom:12px;
+  padding:6px 14px;z-index:90;height:42px;
+  display:flex;align-items:center;gap:14px;
+}
+.tl-mini-head{
+  font-family:var(--mono);font-size:9px;color:var(--text-dim);
+  letter-spacing:0.15em;text-transform:uppercase;white-space:nowrap;
+}
+.tl-area{flex:1;height:30px;position:relative}
+.tl-area svg{width:100%;height:100%;display:block;cursor:pointer}
+.tl-now-tag{
+  font-family:var(--mono);font-size:10px;color:var(--rust);white-space:nowrap;
+  display:inline-flex;align-items:center;gap:5px;
+}
+.tl-now-tag::before{
+  content:'';width:6px;height:6px;background:var(--green);border-radius:50%;
+  box-shadow:0 0 6px var(--green);animation:blink 1.5s infinite;
+}
+
+/* ==================== FLOATING DOCK ==================== */
+.dock{
+  position:fixed;right:20px;bottom:20px;z-index:200;
+  display:flex;flex-direction:column;gap:10px;align-items:flex-end;
+}
+.dock-btn{
+  width:52px;height:52px;
+  background:var(--bg-glass-2);backdrop-filter:blur(20px);
+  border:1px solid var(--border-hi);border-radius:14px;
+  display:grid;place-items:center;cursor:pointer;font-size:20px;color:var(--text);
+  position:relative;transition:all 0.25s;box-shadow:0 8px 24px rgba(0,0,0,0.5);
+}
+.dock-btn:hover{transform:translateY(-3px);background:rgba(255,255,255,0.08)}
+.dock-btn .badge{
+  position:absolute;top:4px;right:4px;
+  background:var(--red);color:white;font-size:10px;font-family:var(--mono);
+  padding:1px 5px;border-radius:999px;border:2px solid var(--bg-deep);font-weight:600;
+}
+.dock-btn.steward{
+  background:rgba(184,84,42,0.18);border-color:rgba(184,84,42,0.4);
+  box-shadow:0 8px 24px rgba(0,0,0,0.5),0 0 24px var(--rust-glow);
+}
+.dock-btn.steward .rune{
+  color:var(--rust);font-family:var(--mono);font-size:26px;
+  filter:drop-shadow(0 0 6px var(--rust-glow));
+}
+.dock-tooltip{
+  position:absolute;right:64px;top:50%;transform:translateY(-50%);
+  background:rgba(0,0,0,0.85);color:var(--text);padding:6px 10px;border-radius:6px;
+  font-family:var(--sans);font-size:11px;white-space:nowrap;
+  opacity:0;pointer-events:none;transition:opacity 0.15s;
+}
+.dock-btn:hover .dock-tooltip{opacity:1}
+
+/* ==================== FLOATING INSPECTOR ==================== */
+.float-inspector{
+  position:fixed;top:140px;left:50%;transform:translate(-50%,0);
+  width:380px;max-height:calc(100vh - 200px);
+  background:var(--bg-popover);backdrop-filter:blur(40px) saturate(140%);
+  border:1px solid var(--border-hi);border-radius:14px;
+  z-index:300;padding:16px 18px;display:none;flex-direction:column;
+  box-shadow:0 24px 64px rgba(0,0,0,0.7),0 0 0 1px rgba(184,84,42,0.15);
+  overflow:hidden;
+}
+.float-inspector.open{display:flex}
+.fi-handle{
+  display:flex;align-items:center;gap:10px;
+  padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:12px;
+}
+.fi-icon{
+  width:38px;height:38px;border-radius:9px;
+  background:rgba(184,84,42,0.18);color:var(--rust);
+  display:grid;place-items:center;
+  font-family:var(--mono);font-size:13px;font-weight:600;
+  border:1px solid rgba(184,84,42,0.3);
+}
+.fi-title-wrap{flex:1}
+.fi-title{font-size:14px;font-weight:500}
+.fi-sub{font-size:11px;color:var(--text-mute);font-family:var(--mono);margin-top:1px}
+.fi-close{
+  background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text-mute);
+  width:26px;height:26px;border-radius:5px;cursor:pointer;font-size:12px;
+}
+.fi-body{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding-right:4px}
+.fi-section .lab{
+  font-size:9px;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-dim);margin-bottom:6px;
+}
+.fi-row{
+  display:grid;grid-template-columns:1fr auto;gap:6px;font-size:11px;
+  padding:5px 0;border-bottom:1px dashed var(--border);
+}
+.fi-row .k{color:var(--text-mute)}
+.fi-row .v{font-family:var(--mono);text-align:right}
+.fi-row .v.ok{color:var(--green)}
+.fi-row .v.warn{color:var(--amber)}
+
+/* ==================== SETTINGS sub-tabs ==================== */
+.settings-tabs{display:flex;gap:4px;margin-bottom:16px;padding:4px}
+.settings-tabs button{
+  background:transparent;border:1px solid transparent;color:var(--text-mute);
+  font-size:12px;padding:6px 12px;border-radius:6px;cursor:pointer;
+}
+.settings-tabs button.active{
+  background:rgba(255,255,255,0.06);color:var(--text);border-color:var(--border);
+}
+
+footer{
+  text-align:center;padding:10px;color:var(--text-dim);
+  font-size:10px;font-family:var(--mono);letter-spacing:0.18em;text-transform:uppercase;
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== TOP RAIL ==================== -->
+<div class="rail-top glass">
+  <div class="brand">
+    <span class="stav">stav</span><span class="rune">ᚱ</span>
+    <span class="label">v0.4 · Bal</span>
+    <span class="watchdog-pip" id="wd-pip">
+      <span class="pip-dot"></span> WATCH OK
+      <div class="wd-tooltip">
+        <h5>stavr-watch</h5>
+        <div class="wd-row"><span>Daemon health</span><span style="color:var(--green)">✓ 200 OK</span></div>
+        <div class="wd-row"><span>Last poll</span><span>2s ago</span></div>
+        <div class="wd-row"><span>Restarts today</span><span>0</span></div>
+        <div class="wd-row"><span>Uptime</span><span>4h 22m</span></div>
+        <div class="wd-foot">tray + OS notifications · click for incidents log</div>
+      </div>
+    </span>
+  </div>
+
+  <div class="usage-cockpit">
+    <div class="usage-cell">
+      <span class="lbl">Cost today</span>
+      <span class="val">$2.84</span>
+      <span class="sub">↓ 38% vs yesterday</span>
+    </div>
+    <div class="usage-cell">
+      <span class="lbl">Spend mix · cap $20.00</span>
+      <div class="cost-bar">
+        <div class="seg opus" style="width:42%"></div>
+        <div class="seg sonnet" style="width:28%"></div>
+        <div class="seg haiku" style="width:8%"></div>
+        <div class="seg local" style="width:4%"></div>
+        <div class="seg headroom" style="width:18%"></div>
+      </div>
+      <div class="cost-legend">
+        <span><span class="swatch" style="background:var(--purple)"></span>opus 42%</span>
+        <span><span class="swatch" style="background:var(--sky)"></span>sonnet 28%</span>
+        <span><span class="swatch" style="background:var(--green)"></span>haiku 8%</span>
+        <span><span class="swatch" style="background:var(--amber)"></span>local 4%</span>
+      </div>
+    </div>
+    <div class="usage-cell">
+      <span class="lbl">Tokens</span>
+      <span class="val">1.2M <span style="font-size:10px;color:var(--text-dim)">in</span> · 340K <span style="font-size:10px;color:var(--text-dim)">out</span></span>
+      <span class="sub">avg 184 calls/min</span>
+    </div>
+    <div class="usage-cell">
+      <span class="lbl">Max OAuth</span>
+      <span class="val warn">67% <span style="font-size:10px;color:var(--text-dim)">5h</span></span>
+      <div class="quota-meter"><div class="quota-fill" style="width:67%"></div></div>
+      <span class="sub">weekly 23%</span>
+    </div>
+  </div>
+
+  <div class="status-right">
+    <div class="alarm-bubbles">
+      <span class="alarm-bubble crit"><span class="dot"></span>2</span>
+      <span class="alarm-bubble warn"><span class="dot"></span>1</span>
+    </div>
+    <span class="profile-badge">BALANCED</span>
+    <span class="kbd">⌘K</span>
+  </div>
+</div>
+
+<!-- ==================== NAV ==================== -->
+<div class="nav-row glass">
+  <button class="tab-btn active" data-page="helm">Helm</button>
+  <button class="tab-btn" data-page="topology">Topology</button>
+  <button class="tab-btn" data-page="plans">Plans</button>
+  <button class="tab-btn" data-page="workers">Workers</button>
+  <button class="tab-btn" data-page="streams">Streams</button>
+  <button class="tab-btn" data-page="decide">Decide</button>
+  <button class="tab-btn" data-page="diagnostics">Diagnostics</button>
+  <button class="tab-btn" data-page="toolkit">Toolkit</button>
+  <button class="tab-btn" data-page="mcps">MCPs</button>
+  <button class="tab-btn" data-page="settings">Settings</button>
+</div>
+
+<!-- ==================== HELM ==================== -->
+<section class="page active" id="page-helm">
+  <div class="page-head">
+    <div><h1>Helm</h1><div class="sub">Take the wheel. Click any layer to drill into its page.</div></div>
+  </div>
+  <div class="helm-stack">
+
+    <!-- L4 INTENT -->
+    <div class="band glass" data-level="L4" data-action="steward-sheet">
+      <div class="band-level">
+        <span class="level-tag"><span class="num">L4</span> INTENT</span>
+        <div class="level-name">User intent</div>
+        <div class="level-desc">What you've asked stavR · click to talk to Steward</div>
+      </div>
+      <div class="band-agg">
+        <div class="primary">"ship v0.4 scheduler"</div>
+        <div class="secondary"><span class="ok">●</span> on track · last input 12m ago</div>
+      </div>
+      <div class="band-live">
+        <span class="bom-chip">2 active goals</span>
+        <span class="bom-chip">47 done · last 7d</span>
+      </div>
+      <span class="arrow">›</span>
+    </div>
+
+    <!-- L3 PLANS inline-rich -->
+    <div class="band glass band-rich" data-level="L3">
+      <div class="br-arrow" data-route="plans">› OPEN PLANS</div>
+      <div class="br-top" data-route="plans">
+        <div class="band-level">
+          <span class="level-tag"><span class="num">L3</span> PLANS</span>
+          <div class="level-name">Bills of Materials</div>
+          <div class="level-desc">Approved workflows in execution</div>
+        </div>
+        <div class="band-agg">
+          <div class="primary">3 BOMs</div>
+          <div class="secondary">2 running · 1 <span class="warn">awaiting approval</span></div>
+        </div>
+        <div class="band-live">
+          <span class="bom-chip running">cascade-merge · 4/7</span>
+          <span class="bom-chip done">pt-b007 ✓</span>
+          <span class="bom-chip pending">v0.4 · awaiting</span>
+        </div>
+      </div>
+      <div class="br-cards">
+        <div class="br-card">
+          <div class="br-lab">Active BOM</div>
+          <div class="br-val">cascade-merge</div>
+          <div class="br-sub">step 4 of 7 · push + wait CI</div>
+          <div class="br-link">open plan</div>
+        </div>
+        <div class="br-card">
+          <div class="br-lab">Spent</div>
+          <div class="br-val">$0.18 / $0.42</div>
+          <div class="br-sub">43% of budget</div>
+          <div class="br-link">adjust budget</div>
+        </div>
+        <div class="br-card">
+          <div class="br-lab">Trust scope</div>
+          <div class="br-val">ts-a4c1</div>
+          <div class="br-sub">7/10 used · 53m remaining</div>
+          <div class="br-link">extend scope</div>
+        </div>
+        <div class="br-card">
+          <div class="br-lab">Awaiting</div>
+          <div class="br-val" style="color:var(--amber)">v0.4 scheduler</div>
+          <div class="br-sub">12 steps · turbo · est $4.10</div>
+          <div class="br-link">go to decisions</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- L2 WORKERS · dots row -->
+    <div class="band glass" data-level="L2" data-route="workers">
+      <div class="band-level">
+        <span class="level-tag"><span class="num">L2</span> WORKERS</span>
+        <div class="level-name">Worker subprocesses</div>
+        <div class="level-desc">5 active · click any dot to inspect (stays here)</div>
+      </div>
+      <div class="band-agg">
+        <div class="primary">5 active</div>
+        <div class="secondary">7 capacity · 1 <span class="warn">stuck</span> · longest 22m</div>
+      </div>
+      <div class="band-live">
+        <div class="worker-dots">
+          <span class="w-dot ok" title="cc-resolver"></span>
+          <span class="w-dot ok" title="pt-b007"></span>
+          <span class="w-dot ok" title="pt-b008"></span>
+          <span class="w-dot ok" title="unity-worker"></span>
+          <span class="w-dot warn" title="cc-stuck"></span>
+          <span class="w-dot idle" title="llama (idle)"></span>
+        </div>
+        <svg class="spark-mini" viewBox="0 0 80 24" preserveAspectRatio="none">
+          <path d="M0,18 L10,16 L20,12 L30,14 L40,8 L50,10 L60,6 L70,8 L80,4" fill="none" stroke="var(--green)" stroke-width="1.5"/>
+        </svg>
+        <span style="color:var(--text-mute);font-family:var(--mono);font-size:11px">activity ↑</span>
+      </div>
+      <span class="arrow">›</span>
+    </div>
+
+    <!-- L1 TOOL CALLS · histogram -->
+    <div class="band glass" data-level="L1" data-route="diagnostics">
+      <div class="band-level">
+        <span class="level-tag"><span class="num">L1</span> TOOL CALLS</span>
+        <div class="level-name">MCP traffic</div>
+        <div class="level-desc">Atomic calls — read, write, exec</div>
+      </div>
+      <div class="band-agg">
+        <div class="primary">184 / min</div>
+        <div class="secondary">3 <span class="warn">stuck</span> · p99 412ms · 2.1% errors</div>
+      </div>
+      <div class="band-live">
+        <div class="histo">
+          <div class="bar" style="height:30%"></div><div class="bar" style="height:45%"></div>
+          <div class="bar" style="height:60%"></div><div class="bar" style="height:50%"></div>
+          <div class="bar" style="height:75%"></div><div class="bar" style="height:88%"></div>
+          <div class="bar spike" style="height:100%"></div><div class="bar" style="height:70%"></div>
+          <div class="bar" style="height:65%"></div><div class="bar" style="height:80%"></div>
+          <div class="bar" style="height:92%"></div><div class="bar" style="height:85%"></div>
+          <div class="bar" style="height:70%"></div><div class="bar" style="height:55%"></div>
+          <div class="bar" style="height:60%"></div><div class="bar" style="height:45%"></div>
+          <div class="bar" style="height:50%"></div><div class="bar" style="height:70%"></div>
+          <div class="bar" style="height:95%"></div><div class="bar spike" style="height:100%"></div>
+        </div>
+      </div>
+      <span class="arrow">›</span>
+    </div>
+
+    <!-- L0 SYSTEMS -->
+    <div class="band glass" data-level="L0" data-route="topology">
+      <div class="band-level">
+        <span class="level-tag"><span class="num">L0</span> SYSTEMS</span>
+        <div class="level-name">External + local</div>
+        <div class="level-desc">Things stavR ultimately touches · click chip to inspect</div>
+      </div>
+      <div class="band-agg">
+        <div class="primary">5 connected</div>
+        <div class="secondary">1 <span class="warn">degraded</span> · webhook auth lost 8m ago</div>
+      </div>
+      <div class="band-live">
+        <span class="sys-chip ok"><span class="indicator"></span>GitHub</span>
+        <span class="sys-chip ok"><span class="indicator"></span>Slack</span>
+        <span class="sys-chip ok"><span class="indicator"></span>FS</span>
+        <span class="sys-chip warn"><span class="indicator"></span>Webhook</span>
+      </div>
+      <span class="arrow">›</span>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== TOPOLOGY ==================== -->
+<section class="page" id="page-topology">
+  <div class="page-head">
+    <div><h1>Topology</h1><div class="sub">stavR at center · inner: own bits · middle: workers · outer: external</div></div>
+  </div>
+  <div class="topo-stage glass">
+    <div class="topo-meta">
+      <span class="meta-chip live">LIVE 15:42:18</span>
+      <span class="meta-chip">5 workers · 5 systems · 184 calls/min</span>
+      <span class="meta-chip" style="color:var(--amber)">⚠ webhook degraded</span>
+    </div>
+
+    <div class="topo-legend">
+      <div class="lh">Legend</div>
+      <div class="lr"><span class="swatch" style="background:#B8542A;box-shadow:0 0 6px rgba(184,84,42,0.6)"></span> stavR daemon</div>
+      <div class="lr"><span class="swatch" style="background:rgba(184,84,42,0.4);border:1px solid rgba(184,84,42,0.6)"></span> stavR's own bits</div>
+      <div class="lr"><span class="swatch" style="background:rgba(184,84,42,0.4);border:1px dashed var(--text-mute)"></span> watchdog (external)</div>
+      <div class="lr"><span class="swatch" style="background:#a78bfa"></span> cloud-AI worker</div>
+      <div class="lr"><span class="swatch" style="background:#fbbf24"></span> local-AI worker</div>
+      <div class="lr"><span class="swatch" style="background:#5cc6ff"></span> external system</div>
+      <div class="lr"><span class="swatch" style="background:#fb923c"></span> connector</div>
+      <div class="lr"><span class="swatch" style="background:#6b7280"></span> local OS / FS</div>
+    </div>
+
+    <svg class="topo-svg" viewBox="0 0 1200 700" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <radialGradient id="core-glow"><stop offset="0%" stop-color="#B8542A" stop-opacity="0.7"/><stop offset="100%" stop-color="#B8542A" stop-opacity="0"/></radialGradient>
+        <radialGradient id="core-fill"><stop offset="0%" stop-color="#fcd6c4"/><stop offset="40%" stop-color="#e87a3f"/><stop offset="100%" stop-color="#7a3618"/></radialGradient>
+        <radialGradient id="inner-glow"><stop offset="0%" stop-color="#B8542A" stop-opacity="0.5"/><stop offset="100%" stop-color="#B8542A" stop-opacity="0"/></radialGradient>
+        <radialGradient id="purple-glow"><stop offset="0%" stop-color="#a78bfa" stop-opacity="0.5"/><stop offset="100%" stop-color="#a78bfa" stop-opacity="0"/></radialGradient>
+        <radialGradient id="amber-glow"><stop offset="0%" stop-color="#fbbf24" stop-opacity="0.5"/><stop offset="100%" stop-color="#fbbf24" stop-opacity="0"/></radialGradient>
+        <radialGradient id="sky-glow"><stop offset="0%" stop-color="#5cc6ff" stop-opacity="0.5"/><stop offset="100%" stop-color="#5cc6ff" stop-opacity="0"/></radialGradient>
+        <radialGradient id="orange-glow"><stop offset="0%" stop-color="#fb923c" stop-opacity="0.55"/><stop offset="100%" stop-color="#fb923c" stop-opacity="0"/></radialGradient>
+        <radialGradient id="gray-glow"><stop offset="0%" stop-color="#9ca3af" stop-opacity="0.45"/><stop offset="100%" stop-color="#9ca3af" stop-opacity="0"/></radialGradient>
+
+        <linearGradient id="rib-warm" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgba(184,84,42,0.6)"/><stop offset="100%" stop-color="rgba(167,139,250,0.5)"/></linearGradient>
+        <linearGradient id="rib-cool" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgba(167,139,250,0.5)"/><stop offset="100%" stop-color="rgba(92,198,255,0.5)"/></linearGradient>
+        <linearGradient id="rib-warn" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgba(167,139,250,0.4)"/><stop offset="100%" stop-color="rgba(251,191,36,0.6)"/></linearGradient>
+      </defs>
+
+      <!-- Orbit rings -->
+      <g stroke="rgba(255,255,255,0.04)" fill="none" stroke-dasharray="1 5">
+        <circle cx="600" cy="350" r="120"/>
+        <circle cx="600" cy="350" r="220"/>
+        <circle cx="600" cy="350" r="310"/>
+      </g>
+      <g fill="rgba(255,255,255,0.06)" font-family="ui-monospace" font-size="9" letter-spacing="0.25em" text-anchor="middle">
+        <text x="600" y="465">INNER · OWN</text>
+        <text x="600" y="565">MIDDLE · WORKERS</text>
+        <text x="600" y="655">OUTER · SYSTEMS</text>
+      </g>
+
+      <!-- Animated traffic ribbons -->
+      <g fill="none" stroke-linecap="round">
+        <path d="M600 350 Q 540 290 510 250" stroke="url(#rib-warm)" stroke-width="2.5" stroke-dasharray="3 7" opacity="0.85"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.6s" repeatCount="indefinite"/></path>
+        <path d="M600 350 Q 660 290 690 250" stroke="url(#rib-warm)" stroke-width="2" stroke-dasharray="3 7" opacity="0.7"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.8s" repeatCount="indefinite"/></path>
+        <path d="M600 350 Q 700 360 730 380" stroke="url(#rib-warm)" stroke-width="2" stroke-dasharray="3 7" opacity="0.7"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2s" repeatCount="indefinite"/></path>
+        <path d="M600 350 Q 500 360 470 380" stroke="url(#rib-warm)" stroke-width="2" stroke-dasharray="3 7" opacity="0.7"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2.2s" repeatCount="indefinite"/></path>
+        <path d="M600 350 Q 650 410 690 440" stroke="rgba(94,234,156,0.4)" stroke-width="1.5" stroke-dasharray="2 4" opacity="0.85"><animate attributeName="stroke-dashoffset" from="0" to="-12" dur="3s" repeatCount="indefinite"/></path>
+
+        <path d="M510 250 Q 460 200 420 170" stroke="url(#rib-cool)" stroke-width="2.5" stroke-dasharray="3 7"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.7s" repeatCount="indefinite"/></path>
+        <path d="M690 250 Q 740 200 780 170" stroke="url(#rib-cool)" stroke-width="2" stroke-dasharray="3 7"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.9s" repeatCount="indefinite"/></path>
+        <path d="M730 380 Q 820 380 870 360" stroke="url(#rib-cool)" stroke-width="2" stroke-dasharray="3 7"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2s" repeatCount="indefinite"/></path>
+        <path d="M470 380 Q 380 380 330 360" stroke="url(#rib-warn)" stroke-width="1.5" stroke-dasharray="3 7"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2.4s" repeatCount="indefinite"/></path>
+        <path d="M600 470 Q 600 510 600 540" stroke="url(#rib-cool)" stroke-width="1.5" stroke-dasharray="3 7" opacity="0.6"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2.2s" repeatCount="indefinite"/></path>
+
+        <path d="M420 170 Q 320 110 250 80" stroke="url(#rib-cool)" stroke-width="2" stroke-dasharray="3 7"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.8s" repeatCount="indefinite"/></path>
+        <path d="M780 170 Q 880 110 950 80" stroke="url(#rib-cool)" stroke-width="2.5" stroke-dasharray="3 7"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.6s" repeatCount="indefinite"/></path>
+        <path d="M870 360 Q 1000 380 1080 410" stroke="url(#rib-cool)" stroke-width="2" stroke-dasharray="3 7"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.9s" repeatCount="indefinite"/></path>
+        <path d="M330 360 Q 200 380 120 410" stroke="rgba(255,122,122,0.5)" stroke-width="1.5" stroke-dasharray="3 7"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2.6s" repeatCount="indefinite"/></path>
+      </g>
+
+      <!-- CENTER · stavR daemon -->
+      <g style="cursor:pointer">
+        <circle cx="600" cy="350" r="100" fill="url(#core-glow)"/>
+        <circle cx="600" cy="350" r="62" fill="url(#core-fill)" stroke="rgba(184,84,42,0.6)" stroke-width="1.5"/>
+        <text x="600" y="345" text-anchor="middle" fill="white" font-family="ui-monospace" font-size="36" font-weight="500">ᚱ</text>
+        <text x="600" y="372" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-family="ui-monospace" font-size="9" letter-spacing="0.2em">stavR · DAEMON</text>
+        <circle cx="600" cy="350" r="62" fill="none" stroke="#B8542A" stroke-width="1.5" opacity="0.4">
+          <animate attributeName="r" from="62" to="110" dur="2.4s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" from="0.5" to="0" dur="2.4s" repeatCount="indefinite"/>
+        </circle>
+      </g>
+
+      <!-- INNER RING · stavR own bits -->
+      <g style="cursor:pointer">
+        <circle cx="510" cy="250" r="36" fill="url(#inner-glow)"/>
+        <circle cx="510" cy="250" r="26" fill="rgba(184,84,42,0.18)" stroke="rgba(184,84,42,0.5)" stroke-width="1.5"/>
+        <text x="510" y="245" text-anchor="middle" fill="white" font-family="ui-monospace" font-size="14">ᚱ</text>
+        <text x="510" y="260" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="ui-monospace" font-size="9" font-weight="500">Steward</text>
+        <text x="510" y="288" text-anchor="middle" fill="var(--text-mute)" font-family="ui-monospace" font-size="8">opus 4.7 · pinned</text>
+      </g>
+
+      <g style="cursor:pointer">
+        <circle cx="690" cy="250" r="36" fill="url(#inner-glow)" opacity="0.6"/>
+        <circle cx="690" cy="250" r="26" fill="rgba(94,234,156,0.1)" stroke="rgba(94,234,156,0.4)" stroke-width="1.5" stroke-dasharray="3 3"/>
+        <text x="690" y="252" text-anchor="middle" fill="var(--green)" font-family="ui-monospace" font-size="13">●</text>
+        <text x="690" y="266" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="ui-monospace" font-size="9" font-weight="500">Watchdog</text>
+        <text x="690" y="288" text-anchor="middle" fill="var(--text-mute)" font-family="ui-monospace" font-size="8">healthy · 4h22m</text>
+      </g>
+
+      <g style="cursor:pointer">
+        <circle cx="730" cy="380" r="32" fill="url(#inner-glow)"/>
+        <ellipse cx="730" cy="375" rx="22" ry="18" fill="rgba(184,84,42,0.15)" stroke="rgba(184,84,42,0.45)" stroke-width="1.5"/>
+        <ellipse cx="730" cy="365" rx="22" ry="6" fill="rgba(184,84,42,0.25)" stroke="rgba(184,84,42,0.45)" stroke-width="1.5"/>
+        <text x="730" y="378" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="ui-monospace" font-size="8" font-weight="500">runestone</text>
+        <text x="730" y="412" text-anchor="middle" fill="var(--text-mute)" font-family="ui-monospace" font-size="8">12,847 events</text>
+      </g>
+
+      <g style="cursor:pointer">
+        <circle cx="470" cy="380" r="32" fill="url(#inner-glow)"/>
+        <ellipse cx="470" cy="375" rx="22" ry="18" fill="rgba(184,84,42,0.15)" stroke="rgba(184,84,42,0.45)" stroke-width="1.5"/>
+        <ellipse cx="470" cy="365" rx="22" ry="6" fill="rgba(184,84,42,0.25)" stroke="rgba(184,84,42,0.45)" stroke-width="1.5"/>
+        <text x="470" y="378" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="ui-monospace" font-size="8" font-weight="500">lessons</text>
+        <text x="470" y="412" text-anchor="middle" fill="var(--text-mute)" font-family="ui-monospace" font-size="8">347 lessons</text>
+      </g>
+
+      <g style="cursor:pointer">
+        <circle cx="600" cy="470" r="30" fill="url(#inner-glow)" opacity="0.7"/>
+        <rect x="582" y="455" width="36" height="28" rx="4" fill="rgba(184,84,42,0.12)" stroke="rgba(184,84,42,0.45)" stroke-width="1.5"/>
+        <circle cx="600" cy="466" r="5" fill="none" stroke="rgba(184,84,42,0.7)" stroke-width="1.5"/>
+        <text x="600" y="500" text-anchor="middle" fill="var(--text-mute)" font-family="ui-monospace" font-size="8">credential vault</text>
+      </g>
+
+      <!-- MIDDLE RING · workers -->
+      <g style="cursor:pointer">
+        <circle cx="420" cy="170" r="30" fill="url(#purple-glow)"/>
+        <circle cx="420" cy="170" r="22" fill="rgba(167,139,250,0.18)" stroke="rgba(167,139,250,0.6)" stroke-width="1.5"/>
+        <text x="420" y="174" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-family="ui-monospace" font-size="9" font-weight="600">CR</text>
+        <text x="420" y="208" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="ui-monospace" font-size="9">cc-resolver</text>
+        <text x="420" y="222" text-anchor="middle" fill="var(--text-mute)" font-family="ui-monospace" font-size="8">$0.18 · sonnet</text>
+        <circle cx="439" cy="155" r="3.5" fill="var(--green)"><animate attributeName="opacity" values="1;0.4;1" dur="1.5s" repeatCount="indefinite"/></circle>
+      </g>
+
+      <g style="cursor:pointer">
+        <circle cx="780" cy="170" r="30" fill="url(#purple-glow)"/>
+        <circle cx="780" cy="170" r="22" fill="rgba(167,139,250,0.18)" stroke="rgba(167,139,250,0.6)" stroke-width="1.5"/>
+        <text x="780" y="174" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-family="ui-monospace" font-size="9" font-weight="600">B7</text>
+        <text x="780" y="208" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="ui-monospace" font-size="9">pt-b007</text>
+        <text x="780" y="222" text-anchor="middle" fill="var(--text-mute)" font-family="ui-monospace" font-size="8">$0.31 · sonnet</text>
+      </g>
+
+      <g style="cursor:pointer">
+        <circle cx="870" cy="360" r="32" fill="url(#purple-glow)"/>
+        <circle cx="870" cy="360" r="24" fill="rgba(167,139,250,0.18)" stroke="rgba(167,139,250,0.6)" stroke-width="1.5"/>
+        <text x="870" y="364" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-family="ui-monospace" font-size="9" font-weight="600">UN</text>
+        <text x="870" y="400" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="ui-monospace" font-size="9">unity-worker</text>
+        <text x="870" y="414" text-anchor="middle" fill="var(--text-mute)" font-family="ui-monospace" font-size="8">$0.34 · 22m</text>
+      </g>
+
+      <g style="cursor:pointer">
+        <circle cx="330" cy="360" r="30" fill="url(#amber-glow)"/>
+        <circle cx="330" cy="360" r="22" fill="rgba(251,191,36,0.18)" stroke="rgba(251,191,36,0.65)" stroke-width="2" stroke-dasharray="3 3"/>
+        <text x="330" y="365" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-family="ui-monospace" font-size="11" font-weight="600">⚠</text>
+        <text x="330" y="398" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="ui-monospace" font-size="9">cc-stuck</text>
+        <text x="330" y="412" text-anchor="middle" fill="var(--amber)" font-family="ui-monospace" font-size="8">stalled 2m</text>
+      </g>
+
+      <g style="cursor:pointer">
+        <circle cx="600" cy="540" r="28" fill="url(#amber-glow)" opacity="0.7"/>
+        <circle cx="600" cy="540" r="20" fill="rgba(251,191,36,0.12)" stroke="rgba(251,191,36,0.5)" stroke-width="1.5"/>
+        <text x="600" y="544" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-family="ui-monospace" font-size="9" font-weight="600">L1</text>
+        <text x="600" y="576" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="ui-monospace" font-size="9">llama (idle)</text>
+      </g>
+
+      <!-- OUTER RING · external systems -->
+      <g style="cursor:pointer">
+        <circle cx="250" cy="80" r="36" fill="url(#sky-glow)"/>
+        <circle cx="250" cy="80" r="26" fill="rgba(92,198,255,0.16)" stroke="rgba(92,198,255,0.6)" stroke-width="1.5"/>
+        <text x="250" y="85" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-family="ui-monospace" font-size="11" font-weight="600">GH</text>
+        <text x="250" y="120" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="ui-monospace" font-size="10">GitHub</text>
+        <text x="250" y="134" text-anchor="middle" fill="var(--text-mute)" font-family="ui-monospace" font-size="8">mcp · 847 calls</text>
+        <circle cx="271" cy="64" r="3.5" fill="var(--green)"/>
+      </g>
+
+      <g style="cursor:pointer">
+        <circle cx="950" cy="80" r="34" fill="url(#sky-glow)"/>
+        <circle cx="950" cy="80" r="24" fill="rgba(92,198,255,0.16)" stroke="rgba(92,198,255,0.6)" stroke-width="1.5"/>
+        <text x="950" y="84" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-family="ui-monospace" font-size="11" font-weight="600">SL</text>
+        <text x="950" y="118" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="ui-monospace" font-size="10">Slack</text>
+        <text x="950" y="132" text-anchor="middle" fill="var(--text-mute)" font-family="ui-monospace" font-size="8">mcp · 142 calls</text>
+        <circle cx="969" cy="64" r="3.5" fill="var(--green)"/>
+      </g>
+
+      <g style="cursor:pointer">
+        <circle cx="1080" cy="410" r="34" fill="url(#gray-glow)"/>
+        <circle cx="1080" cy="410" r="24" fill="rgba(155,155,155,0.14)" stroke="rgba(155,155,155,0.5)" stroke-width="1.5"/>
+        <text x="1080" y="414" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-family="ui-monospace" font-size="11" font-weight="600">FS</text>
+        <text x="1080" y="448" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="ui-monospace" font-size="10">FS / Shell</text>
+        <text x="1080" y="462" text-anchor="middle" fill="var(--text-mute)" font-family="ui-monospace" font-size="8">3,847 calls</text>
+        <circle cx="1099" cy="394" r="3.5" fill="var(--green)"/>
+      </g>
+
+      <g style="cursor:pointer">
+        <circle cx="120" cy="410" r="38" fill="url(#orange-glow)"/>
+        <circle cx="120" cy="410" r="26" fill="rgba(251,146,60,0.14)" stroke="rgba(251,146,60,0.65)" stroke-width="2" stroke-dasharray="3 3"/>
+        <text x="120" y="415" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-family="ui-monospace" font-size="13" font-weight="600">⚡</text>
+        <text x="120" y="450" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="ui-monospace" font-size="10">Webhook</text>
+        <text x="120" y="464" text-anchor="middle" fill="var(--orange)" font-family="ui-monospace" font-size="8">auth lost · 8m</text>
+      </g>
+    </svg>
+
+    <div class="topo-mode">
+      <button class="active">RADIAL</button>
+      <button>HEAT</button>
+      <button>HISTORY</button>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== PLANS ==================== -->
+<section class="page" id="page-plans">
+  <div class="page-head">
+    <div><h1>Plans</h1><div class="sub">Approve once → Steward executes end-to-end. Bills of Materials.</div></div>
+    <button class="page-action">+ New plan</button>
+  </div>
+
+  <div class="plans-section">
+    <div class="plans-section-head">
+      <h3>Awaiting approval <span class="count">· 1 plan needs your nod</span></h3>
+      <span class="keys">rapid-fire: <span class="kbd-mini">A</span> approve · <span class="kbd-mini">E</span> amend · <span class="kbd-mini">D</span> decline</span>
+    </div>
+
+    <div class="fl-card glass focused">
+      <div class="fl-head">
+        <div class="fl-name">v0.4 scheduler — checkpoint 1<span class="sub-id">bom-04c0 · drafted 2m ago · derived from "ship v0.4 scheduler"</span></div>
+        <div class="fl-countdown">04:12</div>
+      </div>
+      <div class="fl-cells">
+        <div class="fl-cell"><div class="lab">What</div><div class="val" style="font-size:13px;font-family:var(--sans);line-height:1.4">Promote Steward to scheduler · 12 steps · turbo · Opus everywhere</div></div>
+        <div class="fl-cell"><div class="lab">Risk</div><div class="val high">High</div><div class="val-sub">High-spend profile · runs unattended overnight</div></div>
+        <div class="fl-cell"><div class="lab">Reversible</div><div class="val">Yes</div><div class="val-sub">Each step git-revertable</div></div>
+        <div class="fl-cell"><div class="lab">Cost</div><div class="val cost">$4.10</div><div class="val-sub">est · cap $5.00 · 2.5h Opus</div></div>
+      </div>
+      <div class="fl-actions">
+        <button class="fl-action primary"><span class="key">A</span> Approve &amp; run</button>
+        <button class="fl-action amend"><span class="key">E</span> Amend</button>
+        <button class="fl-action amend">Run on Balanced ($1.20)</button>
+        <button class="fl-action decline"><span class="key">D</span> Decline</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="plans-section">
+    <div class="plans-section-head">
+      <h3>In flight <span class="count">· 2 BOMs running</span></h3>
+    </div>
+    <div class="glass" style="padding:6px">
+      <div class="inflight-row">
+        <span class="step-badge">4/7</span>
+        <div class="ifname">cascade-merge PR backlog<span class="ifsub">step 4 · push --force-with-lease + wait CI</span></div>
+        <div class="ifprogress"><div class="ifprogress-fill" style="width:57%"></div></div>
+        <div class="ifcost"><b>$0.18</b> / $0.42 est</div>
+        <div class="ifprofile">BALANCED</div>
+        <div style="text-align:right;color:var(--text-mute);font-size:11px">▸ open</div>
+      </div>
+      <div class="inflight-row">
+        <span class="step-badge">3/5</span>
+        <div class="ifname">pt-b007 short_code<span class="ifsub">step 3 · npm run lint --fix</span></div>
+        <div class="ifprogress"><div class="ifprogress-fill" style="width:60%"></div></div>
+        <div class="ifcost"><b>$0.31</b> / $0.45 est</div>
+        <div class="ifprofile">BALANCED</div>
+        <div style="text-align:right;color:var(--text-mute);font-size:11px">▸ open</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="new-plan-card glass" style="margin-top:18px">
+    <span class="invite-rune">ᚱ</span>
+    <h4>What do you want to accomplish?</h4>
+    <p>Describe an outcome. The Steward turns it into a Bill of Materials you can approve once.</p>
+    <button class="page-action">+ New plan via Steward</button>
+  </div>
+</section>
+
+<!-- ==================== STREAMS ==================== -->
+<section class="page" id="page-streams">
+  <div class="page-head">
+    <div><h1>Streams</h1><div class="sub">Worker stdout + MCP traffic + stavR annotations, stitched by correlation_id</div></div>
+  </div>
+  <div class="streams-grid">
+    <div class="stream-list glass">
+      <div class="stream-item active">
+        <span class="dot" style="background:var(--sky)"></span>
+        <div class="name">cascade-resolver</div>
+        <span class="meta">31198</span>
+      </div>
+      <div class="stream-item">
+        <span class="dot" style="background:var(--green)"></span>
+        <div class="name">pt-b007</div>
+        <span class="meta">31204</span>
+      </div>
+      <div class="stream-item">
+        <span class="dot" style="background:var(--green)"></span>
+        <div class="name">pt-b008</div>
+        <span class="meta">31210</span>
+      </div>
+      <div class="stream-item">
+        <span class="dot" style="background:var(--amber)"></span>
+        <div class="name">unity-worker</div>
+        <span class="meta">31215</span>
+      </div>
+      <div class="stream-item">
+        <span class="dot" style="background:var(--text-dim)"></span>
+        <div class="name">llama-classifier</div>
+        <span class="meta">30912</span>
+      </div>
+    </div>
+
+    <div class="stream-terminal">
+      <div class="stream-line ann"><span class="ts">15:42:11.842</span> ◆ cascade-resolver · correlation cr-9f3e · scope ts-a4c1 (write-remote, 7/10)</div>
+      <div class="stream-line stdout"><span class="ts">15:42:11.901</span> $ git fetch origin main</div>
+      <div class="stream-line stdout"><span class="ts">15:42:12.245</span> From github.com:Kstkoda/stavr</div>
+      <div class="stream-line mcp"><span class="ts">15:42:12.310</span> → mcp/call github_read_pr {pr:32}</div>
+      <div class="stream-line mcp"><span class="ts">15:42:12.589</span> ← mcp/result ok · 1834 bytes</div>
+      <div class="stream-line stdout"><span class="ts">15:42:13.012</span> $ git rebase origin/main</div>
+      <div class="stream-line err"><span class="ts">15:42:13.502</span> CONFLICT (content): Merge conflict in src/cli.ts</div>
+      <div class="stream-line ann"><span class="ts">15:42:13.518</span> ◆ stavR · conflict detected · invoking step 3 (code-reasoning, sonnet)</div>
+      <div class="stream-line ann"><span class="ts">15:42:16.700</span> ◆ stavR · resolution · keep both subcommand registration blocks</div>
+      <div class="stream-line ok"><span class="ts">15:42:17.512</span> Successfully rebased and updated refs/heads/feat/adr-025-cli</div>
+      <div class="stream-line stdout"><span class="ts">15:42:18.001</span> $ git push --force-with-lease origin feat/adr-025-cli</div>
+      <div class="stream-line ann"><span class="ts">15:42:18.501</span> ◆ stavR · waiting on CI workflow runs (timeout 6m)…</div>
+      <div class="stream-line stdout"><span class="ts">15:42:18.890</span> █</div>
+    </div>
+
+    <div class="stream-context glass">
+      <div class="ctx-row"><div class="ctx-label">Worker</div><div class="ctx-val">cascade-resolver</div></div>
+      <div class="ctx-row"><div class="ctx-label">BOM</div><div class="ctx-val">bom-04a2 · step 4/7</div></div>
+      <div class="ctx-row"><div class="ctx-label">Profile</div><div class="ctx-val">balanced · sonnet</div></div>
+      <div class="ctx-row"><div class="ctx-label">Trust scope</div><div class="ctx-val">ts-a4c1 · 7/10 · 53m left</div></div>
+      <div class="ctx-row"><div class="ctx-label">Correlation</div><div class="ctx-val">cr-9f3e</div></div>
+      <div class="ctx-row"><div class="ctx-label">Spent</div><div class="ctx-val">$0.18 · est $0.42</div></div>
+      <div class="ctx-row"><div class="ctx-label">Stream WS</div><div class="ctx-val" style="color:var(--sky)">ws://127.0.0.1:7821</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== DECIDE ==================== -->
+<section class="page" id="page-decide">
+  <div class="page-head">
+    <div><h1>Decide</h1><div class="sub">Pending decisions surfaced from active plans · same food-label every time</div></div>
+  </div>
+  <div class="decide-grid">
+
+    <div class="fl-card glass focused">
+      <div class="fl-head">
+        <div class="fl-name">Switch profile to Turbo for v0.4 BOM</div>
+        <div class="fl-countdown">04:12</div>
+      </div>
+      <div class="fl-cells">
+        <div class="fl-cell"><div class="lab">What</div><div class="val" style="font-size:13px;font-family:var(--sans);line-height:1.4">Set profile=turbo before bom-04c0 (12 Opus steps)</div></div>
+        <div class="fl-cell"><div class="lab">Risk</div><div class="val high">High</div><div class="val-sub">High-spend · overnight unattended</div></div>
+        <div class="fl-cell"><div class="lab">Reversible</div><div class="val">Yes</div><div class="val-sub">Mode switch logs · revert anytime</div></div>
+        <div class="fl-cell"><div class="lab">Cost</div><div class="val">+$3.80</div><div class="val-sub">est · hard cap $5.00</div></div>
+      </div>
+      <div class="fl-actions">
+        <button class="fl-action primary">Approve</button>
+        <button class="fl-action amend">Balanced ($1.20)</button>
+        <button class="fl-action decline">Decline</button>
+      </div>
+    </div>
+
+    <div class="fl-card glass">
+      <div class="fl-head">
+        <div class="fl-name">Re-auth webhook brick</div>
+        <div class="fl-countdown">07:48</div>
+      </div>
+      <div class="fl-cells">
+        <div class="fl-cell"><div class="lab">What</div><div class="val" style="font-size:13px;font-family:var(--sans);line-height:1.4">OAuth re-auth flow for webhook MCP</div></div>
+        <div class="fl-cell"><div class="lab">Risk</div><div class="val med">Med</div><div class="val-sub">Opens browser · single brick</div></div>
+        <div class="fl-cell"><div class="lab">Reversible</div><div class="val">Yes</div><div class="val-sub">Can revoke anytime</div></div>
+        <div class="fl-cell"><div class="lab">Cost</div><div class="val">$0.00</div><div class="val-sub">No paid API</div></div>
+      </div>
+      <div class="fl-actions">
+        <button class="fl-action primary">Open browser</button>
+        <button class="fl-action amend">API key</button>
+        <button class="fl-action decline">Disable</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="nogo-banner">
+    <span class="lab">NO-GO LIST</span> · 12 rules active · blocks regardless of scope · <a href="#" style="color:var(--sky)">view list →</a>
+  </div>
+</section>
+
+<!-- ==================== DIAGNOSTICS ==================== -->
+<section class="page" id="page-diagnostics">
+  <div class="page-head">
+    <div><h1>Diagnostics</h1><div class="sub">L1 · MCP transport · 184 calls/min · p99 412ms · hover row for context</div></div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">
+    <div class="glass" style="padding:12px 16px"><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">Throughput</div><div style="font-family:var(--mono);font-size:22px;margin-top:4px">184/min</div><div style="font-size:10px;color:var(--text-mute);margin-top:2px;font-family:var(--mono)">peak 312 @ 14:32</div></div>
+    <div class="glass" style="padding:12px 16px"><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">p99 latency</div><div style="font-family:var(--mono);font-size:22px;margin-top:4px">412ms</div><div style="font-size:10px;color:var(--text-mute);margin-top:2px;font-family:var(--mono)">p50: 38 · p95: 247</div></div>
+    <div class="glass" style="padding:12px 16px"><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">Error rate</div><div style="font-family:var(--mono);font-size:22px;color:var(--amber);margin-top:4px">2.1%</div><div style="font-size:10px;color:var(--text-mute);margin-top:2px;font-family:var(--mono)">12 / last hour</div></div>
+    <div class="glass" style="padding:12px 16px"><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">Stuck calls</div><div style="font-family:var(--mono);font-size:22px;color:var(--red);margin-top:4px">3</div><div style="font-size:10px;color:var(--text-mute);margin-top:2px;font-family:var(--mono)">oldest 14m</div></div>
+  </div>
+  <div class="glass" style="padding:16px 20px">
+    <div style="font-size:13px;font-weight:450;margin-bottom:12px">Live MCP traffic</div>
+    <div style="background:#06070a;border-radius:8px;padding:12px;font-family:var(--mono);font-size:11px;line-height:1.55;max-height:340px;overflow-y:auto">
+      <div style="display:grid;grid-template-columns:80px 80px 60px 1fr 60px;gap:10px;padding:3px 6px;border-radius:4px"><span style="color:var(--text-dim)">15:42:18.412</span><span style="color:var(--purple)">cc-resolver</span><span style="color:var(--green);font-weight:600">↑</span><span>github_create_pr_comment</span><span style="color:var(--text-mute);text-align:right">142ms</span></div>
+      <div style="display:grid;grid-template-columns:80px 80px 60px 1fr 60px;gap:10px;padding:3px 6px;border-radius:4px"><span style="color:var(--text-dim)">15:42:18.388</span><span style="color:var(--purple)">pt-b007</span><span style="color:var(--sky);font-weight:600">↓</span><span>read_file (3 lines)</span><span style="color:var(--text-mute);text-align:right">8ms</span></div>
+      <div style="display:grid;grid-template-columns:80px 80px 60px 1fr 60px;gap:10px;padding:3px 6px;border-radius:4px"><span style="color:var(--text-dim)">15:42:18.244</span><span style="color:var(--purple)">cc-resolver</span><span style="color:var(--green);font-weight:600">↑</span><span>workspace.bash (git push)</span><span style="color:var(--amber);text-align:right;font-weight:600">854ms</span></div>
+      <div style="display:grid;grid-template-columns:80px 80px 60px 1fr 60px;gap:10px;padding:3px 6px;border-radius:4px"><span style="color:var(--text-dim)">15:42:17.244</span><span style="color:var(--purple)">cc-stuck-002</span><span style="color:var(--green);font-weight:600">↑</span><span style="color:var(--red)">webhook.callback (timeout)</span><span style="color:var(--text-mute);text-align:right">30s+</span></div>
+      <div style="display:grid;grid-template-columns:80px 80px 60px 1fr 60px;gap:10px;padding:3px 6px;border-radius:4px"><span style="color:var(--text-dim)">15:42:16.700</span><span style="color:var(--purple)">cc-resolver</span><span style="color:var(--green);font-weight:600">↑</span><span>read_file (cli.ts L310-340)</span><span style="color:var(--text-mute);text-align:right">5ms</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== TOOLKIT · DUPLO with glass discs ==================== -->
+<section class="page" id="page-toolkit">
+  <div class="page-head">
+    <div><h1>Toolkit</h1><div class="sub">Your kit · AI Brains · Tools · Smart Filters · Connectors · click any brick to configure</div></div>
+  </div>
+  <div class="toolkit-preview glass"><b>Right now stavR can:</b> read GitHub PRs, merge PRs, post to Slack, run local commands, write files, schedule tasks · budget cap $5.00/job · no-go: shell rm -rf, db drops, kubectl delete</div>
+
+  <div class="scene">
+    <div class="row-label above">▲ ABOVE · external · needs credentials</div>
+    <div class="bus-row" style="margin-top:20px">
+      <div class="glass-brick purple"><div class="b-status">✓</div><div class="b-title">Claude</div><div class="b-meta">opus / sonnet</div></div>
+      <div class="glass-brick purple"><div class="b-status">!</div><div class="b-title">GPT-4o</div><div class="b-meta">needs setup</div></div>
+      <div class="glass-brick blue"><div class="b-status">✓</div><div class="b-title">GitHub</div><div class="b-meta">gh cli · auth ok</div></div>
+      <div class="glass-brick blue"><div class="b-status">✓</div><div class="b-title">Slack</div><div class="b-meta">mcp · 1 ws</div></div>
+      <div class="glass-brick orange"><div class="b-status">⚡</div><div class="b-title">Webhook</div><div class="b-meta">auth lost</div></div>
+    </div>
+
+    <div class="bus-track">
+      <div class="steward-disc">
+        <div class="rune-big">ᚱ</div>
+        <div class="label-small">STEWARD</div>
+      </div>
+    </div>
+
+    <div class="bus-row">
+      <div class="glass-brick yellow"><div class="b-status">✓</div><div class="b-title">Llama 3.1</div><div class="b-meta">8B · ollama</div></div>
+      <div class="glass-brick yellow"><div class="b-status">!</div><div class="b-title">Mistral</div><div class="b-meta">not installed</div></div>
+      <div class="glass-brick gray"><div class="b-status">✓</div><div class="b-title">Terminal</div><div class="b-meta">cmd / pwsh</div></div>
+      <div class="glass-brick gray"><div class="b-status">✓</div><div class="b-title">Files</div><div class="b-meta">~/dev/* r/w</div></div>
+      <div class="glass-brick green"><div class="b-status">✓</div><div class="b-title">Budget cap</div><div class="b-meta">$5 / job</div></div>
+      <div class="glass-brick green"><div class="b-status">✓</div><div class="b-title">No-go list</div><div class="b-meta">12 rules</div></div>
+    </div>
+    <div class="row-label below">▼ BELOW · internal · trusted / local</div>
+
+    <button class="shelf-btn">The Shelf — 47 more bricks</button>
+  </div>
+</section>
+
+<!-- ==================== MCPs ==================== -->
+<section class="page" id="page-mcps">
+  <div class="page-head">
+    <div><h1>MCPs</h1><div class="sub">Browse 97 from github.com/mcp · manage 5 installed</div></div>
+    <button class="page-action">+ Add custom MCP</button>
+  </div>
+  <div class="mcps-tabs glass">
+    <button class="active">Browse <span class="num">97</span></button>
+    <button>Installed <span class="num">5</span></button>
+    <button>Auth needed <span class="num">2</span></button>
+  </div>
+  <div class="mcps-search">
+    <input placeholder="Search — github, unity, notion, postgres…" />
+    <select><option>Most popular</option><option>Newest</option><option>Alphabetical</option></select>
+    <select><option>All categories</option><option>Dev tools</option><option>Database</option></select>
+  </div>
+  <div class="mcp-grid">
+    <div class="mcp-card glass installed">
+      <div class="mcp-head"><div class="mcp-logo">⬢</div><div><div class="mcp-name">GitHub</div><div class="mcp-by">by github</div></div></div>
+      <div class="mcp-desc">Connect AI assistants to GitHub — manage repos, issues, PRs, workflows.</div>
+      <div class="mcp-foot"><span class="mcp-pop">★ 29,821</span><button class="mcp-install">Installed</button></div>
+    </div>
+    <div class="mcp-card glass">
+      <div class="mcp-head"><div class="mcp-logo">🎮</div><div><div class="mcp-name">Unity</div><div class="mcp-by">by CoplayDev</div></div></div>
+      <div class="mcp-desc">Control the Unity Editor from MCP clients via Unity bridge + Python.</div>
+      <div class="mcp-foot"><span class="mcp-pop">★ 9,587</span><button class="mcp-install">Install</button></div>
+    </div>
+    <div class="mcp-card glass">
+      <div class="mcp-head"><div class="mcp-logo">📝</div><div><div class="mcp-name">Markitdown</div><div class="mcp-by">by microsoft</div></div></div>
+      <div class="mcp-desc">Convert file formats (PDF, Word, Excel, images, audio) to Markdown.</div>
+      <div class="mcp-foot"><span class="mcp-pop">★ 123,144</span><button class="mcp-install">Install</button></div>
+    </div>
+    <div class="mcp-card glass installed">
+      <div class="mcp-head"><div class="mcp-logo">📡</div><div><div class="mcp-name">Slack</div><div class="mcp-by">by slack</div></div></div>
+      <div class="mcp-desc">Send messages, read channels, manage workspaces.</div>
+      <div class="mcp-foot"><span class="mcp-pop">★ 4,201</span><button class="mcp-install">Installed</button></div>
+    </div>
+    <div class="mcp-card glass">
+      <div class="mcp-head"><div class="mcp-logo">📊</div><div><div class="mcp-name">Netdata</div><div class="mcp-by">by netdata</div></div></div>
+      <div class="mcp-desc">Real-time infrastructure monitoring with metrics, logs, alerts.</div>
+      <div class="mcp-foot"><span class="mcp-pop">★ 78,808</span><button class="mcp-install">Install</button></div>
+    </div>
+    <div class="mcp-card glass">
+      <div class="mcp-head"><div class="mcp-logo">🌐</div><div><div class="mcp-name">Chrome DevTools</div><div class="mcp-by">by ChromeDevTools</div></div></div>
+      <div class="mcp-desc">MCP server for Chrome DevTools.</div>
+      <div class="mcp-foot"><span class="mcp-pop">★ 39,568</span><button class="mcp-install">Install</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SETTINGS ==================== -->
+<section class="page" id="page-settings">
+  <div class="page-head">
+    <div><h1>Settings</h1><div class="sub">Capabilities · Diagnostics · Profile budgets · Bricks · No-go · Trust scopes · Captures</div></div>
+  </div>
+  <div class="settings-tabs glass">
+    <button class="active">Capabilities</button>
+    <button>Diagnostics</button>
+    <button>Profile budgets</button>
+    <button>Bricks</button>
+    <button>No-go list</button>
+    <button>Trust scopes</button>
+    <button>Captures</button>
+  </div>
+
+  <div class="glass" style="padding:20px 24px;display:grid;grid-template-columns:64px 1fr auto auto;gap:18px;align-items:center;border:1px solid rgba(184,84,42,0.3)!important;background:linear-gradient(135deg,rgba(184,84,42,0.08),rgba(255,255,255,0.02))!important;margin-bottom:14px">
+    <div style="width:56px;height:56px;background:radial-gradient(circle,var(--rust) 0%,rgba(184,84,42,0.4) 70%,transparent);color:white;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-size:32px;box-shadow:0 0 24px var(--rust-glow)">ᚱ</div>
+    <div>
+      <div style="font-size:16px;font-weight:500">Steward brain</div>
+      <div style="font-size:11px;color:var(--text-mute);margin-top:2px;font-family:var(--mono)">opus 4.7 · pinned across all profiles</div>
+      <div style="font-size:12px;color:var(--text-mute);margin-top:6px;line-height:1.4">Pinned brains ignore profile changes — Turbo / Balanced / Eco won't swap this.</div>
+    </div>
+    <select style="background:rgba(0,0,0,0.4);border:1px solid rgba(184,84,42,0.4);color:var(--text);padding:8px 14px;border-radius:8px;font-family:var(--mono);font-size:12px"><option>opus 4.7 (current)</option></select>
+    <button style="background:var(--rust);color:white;border:none;padding:8px 14px;border-radius:8px;font-size:11px;font-family:var(--mono);letter-spacing:0.1em;font-weight:500">🔒 PINNED</button>
+  </div>
+
+  <div style="font-size:11px;color:var(--text-dim);letter-spacing:0.15em;text-transform:uppercase;margin:14px 0 6px">Worker capabilities × profile · click any cell · 🔒 = pinned across profiles</div>
+  <div class="glass" style="overflow:hidden;border-radius:14px">
+    <div style="display:grid;grid-template-columns:200px 1fr 1fr 1fr;background:rgba(0,0,0,0.3);font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-dim);border-bottom:1px solid var(--border)">
+      <div style="padding:12px 16px">Capability</div>
+      <div style="padding:12px 16px;text-align:center;color:var(--purple);border-left:1px solid var(--border)">⚡ TURBO</div>
+      <div style="padding:12px 16px;text-align:center;color:var(--sky);border-left:1px solid var(--border)">◐ BALANCED · active</div>
+      <div style="padding:12px 16px;text-align:center;color:var(--green);border-left:1px solid var(--border)">🌱 ECO</div>
+    </div>
+    <div style="display:grid;grid-template-columns:200px 1fr 1fr 1fr;border-bottom:1px solid var(--border)"><div style="padding:12px 16px;background:rgba(0,0,0,0.18)"><div style="font-size:13px">Reading</div><div style="font-size:10px;color:var(--text-dim)">file open, search</div></div><div style="padding:12px 16px;border-left:1px solid var(--border);font-family:var(--mono);font-size:12px">● haiku 4.5</div><div style="padding:12px 16px;border-left:1px solid var(--border);font-family:var(--mono);font-size:12px">● haiku 4.5</div><div style="padding:12px 16px;border-left:1px solid var(--border);font-family:var(--mono);font-size:12px">● llama 3.1</div></div>
+    <div style="display:grid;grid-template-columns:200px 1fr 1fr 1fr;border-bottom:1px solid var(--border);background:linear-gradient(90deg,rgba(184,84,42,0.04),transparent)"><div style="padding:12px 16px;background:rgba(0,0,0,0.18);position:relative"><span style="position:absolute;top:8px;right:8px;font-size:10px;color:var(--rust)">🔒</span><div style="font-size:13px">Code execution</div><div style="font-size:10px;color:var(--text-dim)">shell, build, test</div></div><div style="padding:12px 16px;border-left:1px solid var(--border);font-family:var(--mono);font-size:12px">● sonnet 4.6</div><div style="padding:12px 16px;border-left:1px solid var(--border);font-family:var(--mono);font-size:12px">● sonnet 4.6</div><div style="padding:12px 16px;border-left:1px solid var(--border);font-family:var(--mono);font-size:12px">● sonnet 4.6</div></div>
+    <div style="display:grid;grid-template-columns:200px 1fr 1fr 1fr;border-bottom:1px solid var(--border)"><div style="padding:12px 16px;background:rgba(0,0,0,0.18)"><div style="font-size:13px">Code reasoning</div><div style="font-size:10px;color:var(--text-dim)">refactor, design</div></div><div style="padding:12px 16px;border-left:1px solid var(--border);font-family:var(--mono);font-size:12px">● opus 4.7</div><div style="padding:12px 16px;border-left:1px solid var(--border);font-family:var(--mono);font-size:12px">● opus 4.7</div><div style="padding:12px 16px;border-left:1px solid var(--border);font-family:var(--mono);font-size:12px">● sonnet 4.6</div></div>
+  </div>
+</section>
+
+<!-- ==================== TIMELINE ==================== -->
+<div class="timeline-fixed glass">
+  <span class="tl-mini-head">last 1h</span>
+  <div class="tl-area">
+    <svg viewBox="0 0 1400 32" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="tl-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(184,84,42,0.45)"/><stop offset="100%" stop-color="rgba(184,84,42,0)"/></linearGradient>
+        <linearGradient id="tl-line" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="rgba(92,198,255,0.65)"/><stop offset="50%" stop-color="rgba(94,234,156,0.7)"/><stop offset="80%" stop-color="rgba(251,191,36,0.8)"/><stop offset="100%" stop-color="var(--rust)"/></linearGradient>
+      </defs>
+      <path d="M 0 26 C 50 24, 100 20, 150 15 C 200 12, 250 18, 300 22 C 350 25, 400 18, 450 10 C 500 12, 550 20, 600 24 C 650 22, 700 14, 750 8 C 800 5, 850 12, 900 18 C 950 14, 1000 8, 1050 5 C 1100 4, 1150 10, 1200 8 C 1250 4, 1300 8, 1350 5 C 1380 3, 1395 4, 1400 4 L 1400 32 L 0 32 Z" fill="url(#tl-fill)"/>
+      <path d="M 0 26 C 50 24, 100 20, 150 15 C 200 12, 250 18, 300 22 C 350 25, 400 18, 450 10 C 500 12, 550 20, 600 24 C 650 22, 700 14, 750 8 C 800 5, 850 12, 900 18 C 950 14, 1000 8, 1050 5 C 1100 4, 1150 10, 1200 8 C 1250 4, 1300 8, 1350 5 C 1380 3, 1395 4, 1400 4" fill="none" stroke="url(#tl-line)" stroke-width="1.4" stroke-linecap="round"/>
+      <circle cx="150" cy="15" r="3" fill="var(--green)" opacity="0.85"/>
+      <circle cx="450" cy="10" r="3" fill="var(--amber)" opacity="0.85"/>
+      <circle cx="840" cy="9" r="3.5" fill="var(--red)"><animate attributeName="r" from="3" to="6" dur="2s" repeatCount="indefinite"/><animate attributeName="opacity" from="0.95" to="0.3" dur="2s" repeatCount="indefinite"/></circle>
+      <circle cx="1200" cy="8" r="3" fill="var(--green)" opacity="0.85"/>
+      <line x1="1395" y1="0" x2="1395" y2="32" stroke="var(--rust)" stroke-width="1.5"/>
+      <circle cx="1395" cy="4" r="3" fill="var(--rust)"/>
+    </svg>
+  </div>
+  <span class="tl-now-tag">15:42:18</span>
+</div>
+
+<!-- ==================== DOCK ==================== -->
+<div class="dock">
+  <button class="dock-btn steward"><span class="rune">ᚱ</span><span class="dock-tooltip">Ask the Steward</span></button>
+  <button class="dock-btn">⚖<span class="badge">2</span><span class="dock-tooltip">Decisions · 2 pending</span></button>
+  <button class="dock-btn">🔔<span class="badge">3</span><span class="dock-tooltip">Notifications</span></button>
+  <button class="dock-btn">⊕<span class="dock-tooltip">Capture · bug · feature · todo</span></button>
+</div>
+
+<footer>stavR · v8 canonical mockup · 2026-05-17 · committed · the reference for v0.4.1 polish</footer>
+
+<script>
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const id = 'page-' + btn.dataset.page;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(id).classList.add('active');
+    window.scrollTo({top:0,behavior:'instant'});
+  });
+});
+document.querySelectorAll('[data-route]').forEach(el => {
+  el.addEventListener('click', e => {
+    e.stopPropagation();
+    const tab = document.querySelector(`.tab-btn[data-page="${el.dataset.route}"]`);
+    if (tab) tab.click();
+  });
+});
+</script>
+</body>
+</html>
