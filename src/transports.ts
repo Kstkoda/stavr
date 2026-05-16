@@ -1,9 +1,6 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import type { Server as HttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { writeHeapSnapshot } from 'node:v8';
-import { mkdirSync, statSync } from 'node:fs';
-import { resolve as resolvePath } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createSwitchServer, getOrCreateTrustStore } from './server.js';
@@ -20,6 +17,7 @@ import {
   stavrHttpRequestDuration,
 } from './observability/metrics.js';
 import { logContext } from './observability/logger.js';
+import { mountDebugEndpoints } from './observability/debug-endpoints.js';
 import { getV02Subsystem } from './steward/v02-wiring.js';
 import { computeUsage, fetchAnthropicBalance, type ComputeUsageOpts } from './usage.js';
 import {
@@ -318,27 +316,14 @@ export async function mountTransports(
       });
     });
 
-    // OOM leak-hunt — loopback-only heap snapshot trigger. Defense-in-depth:
-    // even though the daemon binds 127.0.0.1 by default, we re-check the
-    // request origin so a misconfigured non-loopback bind cannot expose it.
-    // Snapshots are written to ./tmp/heap-snapshots/snapshot-<ts>.heapsnapshot
-    // — same directory the leak-repro script reads from. The file path comes
-    // back to the caller so curl/scripts know where to look.
-    app.post('/debug/heap-snapshot', (req: Request, res: Response) => {
-      if (!isLoopbackRequest(req)) {
-        res.status(403).json({ ok: false, error: 'loopback only' });
-        return;
-      }
-      try {
-        const dir = resolvePath(process.cwd(), 'tmp', 'heap-snapshots');
-        mkdirSync(dir, { recursive: true });
-        const file = writeHeapSnapshot(resolvePath(dir, `snapshot-${Date.now()}.heapsnapshot`));
-        const size = statSync(file).size;
-        res.json({ ok: true, file, size_bytes: size });
-      } catch (err) {
-        res.status(500).json({ ok: false, error: (err as Error).message });
-      }
-    });
+    // bom-diagnostics-2026 C3 — on-demand diagnostic endpoints
+    // (heap-snapshot, cpu-profile, diagnostic-report). All three are
+    // loopback-only AND gated by STAVR_DEBUG_ENABLED=1. When the gate is off
+    // they return 404 (not 403) so an unauthenticated probe cannot detect
+    // their existence. The leak-hunt heap-snapshot endpoint (originally
+    // inlined here in PR #15) moved into `observability/debug-endpoints.ts`
+    // as part of this rollup.
+    mountDebugEndpoints(app);
 
     // Spec 50 Layer 1 — usage endpoint. Same auth posture as /dashboard/*
     // (127.0.0.1 only via the binding, no auth header).
