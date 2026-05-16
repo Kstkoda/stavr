@@ -2,7 +2,7 @@
 
 Single dispatchable brief for Claude Code (Opus 4.7) autonomous run.
 
-**Estimated wall-clock**: 12-15 hours sequential. Single worker, single PR.
+**Estimated wall-clock**: 14-17 hours sequential (was 12-15h before adding the runtime toggles + Settings → Diagnostics work in Phase 5). Single worker, single PR.
 
 **Stop conditions**: end of any phase if tests fail and can't be fixed within 30 min. Otherwise run to completion.
 
@@ -307,7 +307,7 @@ git push
 
 ---
 
-## PHASE 5 · Capture ⊕ button + per-profile capability matrix (~3h)
+## PHASE 5 · Capture ⊕ button + Settings sub-pages + per-profile capability matrix (~5h)
 
 ### 5.1 Capture button + modal
 
@@ -332,7 +332,41 @@ git push
 - Default route per type (today: all default to local file)
 - "Change" button per row (no-op for v0.4, lights up in v0.6+)
 
-### 5.4 Per-profile capability matrix
+### 5.4 Settings → Diagnostics sub-page (NEW · runtime toggle pattern)
+
+Per `memory/project_stavr_runtime_toggles.md` — make `STAVR_DEBUG_ENABLED` (and per-endpoint subsets) toggleable from the dashboard with no PM2 restart required. Operator ergonomics fix.
+
+**Daemon side (~1.5h):**
+
+- New table in runestone.db (idempotent migration in `src/persistence.ts`):
+  ```sql
+  CREATE TABLE runtime_toggles (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    set_at INTEGER NOT NULL,
+    set_by TEXT NOT NULL,
+    expires_at INTEGER
+  );
+  ```
+- New MCP tools `runtime.set_toggle { key, value, ttl_minutes?, set_by? }` and `runtime.get_toggles {}`. Both emit/return audit-class events.
+- Modify the `/debug/*` endpoint guard to check `runtime_toggles` first, fall back to `process.env.STAVR_DEBUG_ENABLED`. Return 404 (not 403) when locked — preserve the security pattern.
+- Background sweep evicts expired toggles every 60s; emits `runtime_toggle_expired` event on eviction.
+- Granular keys: `STAVR_DEBUG_ENABLED` (master), `STAVR_DEBUG_HEAP`, `STAVR_DEBUG_CPU`, `STAVR_DEBUG_REPORT`. Endpoint guards check master OR per-endpoint key.
+
+**Dashboard side (~1h):**
+
+- `src/dashboard/pages/settings.ts` — add Diagnostics sub-tab (sibling to Captures):
+  - Three toggle rows (heap-snapshot · cpu-profile · diagnostic-report) — switch + countdown for auto-revert + "extend by 1h" button
+  - Three "take now" buttons firing `POST /debug/*` directly
+  - "Recent diagnostics (last 24h)" list — queries event log for `heap_snapshot_taken`, `cpu_profile_taken`, `diagnostic_report_taken`
+  - Default TTL when toggling on: 60 min
+
+**Tests:**
+- `tests/observability/runtime-toggles.test.ts` — set/get/expire/audit-event
+- `tests/dashboard/settings-diagnostics.test.ts` — toggle UI, countdown, take-now actions
+- `tests/observability/debug-endpoint-guard.test.ts` — runtime-toggle takes precedence, env var is fallback
+
+### 5.5 Per-profile capability matrix (was 5.4)
 
 `src/dashboard/pages/capabilities.ts` — rewrite to v8:
 - Steward pinned card at top (big rune badge, model dropdown, PIN toggle)
@@ -341,16 +375,16 @@ git push
 - 🔒 icon for pinned-across-profiles slots
 - Below: 3 compact profile cards for budgets
 
-### 5.5 Tests
+### 5.6 Tests
 
 - `tests/dashboard/capture.test.ts`
 - `tests/tools/capture.test.ts`
 - `tests/dashboard/capabilities.test.ts`
 
-### 5.6 Commit + push
+### 5.7 Commit + push
 
 ```powershell
-git commit -s -m "feat(dashboard): capture ⊕ + Settings/Captures + per-profile capability matrix"
+git commit -s -m "feat(dashboard): capture ⊕ + Settings/Captures + Settings/Diagnostics runtime toggles + per-profile capability matrix"
 git push
 ```
 
