@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
-    "start": "node --max-old-space-size=8192 --heapsnapshot-near-heap-limit=2 --report-on-fatalerror --report-directory=./tmp/diag-reports dist/cli.js start",
+    "start": "node --max-old-space-size=8192 --heapsnapshot-near-heap-limit=2 --report-on-fatalerror --report-directory=./tmp/diag-reports dist/cli.js daemon start",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

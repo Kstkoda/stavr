@@ -8,6 +8,7 @@ import {
   daemonStatus,
   restartDaemon,
   startDaemon,
+  startDaemonForeground,
   stopDaemon,
 } from './daemon.js';
 import { runConnectTest } from './connect-test.js';
@@ -81,9 +82,13 @@ program
 
 program
   .command('start')
-  .description('Start Switch (stdio + HTTP/SSE by default).')
+  .description(
+    'Start Stavr. Without --stdio-only this is equivalent to "stavr daemon start" ' +
+      '(full daemon wire-up: memory poller, retention scheduler, worker watchdog, steward, v0.2 subsystem). ' +
+      'Use --stdio-only for a lightweight stdio MCP transport with no HTTP and no daemon services.',
+  )
   .option('-p, --port <port>', 'HTTP/SSE port', (v) => Number(v), 7777)
-  .option('--stdio-only', 'Disable HTTP/SSE transport.')
+  .option('--stdio-only', 'Disable HTTP/SSE transport (stdio MCP only, no daemon wire-up).')
   .option('--db <path>', 'SQLite path', defaultDbPath())
   .option('--log-format <fmt>', 'Log format: text (default) or json (newline-delimited JSON to stderr).', 'text')
   .option('--config <path>', 'Stavr config file (default ~/.stavr/stavr.yaml).')
@@ -93,6 +98,7 @@ program
     'Override network.require_auth_when_non_local from config (escape hatch).',
     false,
   )
+  .option('--force', 'Override a stale or running PID file (non-stdio mode only).', false)
   .action(
     async (opts: {
       port: number;
@@ -102,35 +108,58 @@ program
       config?: string;
       bindHost?: string;
       allowNonLocalWithoutAuth?: boolean;
+      force?: boolean;
     }) => {
-      const logger = configureLogger({ format: parseLogFormat(opts.logFormat) });
-      const store = new EventStore();
-      store.init(opts.db);
-      const broker = new Broker(store);
+      const logFormat = parseLogFormat(opts.logFormat);
+      const logger = configureLogger({ format: logFormat });
 
-      let bindHost: string | undefined;
-      let requireAuthWhenNonLocal: boolean | undefined;
+      // 2026-05-16 — non-stdio `stavr start` now delegates to the same wire-up
+      // as `stavr daemon start`. The historical lighter path (mount transports
+      // only) silently skipped the memory poller and retention scheduler, which
+      // is the bug that hid the OOM leak-hunt fix when invoked via `npm start`.
+      // See proposed/bom-cli-start-unify.md and ADR-030.
       if (!opts.stdioOnly) {
         try {
-          const resolved = resolveBindFromCli({
+          // Compute authConfigured before binding — spec 52 A2 lets the auth gate
+          // open as soon as at least one device is paired. Open the DB just for
+          // the count, then close it so startDaemonForeground can open it fresh.
+          const probe = new EventStore();
+          probe.init(opts.db);
+          const authConfigured = probe.countActiveDevices() > 0;
+          probe.close();
+          const { bindHost, requireAuthWhenNonLocal } = resolveBindFromCli({
             configPath: opts.config,
             bindHostOverride: opts.bindHost,
             allowNonLocalWithoutAuth: !!opts.allowNonLocalWithoutAuth,
-            authConfigured: store.countActiveDevices() > 0,
+            authConfigured,
           });
-          bindHost = resolved.bindHost;
-          requireAuthWhenNonLocal = resolved.requireAuthWhenNonLocal;
+          await startDaemonForeground({
+            port: opts.port,
+            db: opts.db,
+            detach: false,
+            force: !!opts.force,
+            logFormat,
+            bindHost,
+            requireAuthWhenNonLocal,
+            authConfigured,
+          });
+          // startDaemonForeground installs its own SIGINT/SIGTERM handlers and
+          // returns once HTTP is listening; block until the signal handler
+          // exits the process.
+          await new Promise(() => {});
+          return;
         } catch (err) {
           console.error(`[stavr] start failed: ${(err as Error).message}`);
           process.exit(1);
         }
       }
 
+      // --stdio-only: legitimately lighter path. No HTTP, no daemon services.
+      const store = new EventStore();
+      store.init(opts.db);
+      const broker = new Broker(store);
       const transports = await mountTransports(broker, {
-        mode: opts.stdioOnly ? 'stdio' : 'both',
-        port: opts.stdioOnly ? undefined : opts.port,
-        bindHost,
-        requireAuthWhenNonLocal,
+        mode: 'stdio',
         authConfigured: store.countActiveDevices() > 0,
       });
 
