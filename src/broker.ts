@@ -3,6 +3,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { EventStore, StoredEvent } from './persistence.js';
 import type { Event, EventKindT } from './event-types.js';
 import { getLogger } from './log.js';
+import { recordBrokerEvent } from './observability/metrics.js';
+import { runWithCorrelation } from './observability/logger.js';
 
 interface Subscription {
   sessionId: string;
@@ -107,7 +109,22 @@ export class Broker {
         ...event,
       };
     }
-    await this.fanout(stored);
+    // Record metrics + run downstream fanout under the event's correlation_id
+    // so any logger calls inside subscribers auto-tag with it (BOM diagnostics
+    // 2026 C1.6).
+    try {
+      recordBrokerEvent(stored);
+    } catch {
+      /* metrics must never break fanout */
+    }
+    const cid = stored.correlation_id;
+    if (cid) {
+      await runWithCorrelation(cid, async () => {
+        await this.fanout(stored);
+      });
+    } else {
+      await this.fanout(stored);
+    }
     for (const cb of this.rawListeners) {
       try { cb(stored); } catch { /* isolate raw listener failures */ }
     }
