@@ -17,7 +17,8 @@
 // case. There is no scenario where shell:true is the right answer here.
 
 import { spawn } from 'node:child_process';
-import { resolve as resolvePath, isAbsolute, relative } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+import { delimiter, join, resolve as resolvePath, isAbsolute, relative } from 'node:path';
 
 export interface RunHostExecInput {
   command: string;
@@ -72,6 +73,111 @@ const ALLOWED_ENV_KEYS = [
   'PATHEXT', // Windows: required for spawn to find git.exe, npm.cmd, etc.
 ] as const;
 
+/**
+ * Resolve a bare command name to its executable path. On Windows we must
+ * walk PATH + PATHEXT manually because Node's spawn with shell:false does
+ * NOT auto-append .cmd/.bat extensions (only shell:true does that, which we
+ * forbid). On POSIX we let spawn handle PATH lookup natively — but a manual
+ * search via PATH gives identical behavior for `.exe`-less binaries, and
+ * keeps the implementation symmetric.
+ *
+ * Returns the original command unchanged if no resolution succeeds — letting
+ * spawn surface ENOENT through the normal error channel rather than this
+ * function throwing.
+ */
+export function resolveExecutable(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  // Absolute / relative paths are passed through verbatim — they've already
+  // been rejected by the validator if they're not allowed.
+  if (command.includes('/') || command.includes('\\')) return command;
+  const pathStr = env.PATH ?? env.Path ?? '';
+  if (!pathStr) return command;
+  const dirs = pathStr.split(delimiter).filter(Boolean);
+  const exts = platform === 'win32'
+    ? (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+    : [''];
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const candidate = join(dir, command + ext);
+      try {
+        if (existsSync(candidate) && statSync(candidate).isFile()) {
+          return candidate;
+        }
+      } catch {
+        // unreadable directory — skip
+      }
+    }
+  }
+  return command;
+}
+
+/**
+ * Quote a single argument for cmd.exe so the batch interpreter receives it
+ * verbatim. Two layers apply:
+ *
+ *   1. Microsoft C-runtime quoting (the rules CreateProcess uses): wrap in
+ *      double quotes if the arg contains whitespace or quotes; backslashes
+ *      before a quote are doubled.
+ *   2. cmd.exe metacharacter escaping with caret: `& | < > ^ ( ) % !` so the
+ *      interpreter doesn't treat them as syntax (pipe, redirect, env-var,
+ *      delayed-expansion).
+ *
+ * This is the same approach cross-spawn uses. We DO NOT call shell:true —
+ * we explicitly invoke cmd.exe with /d /s /c and rely on windowsVerbatim-
+ * Arguments to bypass Node's secondary quoting. Without this dance, spawning
+ * an npm.cmd / pm2.cmd shim throws EINVAL on Node >= 18.20.
+ */
+export function quoteForCmd(arg: string): string {
+  if (arg === '') return '""';
+  // Step 1: CRT quoting (if needed)
+  const needsQuotes = /[\s"]/.test(arg);
+  let out = arg;
+  if (needsQuotes) {
+    // Double trailing backslashes before the closing quote; escape internal
+    // quotes by doubling preceding backslashes and prefixing with backslash.
+    out = out.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1');
+    out = `"${out}"`;
+  }
+  // Step 2: cmd.exe metacharacter caret-escape. Outside quotes we always
+  // escape; inside quotes cmd still interprets `^` and `%`, so escape those
+  // too. (We caret-escape unconditionally — caret on a non-meta char is a
+  // no-op for cmd.)
+  return out.replace(/([()%!^"<>&|])/g, '^$1');
+}
+
+function isBatchFile(exePath: string): boolean {
+  return /\.(cmd|bat)$/i.test(exePath);
+}
+
+function buildSpawnArgs(
+  exePath: string,
+  args: string[],
+  platform: NodeJS.Platform,
+): { file: string; args: string[]; useVerbatim: boolean } {
+  if (platform === 'win32' && isBatchFile(exePath)) {
+    // cmd.exe /s /c quirk: cmd strips the OUTER quote pair around the
+    // command-after-/c unless /s is given AND the command is wrapped in an
+    // ADDITIONAL pair of quotes. So if exePath has spaces (e.g.,
+    // "C:\Program Files\nodejs\npm.cmd"), we need a double-wrap:
+    //   cmd /d /s /c ""C:\...\npm.cmd" --version"
+    // cross-spawn does the same. With windowsVerbatimArguments: true Node
+    // doesn't apply its own CRT quoting, so the raw string above is what
+    // cmd actually receives.
+    const quotedExe = /\s/.test(exePath) ? `"${exePath}"` : exePath;
+    const quoted = args.map(quoteForCmd);
+    const inner = [quotedExe, ...quoted].join(' ');
+    return {
+      file: 'cmd.exe',
+      args: ['/d', '/s', '/c', `"${inner}"`],
+      useVerbatim: true,
+    };
+  }
+  return { file: exePath, args, useVerbatim: false };
+}
+
 function scrubEnv(): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const key of ALLOWED_ENV_KEYS) {
@@ -119,11 +225,15 @@ export function runHostExec(input: RunHostExecInput): Promise<HostExecResult> {
 
   return new Promise<HostExecResult>((resolve) => {
     const startedAt = Date.now();
-    const child = spawn(input.command, input.args, {
+    const env = scrubEnv();
+    const exePath = resolveExecutable(input.command, env);
+    const spawnPlan = buildSpawnArgs(exePath, input.args, process.platform);
+    const child = spawn(spawnPlan.file, spawnPlan.args, {
       cwd,
-      env: scrubEnv(),
+      env,
       shell: false, // NON-NEGOTIABLE — see header comment.
       windowsHide: true,
+      windowsVerbatimArguments: spawnPlan.useVerbatim,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
