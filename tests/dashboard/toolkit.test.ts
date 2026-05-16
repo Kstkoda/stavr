@@ -22,7 +22,7 @@ function snap(over: Partial<ToolkitData> = {}): ToolkitData {
 }
 
 describe('Toolkit page — unit', () => {
-  it('lays bricks above and below the bus', () => {
+  it('lays bricks in above + below zones (no v0.3 red bus between them)', () => {
     const html = renderToolkitPage(snap({
       bricks: [
         brick({ id: 'a', position: 'above', displayName: 'github' }),
@@ -33,7 +33,10 @@ describe('Toolkit page — unit', () => {
     expect(html).toContain('class="brick-zone below"');
     expect(html).toContain('github');
     expect(html).toContain('filesystem');
-    expect(html).toContain('enterprise bus · steward');
+    // The v0.3 horizontal "enterprise bus · steward" element was removed
+    // in v0.4.1 polish — Topology is the canonical call-graph view now.
+    expect(html).not.toContain('enterprise bus');
+    expect(html).not.toContain('class="bus"');
   });
 
   it('shows zone placeholders when a row is empty', () => {

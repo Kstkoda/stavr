@@ -917,7 +917,7 @@ export function mountDashboardRoutes(
       actions_executed: s.actions_executed,
       expires_after_actions: s.expires_after_actions,
     }));
-    return { workers, bricks, scopes, inFlightBoms };
+    return { workers, bricks, scopes, inFlightBoms, port: ctx.port };
   }
 
   // Streams page snapshot — workers + last few events per worker.
