@@ -25,3 +25,10 @@ vitest.config.ts.timestamp-*.mjs
 
 # Transient operator/steward task files (never commit)
 prompts/
+
+# OOM diagnostics — heap snapshots and node --report dumps. Keep .gitkeep,
+# never commit the .heapsnapshot / .report.*.json payloads themselves.
+tmp/heap-snapshots/*
+!tmp/heap-snapshots/.gitkeep
+tmp/diag-reports/*
+!tmp/diag-reports/.gitkeep
