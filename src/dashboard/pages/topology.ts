@@ -54,6 +54,10 @@ export interface TopologyData {
   inFlightBoms: Bom[];
   /** Optional event count cap for the scrubber (defaults to 100). */
   scrubberSteps?: number;
+  /** Listen port of the running daemon, surfaced on the core node's
+   * "this · <port>" subtitle. Plumbed in by transports.ts at mount-time
+   * from opts.port. Defaults to 7777 (the stavr CLI default) when absent. */
+  port?: number;
 }
 
 type GraphType = 'core' | 'mcp-remote' | 'mcp-local' | 'webhook' | 'db' | 'model' | 'worker' | 'peer';
@@ -211,7 +215,7 @@ function buildEdges(nodes: GraphNode[]): GraphEdge[] {
 
 // ============================== rendering ==============================
 
-function renderNode(n: GraphNode, isCore: boolean): string {
+function renderNode(n: GraphNode, isCore: boolean, port: number): string {
   const shapeCls = `shape ${n.shape} t-${n.type}`;
   const haloCls = `halo ${n.status}`;
   const dataLayer = isCore ? 'steward' : (n.type === 'worker' ? 'worker' : 'brick');
@@ -224,7 +228,7 @@ function renderNode(n: GraphNode, isCore: boolean): string {
     ? `<span class="topo-daemon-disc" aria-hidden="true"></span>`
     : '';
   const labelHtml = isCore
-    ? `<div class="node-label"><b>stavR-primary</b><span class="role">this · 8421</span></div>`
+    ? `<div class="node-label"><b>stavR-primary</b><span class="role">this · ${port}</span></div>`
     : `<div class="node-label">${escapeHtml(n.displayName)}${n.role ? `<span class="role">${escapeHtml(n.role)}</span>` : ''}</div>`;
   const iconGlyph = isCore
     ? `<span class="glyph lg">ᚱ</span>`
@@ -1190,7 +1194,10 @@ export function renderTopologyPage(data?: TopologyData): string {
   const edges = buildEdges(allNodes);
   const nodeMap = new Map(allNodes.map((n) => [n.id, n]));
   const edgeSvg = edges.map((e) => renderEdge(nodeMap, e)).join('');
-  const nodesHtml = allNodes.map((n) => renderNode(n, n.id === 'stavr-core')).join('');
+  // Daemon listen port: data.port from transports.ts when mounted live;
+  // 7777 is the CLI default (src/cli.ts:90) so it's the right fallback.
+  const corePort = snapshot.port ?? 7777;
+  const nodesHtml = allNodes.map((n) => renderNode(n, n.id === 'stavr-core', corePort)).join('');
 
   // Scrubber + tick markers (unchanged contract).
   const steps = Math.max(1, snapshot.scrubberSteps ?? 30);

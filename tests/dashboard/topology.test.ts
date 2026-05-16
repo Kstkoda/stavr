@@ -105,15 +105,21 @@ describe('computeTopology', () => {
 
 describe('Topology page — unit', () => {
   it('renders the daemon disc + this·port core label (v2)', () => {
+    // Default snapshot has no port → renderer falls back to 7777 (the
+    // stavr CLI default in src/cli.ts:90).
     const html = renderTopologyPage(snapshot());
-    // v2: core node carries the topo-daemon-disc marker and a
-    // "this · 8421" subtitle. The v0.3/v8 "STAVR DAEMON" subtitle and
-    // the structural topo-bus axis were removed per CLAUDE.md invariant #1.
     expect(html).toContain('topo-daemon-disc');
-    expect(html).toContain('this · 8421');
+    expect(html).toContain('this · 7777');
     expect(html).not.toContain('STAVR DAEMON');
+    expect(html).not.toContain('this · 8421'); // the mockup's illustrative port
     expect(html).not.toContain('class="topo-bus"');
     expect(html).not.toContain('enterprise bus');
+  });
+
+  it('plumbs a live daemon port from TopologyData into the core label', () => {
+    const html = renderTopologyPage(snapshot({ port: 9876 }));
+    expect(html).toContain('this · 9876');
+    expect(html).not.toContain('this · 7777');
   });
 
   it('renders the v2 filter strip + palette door + legend + drawer', () => {
