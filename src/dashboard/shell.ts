@@ -25,6 +25,11 @@ import {
   WATCHDOG_PIP_JS,
   renderWatchdogPip,
 } from './components/watchdog-pip.js';
+import {
+  CAPTURE_BUTTON_CSS,
+  CAPTURE_BUTTON_JS,
+  renderCaptureButton,
+} from './components/capture-button.js';
 
 export type DashboardPageId =
   | 'helm'
@@ -311,6 +316,7 @@ export function renderShell(input: RenderShellInput): string {
     FLOATING_INSPECTOR_CSS,
     TIMELINE_CSS,
     WATCHDOG_PIP_CSS,
+    CAPTURE_BUTTON_CSS,
   ].join('\n');
 
   const script = input.script ? `<script>${input.script}</script>` : '';
@@ -334,6 +340,7 @@ export function renderShell(input: RenderShellInput): string {
     `<main class="page" role="main">${input.body}</main>`,
     renderInspectorPanel(),
     renderFloatingInspectorShell(),
+    renderCaptureButton(),
     renderTimeline(),
     `<div class="conn-banner" data-role="conn-banner" role="status" aria-live="polite">`,
     `<span class="conn-banner-dot" aria-hidden="true"></span>`,
@@ -344,6 +351,7 @@ export function renderShell(input: RenderShellInput): string {
     `<script>${FLOATING_INSPECTOR_JS}</script>`,
     `<script>${TIMELINE_JS}</script>`,
     `<script>${WATCHDOG_PIP_JS}</script>`,
+    `<script>${CAPTURE_BUTTON_JS}</script>`,
     script,
     `</body>`,
     `</html>`,

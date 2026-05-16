@@ -40,6 +40,29 @@ publishes a stable export.
   - `src/transports.ts`: new `helmData()` + `mcpsData()` aggregators; `helmData` reuses `homeData()` memoization so the Helm page costs no extra broker reads.
   - Tests updated for the redirect change + the topology central-node rename. New tests: helm (8 cases), floating-inspector (4 cases), watchdog-pip (4 cases). Topology test gains a v8 mode-chip assertion.
   - Full suite: 521 passing / 1 pre-existing skip.
+- Phase 4: MCPs page — done (page + registry + route wiring shipped with Phase 3 because the dashboard nav routes referenced it; this phase added the dedicated test coverage)
+  - 30-entry registry in `src/dashboard/data/mcp-registry.ts` (acceptance criterion: ≥25 servers).
+  - Browse / Installed / Auth-needed tabs with client-side search + sort + category filter.
+  - Install action is a v0.4 placeholder: clicking opens a floating-inspector explaining the manifest.yaml workaround. Real install flow is v0.6+ (OAuth 2.1 + RIs, ADR-035 phase 1).
+  - 8 new tests in `tests/dashboard/mcps.test.ts`.
+- Phase 5: Capture ⊕ + Settings sub-pages + per-profile capability matrix — done
+  - `src/persistence.ts`: new `runtime_toggles` table + EventStore methods (`getRuntimeToggle`, `setRuntimeToggle`, `listRuntimeToggles`, `deleteRuntimeToggle`, `pruneExpiredRuntimeToggles`). Idempotent schema migration; expiry is enforced on the read path.
+  - `src/observability/debug-endpoints.ts`: `isDebugEnabled` now consults a `readToggle` callback BEFORE the env-var fallback. Per-endpoint subkeys (`STAVR_DEBUG_HEAP`, `STAVR_DEBUG_CPU`, `STAVR_DEBUG_REPORT`) layered on top of the master `STAVR_DEBUG_ENABLED`. Each successful capture emits a `{heap_snapshot,cpu_profile,diagnostic_report}_taken` audit event. Guard still returns 404 on a closed gate — preserves the no-information-leak posture from ADR-031.
+  - `src/event-types.ts` + `src/observability/retention.ts`: added six new audit-class kinds (`runtime_toggle_changed`, `runtime_toggle_expired`, `heap_snapshot_taken`, `cpu_profile_taken`, `diagnostic_report_taken`, `capture_filed`) so they survive 90-day audit retention.
+  - `src/daemon.ts`: 60s background sweep evicts expired runtime toggles, emits `runtime_toggle_expired` per eviction.
+  - `src/tools/capture.ts`: `fileCapture()` writes JSONL to `~/.stavr/captures/<type>.jsonl` per the v0.4 routing model. Type + priority validated.
+  - `src/transports.ts`:
+    - `POST /dashboard/capture` — body `{comment, type, priority, snapshot, related_id?}`; writes via `fileCapture` + emits `capture_filed`.
+    - `GET/POST /dashboard/settings/runtime-toggles` + `DELETE /dashboard/settings/runtime-toggles/:key` — toggle CRUD, each mutation emits `runtime_toggle_changed`.
+    - Background `refreshOllamaModels()` every 60s populates `ctx.ollamaModels` for the Capabilities matrix.
+    - `mountDebugEndpoints(app, { readToggle, emitEvent })` wired so the guard sees the runtime toggle row and each capture lands on the event log.
+    - `settingsData()` returns `runtimeToggles` + `recentDiagnostics` (last 24h).
+  - `src/dashboard/components/capture-button.ts`: floating ⊕ FAB + modal with comment + type/priority radios + Send. Snapshot gathered client-side from `/healthz` + `/metrics` (the same protocol surface a tray companion uses).
+  - `src/dashboard/pages/settings.ts`: Captures sub-section (route config, read-only for v0.4) + Diagnostics sub-section (3 toggle rows × switch + countdown + take-now + recent diagnostics list).
+  - `src/dashboard/pages/capabilities.ts`: v0.4 Steward pinned card (rune + model dropdown including Ollama models) + 14×3 capability matrix (capability rows × Turbo/Balanced/Eco columns). Each cell is a clickable button → floating inspector with the candidate model list. Missing local models flagged with a `!` warning marker. The original baseplate stays below.
+  - `src/dashboard/shell.ts`: Capture button mounted once across the shell + CSS/JS wired.
+  - Tests: 33 new across `tests/observability/runtime-toggles.test.ts`, `tests/observability/debug-endpoint-guard.test.ts`, `tests/tools/capture.test.ts`, `tests/dashboard/capture.test.ts`, `tests/dashboard/settings-diagnostics.test.ts`, `tests/dashboard/capability-matrix.test.ts`.
+  - Full suite: 562 passing / 1 pre-existing skip.
   - `src/steward/providers/ollama.ts`: provider with `/api/chat` (non-stream) + `listAvailableModels()` via `/api/tags`. Mock tool-call mapping, system-prompt + multi-turn message mapping, AbortController-based timeout. Observability via `recordProviderRequest` + `recordProviderLatency` in finally block.
   - `src/observability/metrics.ts`: added `stavr_provider_requests_total` counter + `stavr_provider_latency_seconds` histogram with `{provider, model, status}` labels. Model-label cardinality kept bounded via truncation.
   - `src/types/stavr-bom.ts`: added four `local-*` capability tags as union members; added `LOCAL_FRIENDLY_TAGS` and `isLocalModel()` helpers. Routing tables updated for all three profiles per brief §2.3: Turbo never local, Balanced local for `cheap-classifier` + `simple-summary` + `local-*`, Eco local-first across every local-friendly tag. Frontier fallback retained in every Balanced row.

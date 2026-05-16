@@ -324,7 +324,22 @@ export async function mountTransports(
     // their existence. The leak-hunt heap-snapshot endpoint (originally
     // inlined here in PR #15) moved into `observability/debug-endpoints.ts`
     // as part of this rollup.
-    mountDebugEndpoints(app);
+    mountDebugEndpoints(app, {
+      // v0.4 — runtime toggles flippable from Settings → Diagnostics. The
+      // env var remains the fallback so headless / pre-DB callers still
+      // work.
+      readToggle: (key) => broker.store.getRuntimeToggle(key),
+      // v0.4 — emit audit events for each /debug/* capture so Settings →
+      // Diagnostics can list recent diagnostics from the event log.
+      emitEvent: (kind, payload) => {
+        void broker.publish({
+          kind: kind as never,
+          at: new Date().toISOString(),
+          source_agent: 'stavr-daemon',
+          payload,
+        });
+      },
+    });
 
     // Spec 50 Layer 1 — usage endpoint. Same auth posture as /dashboard/*
     // (127.0.0.1 only via the binding, no auth header).
@@ -620,11 +635,29 @@ export async function mountTransports(
       }
     });
 
+    // v0.4 — refresh the Ollama model list every 60s in the background.
+    // The Capabilities page reads from this snapshot synchronously so the
+    // page render never blocks on the local Ollama daemon being reachable.
+    let ollamaModelsCache: string[] = [];
+    const refreshOllamaModels = async (): Promise<void> => {
+      try {
+        const { getOllamaProvider } = await import('./daemon.js');
+        const models = await getOllamaProvider().listAvailableModels();
+        ollamaModelsCache = models;
+      } catch {
+        ollamaModelsCache = [];
+      }
+    };
+    void refreshOllamaModels();
+    const ollamaRefreshHandle = setInterval(() => void refreshOllamaModels(), 60_000);
+    ollamaRefreshHandle.unref?.();
+
     mountDashboardRoutes(app, broker, {
       port: opts.port,
       startedAt: daemonStartedAt,
       version,
       sseSessions,
+      ollamaModels: () => ollamaModelsCache,
     });
 
     // bom-oom-leak-hunt C2.4 — periodic SSE session janitor. Every 5 min,
@@ -763,6 +796,10 @@ interface DashboardCtx {
   startedAt: Date;
   version: string;
   sseSessions: Map<string, { transport: StreamableHTTPServerTransport; handle: ReturnType<typeof createSwitchServer> }>;
+  /** v0.4 — optional snapshot getter for the Ollama models list. Wired
+   *  to the daemon's lazy provider via `getOllamaProvider().listAvailableModels()`
+   *  refreshed every ~60s. */
+  ollamaModels?: () => string[];
 }
 
 /**
@@ -957,7 +994,15 @@ export function mountDashboardRoutes(
   // here; v0.3 ships the static defaults so the page shows the canonical
   // mapping operators read in the docs.
   function capabilitiesData(): import('./dashboard/pages/capabilities.js').CapabilitiesData {
-    return { activeMode: broker.store.getActiveProfileMode() };
+    return {
+      activeMode: broker.store.getActiveProfileMode(),
+      // v0.4 — page-render-time snapshot of available Ollama models. We
+      // intentionally don't block on the network here: ctx.ollamaModels
+      // is updated by a background refresher (see ctx wiring). When the
+      // refresher hasn't run yet, this is [] which gives the matrix a
+      // graceful "no local models available" rendering.
+      ollamaModels: ctx.ollamaModels?.() ?? [],
+    };
   }
 
   // Settings page snapshot — active profile, full scopes list, no-go
@@ -965,6 +1010,20 @@ export function mountDashboardRoutes(
   // dedicated POST endpoints below.
   function settingsData(): import('./dashboard/pages/settings.js').SettingsData {
     const all = trustStore.list();
+    // v0.4 — runtime toggles + recent diagnostic capture events for the
+    // Settings → Diagnostics sub-section.
+    const runtimeToggles = broker.store.listRuntimeToggles();
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const diagKinds = new Set(['heap_snapshot_taken', 'cpu_profile_taken', 'diagnostic_report_taken']);
+    const recentDiagnostics = broker.store
+      .getEvents({ limit: 100 })
+      .events
+      .filter((e) => diagKinds.has(e.kind))
+      .filter((e) => {
+        const t = Date.parse(e.at);
+        return Number.isFinite(t) ? t >= cutoff : true;
+      })
+      .map((e) => ({ kind: e.kind, at: e.at, payload: (e.payload ?? {}) as Record<string, unknown> }));
     return {
       activeMode: broker.store.getActiveProfileMode(),
       scopes: all.filter((s) => s.status === 'active' || s.status === 'proposed').map((s) => ({
@@ -982,6 +1041,8 @@ export function mountDashboardRoutes(
         display_name: b.display_name,
         enabled: b.enabled,
       })),
+      runtimeToggles,
+      recentDiagnostics,
     };
   }
 
@@ -1056,6 +1117,92 @@ export function mountDashboardRoutes(
   mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, toolkitData, mcpsData, capabilitiesData, settingsData });
 
   // ---- C9 Settings endpoints ----
+
+  // v0.4 — capture ⊕ endpoint. The dashboard's floating button POSTs a
+  // snapshot + comment + type/priority. The write goes to
+  // `~/.stavr/captures/<type>.jsonl` (per the brief's v0.4 routing); a
+  // `capture_filed` audit event mirrors it onto the event log so it
+  // survives the 90d audit retention window.
+  app.post('/dashboard/capture', async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const comment = typeof body.comment === 'string' ? body.comment.trim() : '';
+    const type = typeof body.type === 'string' ? body.type : '';
+    const priority = typeof body.priority === 'string' ? body.priority : 'normal';
+    if (!comment || !type) {
+      res.status(400).json({ error: 'body { comment: string, type: string, snapshot: object, priority?: string, related_id?: string } required' });
+      return;
+    }
+    try {
+      const { fileCapture, isCaptureType, isCapturePriority } = await import('./tools/capture.js');
+      if (!isCaptureType(type)) {
+        res.status(400).json({ error: `type must be one of bug|feature|investigate|todo` });
+        return;
+      }
+      const pr = isCapturePriority(priority) ? priority : 'normal';
+      const snapshot = (body.snapshot as Record<string, unknown> | undefined) ?? {};
+      const relatedId = typeof body.related_id === 'string' ? body.related_id : undefined;
+      const result = fileCapture({
+        comment,
+        type,
+        priority: pr,
+        snapshot: snapshot as never,
+        related_id: relatedId,
+      });
+      await broker.publish({
+        kind: 'capture_filed',
+        at: new Date().toISOString(),
+        correlation_id: relatedId,
+        source_agent: 'dashboard',
+        payload: { id: result.id, type, priority: pr, destination: result.destination, related_id: relatedId },
+      });
+      res.json({ ok: true, id: result.id, destination: result.destination });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // v0.4 — runtime toggles for the /debug/* endpoints. Audit-class events
+  // make the on/off lineage survive 90d (ADR-030). Operators can flip
+  // STAVR_DEBUG_HEAP, STAVR_DEBUG_CPU, STAVR_DEBUG_REPORT individually or
+  // STAVR_DEBUG_ENABLED as a master.
+  app.get('/dashboard/settings/runtime-toggles', (_req, res) => {
+    res.json({ toggles: broker.store.listRuntimeToggles() });
+  });
+  app.post('/dashboard/settings/runtime-toggles', async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const key = typeof body.key === 'string' ? body.key : '';
+    const value = typeof body.value === 'string' ? body.value : '';
+    const ttlMinutes = typeof body.ttl_minutes === 'number' ? body.ttl_minutes : undefined;
+    const setBy = typeof body.set_by === 'string' ? body.set_by : 'dashboard';
+    const validKeys = new Set([
+      'STAVR_DEBUG_ENABLED', 'STAVR_DEBUG_HEAP', 'STAVR_DEBUG_CPU', 'STAVR_DEBUG_REPORT',
+    ]);
+    if (!validKeys.has(key)) {
+      res.status(400).json({ error: 'unknown key', allowed: [...validKeys] });
+      return;
+    }
+    const expiresAt = broker.store.setRuntimeToggle(key, value, setBy, ttlMinutes);
+    await broker.publish({
+      kind: 'runtime_toggle_changed',
+      at: new Date().toISOString(),
+      source_agent: setBy === 'dashboard' ? 'dashboard' : 'stavr-cli',
+      payload: { key, value, ttl_minutes: ttlMinutes ?? null, expires_at: expiresAt, set_by: setBy },
+    });
+    res.json({ ok: true, key, value, expires_at: expiresAt });
+  });
+  app.delete('/dashboard/settings/runtime-toggles/:key', async (req, res) => {
+    const key = req.params.key;
+    const had = broker.store.deleteRuntimeToggle(key);
+    if (had) {
+      await broker.publish({
+        kind: 'runtime_toggle_changed',
+        at: new Date().toISOString(),
+        source_agent: 'dashboard',
+        payload: { key, value: null, set_by: 'dashboard', expires_at: null },
+      });
+    }
+    res.json({ ok: true, had });
+  });
 
   app.post('/dashboard/settings/profile', async (req, res) => {
     const body = (req.body ?? {}) as { mode?: string };

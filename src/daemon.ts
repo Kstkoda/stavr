@@ -363,6 +363,32 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
   );
   retentionHandle.unref?.();
 
+  // v0.4 — runtime-toggle expiry sweep. Default TTL when an operator
+  // enables a debug endpoint from the dashboard is 60 minutes; we sweep
+  // every 60s so expired toggles flip back to "off" promptly. Each
+  // eviction emits an audit-class `runtime_toggle_expired` event so the
+  // operator can see when revert happened.
+  const sweepRuntimeToggles = async (): Promise<void> => {
+    try {
+      const expired = store.pruneExpiredRuntimeToggles();
+      for (const key of expired) {
+        await broker.publish({
+          kind: 'runtime_toggle_expired',
+          at: new Date().toISOString(),
+          source_agent: 'stavr-daemon',
+          payload: { key },
+        });
+      }
+    } catch (err) {
+      logger.error('runtime-toggle sweep failed; daemon continues', { error: (err as Error).message });
+    }
+  };
+  const toggleSweepHandle: ReturnType<typeof setInterval> = setInterval(
+    () => void sweepRuntimeToggles(),
+    60_000,
+  );
+  toggleSweepHandle.unref?.();
+
   // v0.2 — planner + executor + connector registry. Gated by experimental.planner.
   // When the flag is off, this whole subsystem stays dormant.
   let v02: V02SubsystemHandle | undefined;
