@@ -24,6 +24,8 @@ import { renderToolkitPage, type ToolkitData } from './pages/toolkit.js';
 import { renderMcpsPage, type McpsData } from './pages/mcps.js';
 import { renderToolsPage } from './pages/tools.js';
 import type { ToolsData } from './data/tools-data.js';
+import { renderPermissionsPage } from './pages/permissions.js';
+import type { PermissionsData } from './data/permissions-data.js';
 import { renderCapabilitiesPage, type CapabilitiesData } from './pages/capabilities.js';
 import { renderDiagnosticsPage, type DiagnosticsData } from './pages/diagnostics.js';
 import { renderSettingsPage, type SettingsData } from './pages/settings.js';
@@ -47,6 +49,8 @@ export interface DashboardPageDeps {
   mcpsData?: () => McpsData;
   /** Snapshot used for Tools server-side initial paint (v0.6.9 PR #1). */
   toolsData?: () => ToolsData;
+  /** Snapshot used for Permissions server-side initial paint (v0.6.9 PR #2). */
+  permissionsData?: () => PermissionsData;
   /** Snapshot used for Capabilities server-side initial paint (C8). */
   capabilitiesData?: () => CapabilitiesData;
   /** Snapshot used for Diagnostics server-side initial paint (v0.4.1). */
@@ -84,6 +88,7 @@ export function mountDashboardPages(
     toolkit:      () => renderToolkitPage(deps.toolkitData?.()),
     mcps:         () => renderMcpsPage(deps.mcpsData?.()),
     tools:        () => renderToolsPage(deps.toolsData?.()),
+    permissions:  () => renderPermissionsPage(deps.permissionsData?.()),
     capabilities: () => renderCapabilitiesPage(deps.capabilitiesData?.()),
     diagnostics:  () => renderDiagnosticsPage(deps.diagnosticsData?.()),
     settings:     () => renderSettingsPage(deps.settingsData?.()),
