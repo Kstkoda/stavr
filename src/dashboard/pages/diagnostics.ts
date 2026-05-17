@@ -24,6 +24,20 @@ export interface DiagnosticsData {
   workers?: WorkerRecord[];
   /** Peer count (federated daemons). Defaults to 0 until federation lands. */
   peerCount?: number;
+  /**
+   * v0.5 P6 — Steward subprocess panel. Additive only per the dashboard
+   * visual-freeze. Source: src/dashboard/data/steward-health.ts
+   * (snapshotStewardHealth). When `undefined`, the panel still renders but
+   * shows 'unwired' status — useful baseline while shadow mode is off.
+   */
+  steward?: {
+    pid: number | null;
+    status: 'starting' | 'up' | 'unhealthy' | 'down' | 'unwired';
+    last_heartbeat_at: string | null;
+    autonomy_mode: string;
+    lessons_count: number;
+    memory_working_keys: number;
+  };
 }
 
 function escapeHtml(s: string): string {
@@ -766,6 +780,9 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     roster: renderRoster('Workers · roster', ['Type', 'cwd', 'eta'], workerRows),
   });
 
+  // ----- v0.5 P6: Steward subprocess panel (additive) -----
+  const stewardPanel = renderStewardPanel(data?.steward);
+
   // ----- Bottom row -----
   const healPanel = [
     `<div class="heal-panel glass">`,
@@ -808,6 +825,7 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     mcpSection,
     fleetSection,
     workerSection,
+    stewardPanel,
     `<div class="bottom-row">${healPanel}${tailPanel}</div>`,
     `</div>`,
   ].join('');
@@ -816,7 +834,116 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     title: 'Stavr — Diagnostics',
     activePage: 'diagnostics',
     body,
-    head: `<style>${DIAGNOSTICS_CSS}</style>`,
+    head: `<style>${DIAGNOSTICS_CSS}${STEWARD_PANEL_CSS}</style>`,
     script: DIAGNOSTICS_JS,
   });
+}
+
+// =================================== v0.5 P6 ===================================
+// Steward subprocess panel — additive content per the dashboard freeze rule.
+// Renders the snapshot from src/dashboard/data/steward-health.ts. Status =
+// halo color (rune lights up); type = mode chip (rust=reactive, sky=scheduled,
+// amber=proactive) per CLAUDE.md invariant #5. No restyling of existing tokens.
+
+const STEWARD_PANEL_CSS = `
+.steward-panel {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 14px;
+  padding: 12px 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.steward-head { display:flex; align-items:center; gap:10px; }
+.steward-rune {
+  display: inline-flex; align-items:center; justify-content:center;
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 1.5px solid var(--line);
+  color: var(--ink-1);
+}
+.steward-rune.up   { border-color: var(--ok);   color: var(--ok);   box-shadow: 0 0 8px rgba(109,213,140,.35); }
+.steward-rune.warn { border-color: var(--warn); color: var(--warn); box-shadow: 0 0 8px rgba(226,169,66,.35); }
+.steward-rune.crit { border-color: var(--crit); color: var(--crit); box-shadow: 0 0 8px rgba(239,90,111,.35); }
+.steward-rune.idle { border-color: var(--line); color: var(--ink-3); }
+.steward-title { color: var(--ink-1); font-size: 12px; letter-spacing: 0.3px; }
+.steward-meta { color: var(--ink-3); font-size: 10px; }
+.steward-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.steward-tile {
+  background: var(--bg-glass);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.steward-tile .l { color: var(--ink-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+.steward-tile .v { color: var(--ink-1); font-size: 14px; margin-top: 2px; }
+.steward-tile .v.mono { font-family: var(--mono); }
+.steward-mode-chip {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase;
+}
+.steward-mode-chip.reactive  { background: rgba(199,108,73,.16);  color: #d68a6a; border:1px solid rgba(199,108,73,.30); }
+.steward-mode-chip.scheduled { background: rgba(76,140,196,.16);  color: #7ebbdf; border:1px solid rgba(76,140,196,.30); }
+.steward-mode-chip.proactive { background: rgba(226,169,66,.16);  color: var(--warn); border:1px solid rgba(226,169,66,.30); }
+`;
+
+function renderStewardPanel(steward: DiagnosticsData['steward']): string {
+  const s = steward ?? {
+    pid: null,
+    status: 'unwired' as const,
+    last_heartbeat_at: null,
+    autonomy_mode: 'reactive',
+    lessons_count: 0,
+    memory_working_keys: 0,
+  };
+  const haloClass =
+    s.status === 'up' ? 'up'
+    : s.status === 'unhealthy' ? 'warn'
+    : s.status === 'down' ? 'crit'
+    : 'idle';
+  const modeClass = ['reactive', 'scheduled', 'proactive'].includes(s.autonomy_mode) ? s.autonomy_mode : 'reactive';
+  const heartbeatTs = s.last_heartbeat_at
+    ? `${escapeHtml(s.last_heartbeat_at)} <span style="color:var(--ink-3);">(${relativeTimeFrom(s.last_heartbeat_at)})</span>`
+    : '<span style="color:var(--ink-3);">—</span>';
+  const pidStr = s.pid != null ? String(s.pid) : '—';
+
+  const head = [
+    `<div class="steward-head">`,
+    `<span class="steward-rune ${haloClass}">ᚱ</span>`,
+    `<div>`,
+    `<div class="steward-title">Steward subprocess</div>`,
+    `<div class="steward-meta">${escapeHtml(s.status.toUpperCase())} · ADR-032 §Decision 1</div>`,
+    `</div>`,
+    `</div>`,
+  ].join('');
+
+  const grid = [
+    `<div class="steward-grid">`,
+    `<div class="steward-tile"><div class="l">PID</div><div class="v mono">${escapeHtml(pidStr)}</div></div>`,
+    `<div class="steward-tile"><div class="l">Mode</div><div class="v"><span class="steward-mode-chip ${modeClass}">${escapeHtml(s.autonomy_mode)}</span></div></div>`,
+    `<div class="steward-tile"><div class="l">Last heartbeat</div><div class="v mono" style="font-size:11px;">${heartbeatTs}</div></div>`,
+    `<div class="steward-tile"><div class="l">Lessons</div><div class="v mono">${s.lessons_count}</div></div>`,
+    `<div class="steward-tile"><div class="l">Working keys</div><div class="v mono">${s.memory_working_keys}</div></div>`,
+    `</div>`,
+  ].join('');
+
+  return [
+    `<div class="steward-panel glass">`,
+    head,
+    grid,
+    `</div>`,
+  ].join('');
+}
+
+function relativeTimeFrom(iso: string): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return '?';
+  const diff = Date.now() - then;
+  if (diff < 0) return 'in the future';
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
