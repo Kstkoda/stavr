@@ -13,6 +13,7 @@ import type { ProfileMode } from '../../types/stavr-bom.js';
 import type { InstalledBrickLite } from '../adapters/topology.js';
 import { renderShell } from '../shell.js';
 import { renderPill, type PillVariant } from '../components/pill.js';
+import type { ChannelStatusView } from '../data/channels.js';
 
 export interface SettingsScope {
   id: string;
@@ -49,6 +50,8 @@ export interface SettingsData {
   }>;
   /** v0.4 — recent diagnostic captures (heap/cpu/report). */
   recentDiagnostics?: Array<{ kind: string; at: string; payload: Record<string, unknown> }>;
+  /** v0.6 — notification channels (undefined when STAVR_NOTIFY_SECRET not set). */
+  channels?: ChannelStatusView[];
 }
 
 const MODE_PILL: Record<ProfileMode, PillVariant> = {
@@ -420,6 +423,10 @@ a.btn { display: inline-block; text-decoration: none; line-height: 1.3; }
   gap: 3px;
 }
 .pending-scope-meta { font-size: 10px; }
+
+/* v0.6 notification channels */
+.channel-label { font-weight: 500; }
+.channel-error { margin-top: 4px; color: var(--risk-high); }
 `;
 
 const SETTINGS_JS = `
@@ -587,6 +594,25 @@ const SETTINGS_JS = `
     }
   });
 
+  // ---------- v0.6 notification channels ----------
+  document.addEventListener('click', async function(ev) {
+    const test = ev.target.closest('[data-role="channel-test"]');
+    if (!test) return;
+    ev.preventDefault();
+    const id = test.getAttribute('data-id');
+    test.disabled = true;
+    setStatus('channels-status', 'Sending test to ' + id + '…');
+    try {
+      const out = await postJson('/dashboard/settings/channels/' + encodeURIComponent(id) + '/test', {});
+      const ok = out && out.delivered === true;
+      setStatus('channels-status', ok ? 'Test delivered via ' + id : 'Test queued (no 2xx yet — check phone)', ok ? 'ok' : 'error');
+    } catch (err) {
+      setStatus('channels-status', 'Failed: ' + (err.message || err), 'error');
+    } finally {
+      test.disabled = false;
+    }
+  });
+
   // ---------- bricks ----------
   const brickGo = document.querySelector('[data-role="brick-install-go"]');
   const brickPath = document.querySelector('[data-role="brick-install-path"]');
@@ -621,6 +647,68 @@ const SETTINGS_JS = `
   });
 })();
 `;
+
+function renderChannelsSection(channels: ChannelStatusView[] | undefined): string {
+  // v0.6 — Notification channels. Mirrors the F2 pending-scopes panel:
+  // .glass section, one row per channel, [Test] / [Help] actions. NO secret
+  // display in UI (BOM hard rule #7); secrets are env-only.
+  if (channels === undefined) {
+    return [
+      `<section class="settings-section" data-section="channels">`,
+      `<h2 class="card-title">Notification channels</h2>`,
+      `<div class="empty">Notification fabric disabled. Set <code>STAVR_NOTIFY_SECRET</code> and restart the daemon to enable.</div>`,
+      `</section>`,
+    ].join('');
+  }
+  const rows = channels.length === 0
+    ? `<div class="empty">No channels registered.</div>`
+    : channels.map((c) => {
+      const statusVariant: PillVariant =
+        c.effectiveStatus === 'configured' ? 'success'
+        : c.effectiveStatus === 'configured_stale' ? 'warning'
+        : 'neutral';
+      const statusLabel =
+        c.effectiveStatus === 'configured' ? 'CONFIGURED'
+        : c.effectiveStatus === 'configured_stale' ? 'CONFIGURED · STALE'
+        : 'NOT SET';
+      const lastSuccess = c.lastSuccessAt
+        ? `<span class="muted small" title="last success">${escapeHtml(timeAgo(c.lastSuccessAt))}</span>`
+        : `<span class="muted small">—</span>`;
+      const lastError = c.lastError
+        ? `<div class="channel-error muted small" title="${escapeHtml(c.lastError)}">${escapeHtml(c.lastError.slice(0, 80))}${c.lastError.length > 80 ? '…' : ''}</div>`
+        : '';
+      const actions = c.effectiveStatus === 'not_set'
+        ? `<a class="btn ghost" href="/dashboard/settings/notifications-help${escapeHtml(c.docAnchor)}" data-role="channel-help">Help</a>`
+        : `<button type="button" class="btn ghost" data-role="channel-test" data-id="${escapeHtml(c.id)}">Test</button>`;
+      return [
+        `<tr data-channel-id="${escapeHtml(c.id)}" data-status="${c.effectiveStatus}">`,
+        `<td class="channel-label">${escapeHtml(c.label)}</td>`,
+        `<td>${renderPill({ text: statusLabel, variant: statusVariant })}</td>`,
+        `<td>${lastSuccess}${lastError}</td>`,
+        `<td class="row-actions">${actions}</td>`,
+        `</tr>`,
+      ].join('');
+    }).join('');
+  return [
+    `<section class="settings-section" data-section="channels">`,
+    `<h2 class="card-title">Notification channels · ${channels.length}</h2>`,
+    `<table class="settings-table">`,
+    `<thead><tr><th>Channel</th><th>Status</th><th>Last activity</th><th></th></tr></thead>`,
+    `<tbody>${rows}</tbody>`,
+    `</table>`,
+    `<p class="empty" style="font-style:normal;margin:8px 0 0;">Channel secrets live in env vars only. The UI shows status + last-success + last-error; tokens never appear here.</p>`,
+    `<div class="section-status" data-role="channels-status"></div>`,
+    `</section>`,
+  ].join('');
+}
+
+function timeAgo(ms: number): string {
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return `${Math.floor(diff / 86_400_000)}d ago`;
+}
 
 function renderCapturesSection(): string {
   // v0.4 — captures route config. For v0.4 every type routes to the local
@@ -843,12 +931,13 @@ export function renderSettingsPage(data?: SettingsData): string {
   const body = [
     `<div class="page-head">`,
     `<h1 class="page-title">Settings</h1>`,
-    `<span class="page-sub">Profile · trust scopes · no-go list · captures · diagnostics · bricks</span>`,
+    `<span class="page-sub">Profile · trust scopes · no-go list · channels · captures · diagnostics · bricks</span>`,
     `</div>`,
     renderProfileSection(snapshot.activeMode),
     renderPendingScopesSection(pendingScopes),
     renderScopesSection(activeScopes),
     renderNoGoSection(snapshot.noGo),
+    renderChannelsSection(snapshot.channels),
     renderCapturesSection(),
     renderDiagnosticsSection(toggles, recent),
     renderBricksSection(snapshot.bricks),

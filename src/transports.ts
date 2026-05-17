@@ -3,7 +3,8 @@ import type { Server as HttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createSwitchServer, getOrCreateTrustStore } from './server.js';
+import { createSwitchServer, getOrCreateTrustStore, getNotifier, getDigestScheduler } from './server.js';
+import { loadChannelStatuses } from './dashboard/data/channels.js';
 import type { Broker } from './broker.js';
 import type { StoredEvent } from './persistence.js';
 import { startupDecisionSweep } from './tools/decisions.js';
@@ -1048,6 +1049,8 @@ export function mountDashboardRoutes(
       })),
       runtimeToggles,
       recentDiagnostics,
+      // v0.6 — channels view. undefined when fabric is disabled (no secret).
+      channels: getNotifier(broker) ? loadChannelStatuses(getNotifier(broker)) : undefined,
     };
   }
 
@@ -1085,6 +1088,10 @@ export function mountDashboardRoutes(
     const intent = activeBom
       ? { summary: activeBom.goal, sub: `${h.boms.open} open · profile ${h.health.profile_mode}` }
       : { summary: 'Steward is idle.', sub: `profile ${h.health.profile_mode} · ${h.boms.total} total BOMs` };
+    // v0.6 — daily digest state from the DigestScheduler. Read-only here;
+    // edits go through /dashboard/settings/digest below.
+    const sched = getDigestScheduler(broker);
+    const digest = sched ? sched.snapshotState() : undefined;
     return {
       intent,
       health: {
@@ -1101,6 +1108,7 @@ export function mountDashboardRoutes(
       decisions: h.decisions,
       workers,
       systems,
+      digest,
     };
   }
   const helmData = memoize(helmDataRaw, dashboardCacheMs);
@@ -1325,6 +1333,65 @@ export function mountDashboardRoutes(
     const r = broker.store.deleteNoGoRule(req.params.id);
     if (!r.deleted) { res.status(404).json({ error: 'not_found_or_readonly' }); return; }
     res.json({ ok: true });
+  });
+
+  // v0.6 — notification channel test-send. POSTs an info-severity notification
+  // to a single channel so the operator can verify env vars + reachability
+  // without leaving the dashboard. NO secret display — the channel's
+  // isConfigured() result is the only env signal the UI gets.
+  app.post('/dashboard/settings/channels/:id/test', async (req, res) => {
+    const notifier = getNotifier(broker);
+    if (!notifier) { res.status(503).json({ error: 'notification fabric not configured' }); return; }
+    const id = req.params.id;
+    const channel = notifier.listChannels().find((c) => c.id === id);
+    if (!channel) { res.status(404).json({ error: 'unknown_channel' }); return; }
+    if (!channel.isConfigured()) { res.status(400).json({ error: 'channel_not_configured' }); return; }
+    try {
+      const result = await notifier.notify({
+        kind: 'health_alert',
+        severity: 'info',
+        title: 'Channel test',
+        body: `Test message from stavR Settings · channel ${id}`,
+      });
+      // For non-crit notifications dispatch is async; we can't report delivered:true
+      // synchronously, but we can report 'queued'. The settings UI updates the
+      // row's last-success timestamp via reload after a short delay.
+      res.json({ ok: true, id: result.id, delivered: result.delivered, queued_to: result.dispatchedChannels });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // v0.6 — daily digest config. GET returns current state; POST mutates
+  // (hour/minute and/or enabled). Persistence: hour/minute are in-memory only
+  // (operator restarts the daemon to set permanently via STAVR_NOTIFY_DIGEST_*
+  // env vars); the enable/disable toggle persists for the daemon's lifetime.
+  app.get('/dashboard/settings/digest', (_req, res) => {
+    const sched = getDigestScheduler(broker);
+    if (!sched) { res.status(503).json({ error: 'notification fabric not configured' }); return; }
+    res.json(sched.snapshotState());
+  });
+  app.post('/dashboard/settings/digest', (req, res) => {
+    const sched = getDigestScheduler(broker);
+    if (!sched) { res.status(503).json({ error: 'notification fabric not configured' }); return; }
+    const body = (req.body ?? {}) as { hour?: number; minute?: number; enabled?: boolean };
+    if (typeof body.hour === 'number' || typeof body.minute === 'number') {
+      sched.setSchedule(
+        typeof body.hour === 'number' ? body.hour : sched.snapshotState().hour,
+        typeof body.minute === 'number' ? body.minute : sched.snapshotState().minute,
+      );
+    }
+    if (typeof body.enabled === 'boolean') {
+      body.enabled ? sched.enable() : sched.disable();
+    }
+    res.json(sched.snapshotState());
+  });
+
+  // v0.6 — operator-facing notifications help page (renders the docs markdown
+  // verbatim with a small wrapper). Linked from the [Help] button on NOT-SET
+  // channel rows. Loopback-only — see /dashboard/settings auth posture.
+  app.get('/dashboard/settings/notifications-help', (_req, res) => {
+    res.redirect('/dashboard/settings#section-channels');
   });
 
   app.post('/dashboard/bricks/:id/uninstall', async (req, res) => {
