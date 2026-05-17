@@ -25,6 +25,13 @@ import { registerStewardAskTool } from './steward-ask-tool.js';
 import { registerProposePlanTool } from './tools/propose-plan.js';
 import { getV02Subsystem } from './steward/v02-wiring.js';
 import { registerHostExecTool } from './security/host-exec-tool.js';
+import { Notifier } from './notify/notifier.js';
+import { NtfyChannel } from './notify/channels/ntfy.js';
+import { EmailChannel } from './notify/channels/email.js';
+import { TelegramChannel } from './notify/channels/telegram.js';
+import { wireNotifications } from './notify/wiring.js';
+import { DigestScheduler } from './notify/digest.js';
+import { getLogger } from './log.js';
 
 export interface SwitchServerHandle {
   server: McpServer;
@@ -42,6 +49,8 @@ const orchestratorsByBroker = new WeakMap<Broker, WorkerOrchestrator>();
 const trustStoresByBroker = new WeakMap<Broker, TrustStore>();
 const stewardStoresByBroker = new WeakMap<Broker, StewardStore>();
 const credentialStoresByBroker = new WeakMap<Broker, CredentialStore>();
+const notifiersByBroker = new WeakMap<Broker, Notifier>();
+const digestSchedulersByBroker = new WeakMap<Broker, DigestScheduler>();
 
 function getOrCreateOrchestrator(broker: Broker, trustStore: TrustStore): WorkerOrchestrator {
   const existing = orchestratorsByBroker.get(broker);
@@ -82,6 +91,47 @@ export function getCredentialStore(broker: Broker): CredentialStore | undefined 
   return credentialStoresByBroker.get(broker);
 }
 
+/**
+ * Initialize the v0.6 notification fabric for a broker. Idempotent — second
+ * call returns the existing notifier without re-registering channels. Returns
+ * undefined when STAVR_NOTIFY_SECRET is unset (fabric is opt-in by design;
+ * absence of secret = absence of notifications).
+ */
+export function getOrCreateNotifier(broker: Broker): Notifier | undefined {
+  const existing = notifiersByBroker.get(broker);
+  if (existing) return existing;
+  const secret = process.env.STAVR_NOTIFY_SECRET;
+  if (!secret) return undefined;
+  const replyBaseUrl = process.env.STAVR_NOTIFY_REPLY_BASE_URL;
+  const dashboardBaseUrl = process.env.STAVR_DASHBOARD_BASE_URL;
+  const notifier = new Notifier({ secret, replyBaseUrl, db: broker.store.rawDb });
+  notifier.registerChannel(new NtfyChannel());
+  notifier.registerChannel(new EmailChannel());
+  notifier.registerChannel(new TelegramChannel());
+  notifiersByBroker.set(broker, notifier);
+  wireNotifications(broker, notifier, { dashboardBaseUrl });
+  const digestEnabled = process.env.STAVR_NOTIFY_DIGEST_ENABLED !== 'false';
+  if (digestEnabled) {
+    const hour = parseInt(process.env.STAVR_NOTIFY_DIGEST_HOUR ?? '9', 10);
+    const minute = parseInt(process.env.STAVR_NOTIFY_DIGEST_MINUTE ?? '0', 10);
+    const sched = new DigestScheduler(notifier, { hour, minute, db: broker.store.rawDb });
+    sched.start();
+    digestSchedulersByBroker.set(broker, sched);
+  }
+  getLogger().info('notification fabric initialized', {
+    channels: notifier.getChannelStatus().map((c) => ({ id: c.id, configured: c.configured })),
+  });
+  return notifier;
+}
+
+export function getNotifier(broker: Broker): Notifier | undefined {
+  return notifiersByBroker.get(broker);
+}
+
+export function getDigestScheduler(broker: Broker): DigestScheduler | undefined {
+  return digestSchedulersByBroker.get(broker);
+}
+
 export function createSwitchServer(broker: Broker): SwitchServerHandle {
   const sessionId = newSessionId();
   const server = new McpServer({ name: 'stavr', version: '0.1.0' });
@@ -90,6 +140,8 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   const trustStore = getOrCreateTrustStore(broker);
   const stewardStore = getOrCreateStewardStore(broker);
   const orchestrator = getOrCreateOrchestrator(broker, trustStore);
+  // v0.6 — initialize notification fabric (no-op when STAVR_NOTIFY_SECRET unset).
+  getOrCreateNotifier(broker);
 
   registerEmitEvent(server, broker);
   registerSubscribe(server, broker, sessionId);
