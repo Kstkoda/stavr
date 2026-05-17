@@ -166,6 +166,201 @@ describe('host-exec allowlist — validateAllowlistCall (negative)', () => {
   });
 });
 
+describe('host-exec allowlist — curl (loopback-only HTTP)', () => {
+  it('allows curl --version (no URL, only flags)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['--version']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows curl with explicit loopback URL', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['http://localhost:7777/healthz']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows curl with 127.0.0.1 URL + flags', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', [
+      '-s', '--max-time', '5', 'http://127.0.0.1:7777/api/pending-actions',
+    ]);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows curl with https loopback', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', [
+      '-k', 'https://localhost:8443/metrics',
+    ]);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('LOCK curl-non-loopback — rejects external URL', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['http://google.com']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/loopback/i);
+  });
+
+  it('LOCK curl-non-loopback-https — rejects external https URL', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['https://example.com/api']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK curl-upload-file — rejects -T upload', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['-T', '/etc/passwd', 'http://localhost/x']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/upload|write/i);
+  });
+
+  it('LOCK curl-data-post — rejects -d POST data', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['-d', 'x=1', 'http://localhost/api']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK curl-form-upload — rejects -F multipart', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['-F', 'file=@./secret', 'http://localhost/upload']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK curl-basic-auth — rejects -u user:pass', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['-u', 'admin:secret', 'http://localhost/x']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/auth/i);
+  });
+
+  it('LOCK curl-resolve-smuggle — rejects --resolve (loopback bypass)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['--resolve', 'localhost:80:1.2.3.4', 'http://localhost/']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/bypass|resolve/i);
+  });
+
+  it('LOCK curl-connect-to — rejects --connect-to (loopback bypass)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['--connect-to', 'localhost:80:evil.com:80', 'http://localhost/']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK curl-post-verb — rejects -X POST', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['-X', 'POST', 'http://localhost/api']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/POST/);
+  });
+
+  it('LOCK curl-delete-verb — rejects -X DELETE', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['-X', 'DELETE', 'http://localhost/api/1']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK curl-url-without-protocol — rejects non-flag arg without http://', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'curl', ['example.com']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/explicit|prefix|loopback/i);
+  });
+});
+
+describe('host-exec allowlist — gh (GitHub CLI, read-mostly)', () => {
+  it('allows gh pr view', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'view', '28']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows gh pr checks with --json', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'checks', '28', '--json', 'conclusion']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows gh pr comment (operator-attributable write)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'comment', '28', '--body', 'looks good']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows gh issue create (operator-attributable write)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['issue', 'create', '--title', 'F40', '--body', '...']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows gh auth status (read-only credential check)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['auth', 'status']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows gh run list and view', () => {
+    expect(validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['run', 'list']).allowed).toBe(true);
+    expect(validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['run', 'view', '12345']).allowed).toBe(true);
+  });
+
+  it('allows gh --version (no subcommand, help flag)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['--version']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('LOCK gh-pr-merge-denied — use MCP github_merge_pr instead', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'merge', '28', '--squash']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/merge|not allowed/i);
+  });
+
+  it('LOCK gh-pr-close-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'close', '28']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-auth-login-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['auth', 'login']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-auth-logout-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['auth', 'logout']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-secret-set-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['secret', 'set', 'FOO', '--body', 'bar']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/secret|credential/i);
+  });
+
+  it('LOCK gh-release-create-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['release', 'create', 'v1.0']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-repo-delete-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['repo', 'delete', 'Kstkoda/stavr']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-token-arg-denied (--token anywhere in args)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'view', '28', '--token', 'sekret']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/token|credential/i);
+  });
+
+  it('LOCK gh-with-token-arg-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'view', '28', '--with-token', 'sekret']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-api-denied — direct API bypasses subcommand allowlist', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['api', 'repos/Kstkoda/stavr/issues']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/api|bypass/i);
+  });
+
+  it('LOCK gh-extension-install-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['extension', 'install', 'evil/repo']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/extension|supply/i);
+  });
+
+  it('LOCK gh-unknown-subcommand-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['random', 'command']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-no-subcommand-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', []);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/subcommand/i);
+  });
+});
+
 describe('host-exec config loader — restrict-only semantics', () => {
   it('returns defaults when no config file exists', () => {
     const list = loadHostExecConfig({ configPath: join(tmpdir(), 'definitely-not-there-' + Date.now() + '.json') });
@@ -194,11 +389,11 @@ describe('host-exec config loader — restrict-only semantics', () => {
     const cfg = join(dir, 'host-exec.json');
     writeFileSync(
       cfg,
-      JSON.stringify({ overrides: { rm: { enabled: true }, curl: { enabled: true } } }),
+      JSON.stringify({ overrides: { wget: { enabled: true }, chmod: { enabled: true } } }),
     );
     const list = loadHostExecConfig({ configPath: cfg });
-    expect(list.find((e) => e.command === 'rm')).toBeUndefined();
-    expect(list.find((e) => e.command === 'curl')).toBeUndefined();
+    expect(list.find((e) => e.command === 'wget')).toBeUndefined();
+    expect(list.find((e) => e.command === 'chmod')).toBeUndefined();
   });
 
   it('only TIGHTENS timeout, never extends', () => {
@@ -217,5 +412,35 @@ describe('host-exec config loader — restrict-only semantics', () => {
     expect(list.find((e) => e.command === 'git')?.timeout_default_ms).toBe(1_000);
     // npm default is 10 min — operator's 60 min should be discarded.
     expect(list.find((e) => e.command === 'npm')?.timeout_default_ms).toBe(10 * 60 * 1000);
+  });
+});
+
+describe('host-exec allowlist — invariants (META)', () => {
+  it('META: contains exactly 9 entries (8 enabled + node disabled by default)', () => {
+    expect(DEFAULT_ALLOWLIST).toHaveLength(9);
+    const commands = DEFAULT_ALLOWLIST.map((e) => e.command).sort();
+    expect(commands).toEqual(['curl', 'gh', 'git', 'kill', 'netstat', 'node', 'npm', 'pm2', 'taskkill']);
+  });
+
+  it('META: curl entry has loopback-only description and is enabled', () => {
+    const curl = DEFAULT_ALLOWLIST.find((e) => e.command === 'curl');
+    expect(curl).toBeDefined();
+    expect(curl!.description).toMatch(/loopback/i);
+    expect(curl!.enabled).toBe(true);
+    expect(curl!.validateArgs).toBeDefined();
+  });
+
+  it('META: gh entry has read-mostly description and is enabled', () => {
+    const gh = DEFAULT_ALLOWLIST.find((e) => e.command === 'gh');
+    expect(gh).toBeDefined();
+    expect(gh!.description).toMatch(/read.{0,5}mostly|github cli/i);
+    expect(gh!.enabled).toBe(true);
+    expect(gh!.validateArgs).toBeDefined();
+  });
+
+  it('META: node remains disabled by default (regression lock — arbitrary JS execution defeats allowlist)', () => {
+    const node = DEFAULT_ALLOWLIST.find((e) => e.command === 'node');
+    expect(node).toBeDefined();
+    expect(node!.enabled).toBe(false);
   });
 });

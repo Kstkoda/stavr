@@ -153,6 +153,109 @@ export const DEFAULT_ALLOWLIST: AllowlistEntry[] = [
     // any args allowed — netstat is read-only.
   },
   {
+    command: 'curl',
+    enabled: true,
+    timeout_default_ms: 30_000,
+    description:
+      'Read-only HTTP against loopback only (localhost / 127.0.0.1) for daemon introspection. ' +
+      '/metrics, /healthz, /api/* without driving a browser. ' +
+      'Banned: non-loopback URLs, write verbs (POST/PUT/PATCH/DELETE), uploads, basic-auth, --resolve smuggle.',
+    validateArgs: (args) => {
+      // Banned write/upload/auth flags
+      const bannedFlags = new Set([
+        '-T', '--upload-file',
+        '-d', '--data', '--data-binary', '--data-raw', '--data-urlencode',
+        '-F', '--form', '--form-string',
+        '--cert', '--key',
+        '-u', '--user',
+      ]);
+      for (const a of args) {
+        if (bannedFlags.has(a)) {
+          return { ok: false, reason: `curl ${a} is banned (write/upload/auth class)` };
+        }
+        if (a === '--resolve' || a === '--connect-to') {
+          return { ok: false, reason: `curl ${a} is banned (loopback bypass vector)` };
+        }
+      }
+      // Banned write verbs via -X / --request
+      for (let i = 0; i < args.length; i++) {
+        if ((args[i] === '-X' || args[i] === '--request') && i + 1 < args.length) {
+          const verb = args[i + 1].toUpperCase();
+          if (verb === 'POST' || verb === 'PUT' || verb === 'PATCH' || verb === 'DELETE') {
+            return { ok: false, reason: `curl -X ${verb} is banned (read-only enforcement)` };
+          }
+        }
+      }
+      // URL enforcement: require explicit http:// or https:// loopback
+      const url = args.find((a) => /^https?:\/\//i.test(a));
+      if (url) {
+        if (!/^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(url)) {
+          return { ok: false, reason: 'curl URL must be loopback (localhost or 127.0.0.1)' };
+        }
+      } else {
+        // No explicit URL with protocol. Allow ONLY if all args are flags
+        // (covers curl --version, curl --help, curl -V).
+        const hasNonFlag = args.some((a) => !a.startsWith('-'));
+        if (hasNonFlag) {
+          return { ok: false, reason: 'curl URL must include explicit http:// or https:// loopback prefix' };
+        }
+      }
+      return { ok: true };
+    },
+  },
+  {
+    command: 'gh',
+    enabled: true,
+    timeout_default_ms: 30_000,
+    description:
+      'GitHub CLI: read PR state, checks, run logs, list issues. ' +
+      'Operator-attributable writes (pr comment, issue create). ' +
+      'Banned: pr merge (use MCP github_merge_pr), close/reopen/edit, auth login/logout, ' +
+      'secret ops, release ops, repo create/delete, api (bypass), extension install.',
+    validateArgs: (args) => {
+      // Universal banned: --token / --with-token (credential leak)
+      for (const a of args) {
+        if (a === '--token' || a === '--with-token' ||
+            a.startsWith('--token=') || a.startsWith('--with-token=')) {
+          return { ok: false, reason: 'gh --token / --with-token is banned (credential leak vector)' };
+        }
+      }
+      // First non-flag arg = category, second = action
+      const nonFlags = args.filter((a) => !a.startsWith('-'));
+      const category = nonFlags[0];
+      const action = nonFlags[1];
+      // Entirely-banned categories
+      const bannedCategories = new Set(['api', 'extension', 'gpg-key', 'ssh-key', 'secret', 'release']);
+      if (category && bannedCategories.has(category)) {
+        return { ok: false, reason: `gh ${category} is banned (write-class / credential / supply-chain)` };
+      }
+      // Per-category action allowlists
+      const allowed: Record<string, Set<string>> = {
+        pr: new Set(['view', 'checks', 'list', 'comment', 'diff', 'status']),
+        issue: new Set(['view', 'list', 'create', 'comment', 'status']),
+        repo: new Set(['view', 'list']),
+        run: new Set(['list', 'view', 'watch']),
+        workflow: new Set(['list', 'view']),
+        auth: new Set(['status']),
+        gist: new Set(['list', 'view']),
+      };
+      if (!category) {
+        // No subcommand — allow only --version/--help class metadata
+        const helpFlags = new Set(['--version', '-v', '--help', '-h']);
+        if (args.some((a) => helpFlags.has(a))) return { ok: true };
+        return { ok: false, reason: 'gh requires a subcommand' };
+      }
+      if (!(category in allowed)) {
+        return { ok: false, reason: `gh ${category} not in allowed categories` };
+      }
+      if (!action || !allowed[category].has(action)) {
+        const allowedList = Array.from(allowed[category]).join(', ');
+        return { ok: false, reason: `gh ${category} ${action ?? '(missing)'} not allowed (allowed: ${allowedList})` };
+      }
+      return { ok: true };
+    },
+  },
+  {
     command: 'node',
     enabled: false,
     timeout_default_ms: FIVE_MIN_MS,
