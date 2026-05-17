@@ -414,3 +414,33 @@ describe('host-exec config loader — restrict-only semantics', () => {
     expect(list.find((e) => e.command === 'npm')?.timeout_default_ms).toBe(10 * 60 * 1000);
   });
 });
+
+describe('host-exec allowlist — invariants (META)', () => {
+  it('META: contains exactly 9 entries (8 enabled + node disabled by default)', () => {
+    expect(DEFAULT_ALLOWLIST).toHaveLength(9);
+    const commands = DEFAULT_ALLOWLIST.map((e) => e.command).sort();
+    expect(commands).toEqual(['curl', 'gh', 'git', 'kill', 'netstat', 'node', 'npm', 'pm2', 'taskkill']);
+  });
+
+  it('META: curl entry has loopback-only description and is enabled', () => {
+    const curl = DEFAULT_ALLOWLIST.find((e) => e.command === 'curl');
+    expect(curl).toBeDefined();
+    expect(curl!.description).toMatch(/loopback/i);
+    expect(curl!.enabled).toBe(true);
+    expect(curl!.validateArgs).toBeDefined();
+  });
+
+  it('META: gh entry has read-mostly description and is enabled', () => {
+    const gh = DEFAULT_ALLOWLIST.find((e) => e.command === 'gh');
+    expect(gh).toBeDefined();
+    expect(gh!.description).toMatch(/read.{0,5}mostly|github cli/i);
+    expect(gh!.enabled).toBe(true);
+    expect(gh!.validateArgs).toBeDefined();
+  });
+
+  it('META: node remains disabled by default (regression lock — arbitrary JS execution defeats allowlist)', () => {
+    const node = DEFAULT_ALLOWLIST.find((e) => e.command === 'node');
+    expect(node).toBeDefined();
+    expect(node!.enabled).toBe(false);
+  });
+});
