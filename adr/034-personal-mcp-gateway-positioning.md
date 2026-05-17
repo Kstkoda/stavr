@@ -1,8 +1,8 @@
 # ADR-034 — stavR as personal MCP gateway (positioning, scope, non-goals)
 
-**Status:** Proposed
-**Date:** 2026-05-16
-**Related:** memory `project_stavr_2026_audit_findings.md`, ADR-022 (trust scopes), ADR-031 (observability), ADR-035 (federation)
+**Status:** Proposed — **Amended 2026-05-17 (see Amendment §A at bottom)**
+**Date:** 2026-05-16 (original) · 2026-05-17 (amendment)
+**Related:** memory `project_stavr_2026_audit_findings.md`, memory `project_stavr_team_repositioning_decision.md`, ADR-022 (trust scopes), ADR-031 (observability), ADR-035 (federation), ADR-036 (audit integrity), ADR-037 (operator-data lifecycle), ADR-038 (supply-chain), ADR-039 (polyglot core)
 
 ## Context
 
@@ -90,3 +90,78 @@ This ADR moves to "Accepted" when:
 4. At least one new public surface (repo About / share card / release notes) uses the new framing
 
 No code changes required for acceptance. This ADR is positional, not structural.
+
+---
+
+## Amendment §A — Extend positioning to "personal-or-small-team trusted-AI broker" (2026-05-17)
+
+### Amendment context
+
+The 2026-05-17 strategic audit (memory `project_stavr_team_repositioning_decision.md`) raised the question: does stavR's positioning prevent it from serving the natural next-user, a small team of trusted operators (3–10 people) sharing one stavR instance?
+
+The original ADR-034 says "Not a multi-tenant gateway. No tenant isolation, no per-tenant audit segmentation." That stands. But "small team of trusted operators sharing one instance" is not multi-tenancy — it's still **one operator entity** (the team), where each member has a recognized identity and their actions are individually attributable. This is a meaningful market gap between "solo developer" and "enterprise gateway" that no other 2026 product owns.
+
+### Amended decision
+
+1. **Extend the public-facing category from "personal MCP gateway" to "personal-or-small-team trusted-AI broker."** Public-facing copy primary line stays personal-first (still the largest audience); secondary line adds team mode as a recognized capability.
+
+2. **Updated canonical positioning sentence:**
+   
+   > *"stavR is the personal — or small-team — gateway between your AI assistants and your tools. Local-first, MCP-native, governed by you."*
+
+   The em-dash phrasing makes team mode legible without diluting the personal-first audience.
+
+3. **Team-mode operating model** (new explicit goals):
+   - Up to ~10 operators share a single stavR instance running on a designated machine (the "host") OR each operator runs their own instance federated via ADR-035
+   - Each operator has their own Ed25519 keypair (per ADR-036) — actions are individually cryptographically attributable
+   - Trust scopes can be granted by any operator with a "grantor" role; revoked by any operator with a "revoker" role; default model is all operators are both
+   - Audit log is shared, append-only, signed per-actor (ADR-036) — every operator can verify every other operator's actions
+   - No external IDP. Team membership = your keypair is in `~/.stavr/keys/team/*.pub`; addition is a manual file copy or via a future paired-bootstrap flow
+
+4. **Original non-goals stay** (still in force):
+   - Not a multi-tenant gateway (no tenant isolation between organizations)
+   - Not a hosted SaaS
+   - Not an SSO target
+   - Not a compliance reporter
+   - Not an enterprise marketplace operator
+
+5. **New non-goals** (clarifying team mode):
+   - Not a permission system with fine-grained RBAC — team mode assumes all operators are mutually trusted; coarse roles only
+   - Not a chat / collaboration tool — operator communication happens out-of-band; stavR provides the audit trail, not the chat
+   - Not a multi-org product — team mode is for one organization (or one collective); separate organizations run separate stavR instances
+
+6. **Roadmap implications** (informational; sequenced in the 14-week plan):
+   - ADR-036 (audit integrity) becomes baseline because team mode requires cryptographic per-actor attribution
+   - ADR-037 (operator-data lifecycle) becomes baseline because team mode loses ALL operators' data on single-machine failure
+   - ADR-038 (supply-chain integrity) becomes baseline because the trust circle expands beyond one operator
+   - ADR-039 (polyglot core) becomes prioritized because the security primitives matter more when shared
+   - ADR-035 (federation via A2A + OAuth 2.1) becomes the primary growth axis — team mode → federated team mode is the natural next step
+   - The v0.6 → v0.7 → v0.8 feature pipeline (notifications, Tier 3 EXPLICIT, audit history dashboard) is preserved in priority — all three are team-mode-enabling
+
+### Amendment consequences
+
+**Positive:**
+- Opens an unowned market lane (solo-developer-pro / small-team trusted-AI broker) without abandoning personal-first audience
+- ADR-035 federation gains a clear product story (sharing across a team's own machines)
+- Existing architecture decisions all extend naturally — no rebuild required, just additive ADRs 036-039
+- Lex Insculpta + 4-tier approval + trust scopes work identically in team mode
+
+**Negative we accept:**
+- Slightly less clean category positioning (the em-dash phrasing is more nuanced than "personal gateway")
+- Team-mode features (shared keys directory, per-actor pubkey verification) add a small surface area that personal-only operators don't need
+- Marketing must communicate two adjacent stories without diluting either
+
+### Amendment alternatives considered
+
+- **Stay personal-only** — leaves the team market lane to a competitor
+- **Reposition entirely to small-team** — abandons the larger personal-developer audience
+- **Build separate "stavR" (personal) and "stavR Team" products** — fragments the codebase and the brand; rejected
+- **Add multi-tenancy with full RBAC** — what every enterprise gateway does; explicitly out of scope per original non-goals
+
+### Amendment acceptance
+
+The amendment moves Status forward (still "Proposed" overall) when:
+1. Public-facing copy updates use the new em-dash phrasing where space allows; original "personal MCP gateway" remains acceptable shorthand
+2. ADRs 036-039 land (this amendment is informational; those are load-bearing)
+3. At least one team-mode test exists (e.g., two operators sharing keypairs both successfully grant scopes and the audit log shows both)
+4. Docs include a "team mode quickstart" section in `docs/team-mode.md`

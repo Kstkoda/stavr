@@ -80,7 +80,37 @@ When an action hits a NO-GO boundary (allowlist deny, scope-exceeded, destructiv
 
 **Example (bad):** "I can't do that." [end of message]
 
-### 8. Process safety
+### 8. Skärp och hängslen — status before every git op
+
+Bilateral rule for ALL actors (CC, Cowork-Claude, the operator's shell, scripts):
+
+**Before ANY git command that mutates state (`add`, `commit`, `push`, `checkout`, `merge`, `rebase`, `cherry-pick`, `reset`, `pull`):**
+
+1. Run `git status --short` and `git symbolic-ref HEAD` first
+2. Verify the current branch matches what you intend
+3. Verify the working tree state matches what you expect (no surprise stagings or unmerged files)
+4. THEN run the mutating command
+
+**Why:** When multiple actors share a working tree (CC running in operator's terminal + Cowork-Claude via host_exec, or operator + CC, etc.), HEAD and index state mutate out from under each actor between operations. Without a status check, commits land on the wrong branch (observed 2x on 2026-05-17: stray P1/P4 commits on main; Cowork-Claude's test fix on `feat/v0.6-notifications`). The cost of one extra status read per git op is negligible; the cost of a wrong-branch commit + recovery is high.
+
+**Operator override:** when you're certain of context (e.g., explicitly just typed `git checkout main` yourself in the same terminal), the status check is optional. But "I'm pretty sure I'm on X" is not certainty — if there's any doubt, check.
+
+### 9. Sensitivity flag on dispatches (drives CC verbosity)
+
+BOMs and CC dispatches accept an optional `sensitivity` field that gates CC's verbosity and check-in cadence, independent of the 4-tier action gate:
+
+| Level | CC posture |
+|---|---|
+| `routine` | Standard autonomous flow; one delta report at end |
+| `careful` | Status check before/after every commit; report after each phase |
+| `high` | Operator approval gate between phases; full diff dump per phase; screenshot/log evidence |
+| `critical` | All writes promoted to Tier 3 EXPLICIT regardless of action class; full audit trail dump on completion |
+
+Default is `routine` if omitted. Use `careful` for any work touching live infra, security primitives, or shared schemas. Use `high` for irreversible substrate changes (cutovers, migrations). Use `critical` for production-affecting changes operating under time pressure.
+
+Sensitivity is orthogonal to the 4-tier action model. A `high` dispatch over `Tier 2` (reversible) actions still gets extra ceremony even though each action is one-click revertable. A `routine` dispatch over `Tier 3` (irreversible) actions still requires the friction string per action — the action gate is independent of the dispatch posture.
+
+### 10. Process safety
 
 - Daemon process is sacred. Anything that can leak/stall/crash lives in its own subprocess (Steward, Workers).
 - Don't add long-running logic to the daemon's request path.
