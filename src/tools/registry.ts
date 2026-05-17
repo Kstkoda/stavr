@@ -144,15 +144,35 @@ export function buildMetadata(
  * intentionally loose (description optional, inputSchema unknown), so we
  * stay duck-typed and trust the SDK's runtime validation.
  *
- * Idempotent — calling twice on the same server is a no-op for the second
- * call (we tag the patched method so the wrapper recognises itself).
+ * Optional `gate` parameter (v0.6.9 PR #2) wraps the supplied tool
+ * handler with a Layer 0 capability check — every call hits the gate
+ * BEFORE the user-supplied handler runs. When the gate denies, the
+ * handler returns an MCP toolError without touching the original
+ * handler, so Layer 0 disables apply instantly to every subsystem
+ * without each subsystem needing to call the gate explicitly.
+ *
+ * Idempotent — calling twice on the same server is a no-op for the
+ * second call (we tag the patched method so the wrapper recognises
+ * itself).
  */
 const PATCH_TAG = Symbol.for('stavr.toolRegistry.patched');
+
+/** Pluggable gate used by `wrapServerForRegistry` to decide whether to run a handler. */
+export interface RuntimeToolGate {
+  /**
+   * Called BEFORE the tool's handler runs. Return `{ allowed: true }` to
+   * delegate; return `{ allowed: false, reason }` to short-circuit with a
+   * `toolError`. Errors thrown by the gate are surfaced as `toolError` too
+   * — never propagated to the SDK (which would 500 the MCP session).
+   */
+  check(toolId: string, args: unknown): { allowed: boolean; reason?: string };
+}
 
 export function wrapServerForRegistry(
   server: McpServer,
   registry: ToolRegistry,
   registered_by = 'server',
+  gate?: RuntimeToolGate,
 ): void {
   const proto = server as unknown as {
     registerTool: (name: string, config: { description?: string; inputSchema?: unknown }, handler: unknown) => unknown;
@@ -169,8 +189,44 @@ export function wrapServerForRegistry(
     handler: unknown,
   ): unknown {
     registry.record(buildMetadata(name, config, registered_by));
-    return original(name, config, handler);
+    const finalHandler = gate
+      ? wrapHandlerWithGate(name, handler, gate)
+      : handler;
+    return original(name, config, finalHandler);
   } as typeof proto.registerTool & { [PATCH_TAG]?: boolean };
   wrapped[PATCH_TAG] = true;
   proto.registerTool = wrapped;
+}
+
+/**
+ * Wrap a tool handler so its invocation goes through `gate.check` first.
+ * The gate returns `{ allowed: true }` to delegate to the original
+ * handler, or `{ allowed: false, reason }` to short-circuit with an MCP
+ * `toolError` — the standard "deny" shape used by other subsystems.
+ *
+ * Exported for unit tests; production callers should use
+ * `wrapServerForRegistry({ ..., gate })`.
+ */
+export function wrapHandlerWithGate(
+  toolId: string,
+  handler: unknown,
+  gate: RuntimeToolGate,
+): unknown {
+  const inner = handler as (...args: unknown[]) => Promise<unknown>;
+  return async function (...args: unknown[]): Promise<unknown> {
+    let decision: { allowed: boolean; reason?: string };
+    try {
+      decision = gate.check(toolId, args[0]);
+    } catch (err) {
+      decision = { allowed: false, reason: `gate error: ${(err as Error).message}` };
+    }
+    if (!decision.allowed) {
+      const reason = decision.reason ?? `tool ${toolId} denied by runtime gate`;
+      return {
+        isError: true,
+        content: [{ type: 'text', text: reason }],
+      };
+    }
+    return inner(...args);
+  };
 }
