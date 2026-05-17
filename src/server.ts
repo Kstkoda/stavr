@@ -25,6 +25,7 @@ import { registerStewardAskTool } from './steward-ask-tool.js';
 import { registerProposePlanTool } from './tools/propose-plan.js';
 import { getV02Subsystem } from './steward/v02-wiring.js';
 import { registerHostExecTool } from './security/host-exec-tool.js';
+import { ToolRegistry, wrapServerForRegistry } from './tools/registry.js';
 import { Notifier } from './notify/notifier.js';
 import { NtfyChannel } from './notify/channels/ntfy.js';
 import { EmailChannel } from './notify/channels/email.js';
@@ -51,6 +52,26 @@ const stewardStoresByBroker = new WeakMap<Broker, StewardStore>();
 const credentialStoresByBroker = new WeakMap<Broker, CredentialStore>();
 const notifiersByBroker = new WeakMap<Broker, Notifier>();
 const digestSchedulersByBroker = new WeakMap<Broker, DigestScheduler>();
+const toolRegistriesByBroker = new WeakMap<Broker, ToolRegistry>();
+
+/**
+ * Daemon-scoped tool catalog. One registry per broker; every MCP session
+ * for that broker shares it. The registry is populated automatically by
+ * `wrapServerForRegistry`, which patches `server.registerTool` to record
+ * metadata before delegating to the SDK. Read by the `/dashboard/tools`
+ * page (v0.6.9 PR #1) and the Layer 0 + per-actor matrix (PR #2).
+ */
+export function getOrCreateToolRegistry(broker: Broker): ToolRegistry {
+  const existing = toolRegistriesByBroker.get(broker);
+  if (existing) return existing;
+  const registry = new ToolRegistry();
+  toolRegistriesByBroker.set(broker, registry);
+  return registry;
+}
+
+export function getToolRegistry(broker: Broker): ToolRegistry | undefined {
+  return toolRegistriesByBroker.get(broker);
+}
 
 function getOrCreateOrchestrator(broker: Broker, trustStore: TrustStore): WorkerOrchestrator {
   const existing = orchestratorsByBroker.get(broker);
@@ -136,6 +157,14 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   const sessionId = newSessionId();
   const server = new McpServer({ name: 'stavr', version: '0.1.0' });
   broker.registerSession(sessionId, server);
+
+  // v0.6.9 PR #1 — observe every registerTool call into the broker's
+  // ToolRegistry. Must run BEFORE the register*Tools calls below so the
+  // wrapped registerTool is in place when subsystems register their
+  // tools. Idempotent across sessions — wrapServerForRegistry tags the
+  // patched method and bails on a second call.
+  const toolRegistry = getOrCreateToolRegistry(broker);
+  wrapServerForRegistry(server, toolRegistry, 'server.ts');
 
   const trustStore = getOrCreateTrustStore(broker);
   const stewardStore = getOrCreateStewardStore(broker);
