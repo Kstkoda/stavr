@@ -21,7 +21,7 @@ interface PlaceholderSpec {
   description: string;
 }
 
-const SPECS: Record<Exclude<DashboardPageId, 'home' | 'helm' | 'mcps' | 'tools' | 'diagnostics'>, PlaceholderSpec> = {
+const SPECS: Record<Exclude<DashboardPageId, 'home' | 'helm' | 'mcps' | 'tools' | 'permissions' | 'diagnostics'>, PlaceholderSpec> = {
   topology: {
     id: 'topology',
     title: 'Topology',
@@ -82,7 +82,7 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-export function renderPlaceholderPage(id: Exclude<DashboardPageId, 'home' | 'helm' | 'mcps' | 'tools' | 'diagnostics'>): string {
+export function renderPlaceholderPage(id: Exclude<DashboardPageId, 'home' | 'helm' | 'mcps' | 'tools' | 'permissions' | 'diagnostics'>): string {
   const spec = SPECS[id];
   const body = [
     `<div class="page-head">`,
