@@ -18,6 +18,8 @@ export interface SettingsScope {
   id: string;
   title: string;
   status: string;
+  description?: string;
+  allowed_actions?: Array<{ tool: string; param_constraints?: Record<string, unknown> }>;
   expires_at?: string;
   actions_executed?: number;
   expires_after_actions?: number;
@@ -96,6 +98,50 @@ function renderProfileSection(active: ProfileMode): string {
     `<h2 class="card-title">Profile mode</h2>`,
     `<div class="mode-grid">${cards}</div>`,
     `<div class="section-status" data-role="profile-status"></div>`,
+    `</section>`,
+  ].join('');
+}
+
+function renderPendingScopesSection(scopes: SettingsScope[]): string {
+  // Storm F2 — operator-approval surface for trust_scope_propose calls
+  // from the MCP side. Without this panel, scopes proposed by e.g.
+  // host_exec sit at status='proposed' forever and the MCP grant tool's
+  // await_decision times out.
+  const cards = scopes.length === 0
+    ? `<div class="empty">No pending scope proposals.</div>`
+    : scopes.map((s) => {
+      const actionsList = (s.allowed_actions ?? []).map((a) => {
+        const constraints = a.param_constraints
+          ? ` <span class="muted small">(${escapeHtml(JSON.stringify(a.param_constraints))})</span>`
+          : '';
+        return `<li><code>${escapeHtml(a.tool)}</code>${constraints}</li>`;
+      }).join('');
+      const expires = s.expires_at ? escapeHtml(s.expires_at) : '—';
+      const cap = s.expires_after_actions !== undefined
+        ? `${s.expires_after_actions} action${s.expires_after_actions === 1 ? '' : 's'}`
+        : '∞';
+      return [
+        `<div class="pending-scope-card" data-scope-id="${escapeHtml(s.id)}">`,
+        `<div class="pending-scope-head">`,
+        `<div>`,
+        `<div class="pending-scope-title">${escapeHtml(s.title)}</div>`,
+        `<div class="pending-scope-id muted small"><code>${escapeHtml(s.id)}</code></div>`,
+        `</div>`,
+        `<button type="button" class="btn primary" data-role="grant" data-id="${escapeHtml(s.id)}">Grant</button>`,
+        `</div>`,
+        s.description ? `<div class="pending-scope-desc">${escapeHtml(s.description)}</div>` : '',
+        actionsList ? `<ul class="pending-scope-actions">${actionsList}</ul>` : '',
+        `<div class="pending-scope-meta muted small">`,
+        `Expires: ${expires} · Cap: ${cap}`,
+        `</div>`,
+        `</div>`,
+      ].join('');
+    }).join('');
+  return [
+    `<section class="settings-section" data-section="pending-scopes">`,
+    `<h2 class="card-title">Pending scopes · ${scopes.length}</h2>`,
+    `<div class="pending-scope-grid" data-role="pending-scope-grid">${cards}</div>`,
+    `<div class="section-status" data-role="pending-scopes-status"></div>`,
     `</section>`,
   ].join('');
 }
@@ -336,6 +382,44 @@ a.btn { display: inline-block; text-decoration: none; line-height: 1.3; }
 .source-user    { background: rgba(96,165,250,0.12);  color: var(--accent-mcp);          border: 1px solid var(--accent-mcp); }
 .source-default { background: var(--bg-elevated);     color: var(--text-dim);            border: 1px solid var(--border); }
 .source-org     { background: rgba(167,139,250,0.12); color: var(--accent-ai-external);  border: 1px solid var(--accent-ai-external); }
+
+/* Pending scope cards — Storm F2 */
+.pending-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 12px;
+}
+.pending-scope-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--accent-mcp);
+  border-left: 3px solid var(--accent-mcp);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pending-scope-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pending-scope-title { font-weight: 600; font-size: 13px; color: var(--text-primary); }
+.pending-scope-id { margin-top: 2px; }
+.pending-scope-desc { font-size: 12px; color: var(--text-secondary); }
+.pending-scope-actions {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 11px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pending-scope-meta { font-size: 10px; }
 `;
 
 const SETTINGS_JS = `
@@ -374,6 +458,51 @@ const SETTINGS_JS = `
       }
     });
   });
+
+  // ---------- pending scope approvals (Storm F2) ----------
+  document.addEventListener('click', async function(ev) {
+    const grant = ev.target.closest('[data-role="grant"]');
+    if (!grant) return;
+    ev.preventDefault();
+    const id = grant.getAttribute('data-id');
+    if (!confirm('Grant trust scope ' + id + '?')) return;
+    grant.disabled = true;
+    setStatus('pending-scopes-status', 'Granting…');
+    try {
+      await postJson('/dashboard/settings/scopes/' + encodeURIComponent(id) + '/grant', {});
+      setStatus('pending-scopes-status', 'Granted ' + id, 'ok');
+      // Full reload — SSE will land us in the same place, but reloading
+      // also reflects the new row in the active-scopes table.
+      setTimeout(function() { window.location.reload(); }, 350);
+    } catch (err) {
+      grant.disabled = false;
+      setStatus('pending-scopes-status', 'Failed: ' + (err.message || err), 'error');
+    }
+  });
+
+  // ---------- live refresh on trust scope events (Storm F2) ----------
+  try {
+    var es = new EventSource('/dashboard/stream');
+    var refreshTimer = null;
+    function scheduleScopeRefresh() {
+      if (refreshTimer) return;
+      refreshTimer = setTimeout(function() {
+        refreshTimer = null;
+        window.location.reload();
+      }, 400);
+    }
+    es.addEventListener('event', function(msg) {
+      try {
+        var data = JSON.parse(msg.data || '{}');
+        if (data && typeof data.kind === 'string'
+            && (data.kind === 'trust_scope_proposed'
+                || data.kind === 'trust_scope_granted'
+                || data.kind === 'trust_scope_revoked')) {
+          scheduleScopeRefresh();
+        }
+      } catch (_) { /* ignore */ }
+    });
+  } catch (_) { /* no live updates if SSE unavailable */ }
 
   // ---------- trust scopes ----------
   document.addEventListener('click', async function(ev) {
@@ -709,13 +838,16 @@ export function renderSettingsPage(data?: SettingsData): string {
   };
   const toggles = snapshot.runtimeToggles ?? [];
   const recent = snapshot.recentDiagnostics ?? [];
+  const pendingScopes = snapshot.scopes.filter((s) => s.status === 'proposed');
+  const activeScopes = snapshot.scopes.filter((s) => s.status !== 'proposed');
   const body = [
     `<div class="page-head">`,
     `<h1 class="page-title">Settings</h1>`,
     `<span class="page-sub">Profile · trust scopes · no-go list · captures · diagnostics · bricks</span>`,
     `</div>`,
     renderProfileSection(snapshot.activeMode),
-    renderScopesSection(snapshot.scopes),
+    renderPendingScopesSection(pendingScopes),
+    renderScopesSection(activeScopes),
     renderNoGoSection(snapshot.noGo),
     renderCapturesSection(),
     renderDiagnosticsSection(toggles, recent),

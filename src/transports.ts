@@ -1030,6 +1030,11 @@ export function mountDashboardRoutes(
         id: s.id,
         title: s.title,
         status: s.status,
+        description: s.description,
+        allowed_actions: s.allowed_actions.map((a) => ({
+          tool: a.tool,
+          param_constraints: a.param_constraints,
+        })),
         expires_at: s.expires_at ?? undefined,
         actions_executed: s.actions_executed,
         expires_after_actions: s.expires_after_actions ?? undefined,
@@ -1231,6 +1236,40 @@ export function mountDashboardRoutes(
       payload: { id: scope.id, revoked_by: 'dashboard-user' },
     });
     res.json({ ok: true, scope });
+  });
+
+  // Storm F2 — operator-driven grant from the Pending Scopes UI. The MCP
+  // tool `trust_scope_grant` goes through gatedAction → await_decision so a
+  // human can rubber-stamp it from the dashboard. THIS endpoint *is* that
+  // human surface, so it flips proposed→active directly (no second decision
+  // loop). The MCP-tool path remains untouched.
+  app.post('/dashboard/settings/scopes/:id/grant', async (req, res) => {
+    const existing = trustStore.get(req.params.id);
+    if (!existing) { res.status(404).json({ error: 'not_found' }); return; }
+    if (existing.status !== 'proposed') {
+      res.status(409).json({ error: `scope is not 'proposed' (status=${existing.status})` });
+      return;
+    }
+    const granted = trustStore.grant(req.params.id, 'dashboard-user');
+    if (!granted || granted.status !== 'active') {
+      res.status(500).json({ error: 'grant_failed' });
+      return;
+    }
+    await broker.publish({
+      kind: 'trust_scope_granted',
+      at: new Date().toISOString(),
+      correlation_id: granted.id,
+      source_agent: 'dashboard',
+      payload: {
+        scope_id: granted.id,
+        title: granted.title,
+        granted_by: granted.granted_by,
+        granted_at: granted.granted_at,
+        expires_at: granted.expires_at,
+        expires_after_actions: granted.expires_after_actions,
+      },
+    });
+    res.json({ ok: true, scope: granted });
   });
 
   app.post('/dashboard/settings/scopes/:id/extend', async (req, res) => {
