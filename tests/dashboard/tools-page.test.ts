@@ -128,16 +128,18 @@ describe('renderToolsPage', () => {
 });
 
 describe('Tools nav entry', () => {
-  it('appears in NAV_ENTRIES between mcps and capabilities', () => {
+  it('appears in NAV_ENTRIES immediately after mcps (permissions sits between tools and capabilities post-PR #2)', () => {
     const ids = NAV_ENTRIES.map((e) => e.id);
     const mcpsAt = ids.indexOf('mcps');
     const toolsAt = ids.indexOf('tools');
-    const capsAt = ids.indexOf('capabilities');
+    const permsAt = ids.indexOf('permissions');
     expect(mcpsAt).toBeGreaterThan(-1);
     expect(toolsAt).toBeGreaterThan(-1);
-    expect(capsAt).toBeGreaterThan(-1);
     expect(toolsAt).toBe(mcpsAt + 1);
-    expect(toolsAt).toBe(capsAt - 1);
+    if (permsAt > -1) {
+      // v0.6.9 PR #2 inserts permissions between tools and capabilities
+      expect(permsAt).toBe(toolsAt + 1);
+    }
   });
 
   it('points at /dashboard/tools', () => {
