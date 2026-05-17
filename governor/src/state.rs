@@ -93,6 +93,18 @@ pub const HEALTHY_TO_DEGRADED: Duration = Duration::from_secs(10);
 /// Duration since last successful probe at which `Degraded` → `Down`.
 pub const DEGRADED_TO_DOWN: Duration = Duration::from_secs(30);
 
+/// Settle window after a fresh boot or restart during which the supervisor
+/// will NOT promote the daemon to `Down`, even if probes are coming back
+/// `Unreachable`. The daemon's normal cold-boot takes ~40s (the operator
+/// observed 21:08:24 second-restart at +74s from a previous start in the
+/// 2026-05-17 smoke test); 60s gives generous headroom without making
+/// genuine outages slow to detect. Once the daemon has been `Healthy`
+/// once after the most-recent boot/restart, the settle window no longer
+/// applies — subsequent outages flip to `Down` per the normal rules.
+///
+/// Fix BOM v0.6.5 PR #34 amendment P3.
+pub const SETTLE_WINDOW: Duration = Duration::from_secs(60);
+
 /// Pure state machine. Construction takes the "now" timestamp so tests can
 /// inject a deterministic start. All mutating methods take `now` for the
 /// same reason — there is no internal clock.
@@ -108,6 +120,23 @@ pub struct StateMachine {
     /// Index into `BACKOFF_SCHEDULE` for the next scheduled restart. Resets to
     /// 0 once the daemon becomes Healthy again.
     backoff_step: usize,
+    /// When the supervisor itself booted. Cold-start reference for the
+    /// settle window — if the daemon has never been `Healthy` yet, we
+    /// measure "how long has it been starting?" from this point.
+    boot_at: Instant,
+    /// When `start_restart` last fired. The settle window resets here so
+    /// every restart cycle gets fresh post-restart boot time before Down
+    /// can kick in. `None` until the first restart attempt.
+    last_restart_started_at: Option<Instant>,
+    /// The most-recent transition INTO Healthy. Used to decide whether a
+    /// future Unreachable probe should defer Down (post-cold-boot) or
+    /// promote to Down (the daemon has already proven it can come up,
+    /// so we trust the regular Degraded → Down detection).
+    last_healthy_at: Option<Instant>,
+    /// Settle-window duration override. Production uses `SETTLE_WINDOW`;
+    /// tests can tighten or widen via `with_settle_window` to keep the
+    /// suite fast and deterministic.
+    settle_window: Duration,
 }
 
 impl StateMachine {
@@ -120,7 +149,59 @@ impl StateMachine {
             last_change: now,
             restart_attempts: VecDeque::new(),
             backoff_step: 0,
+            boot_at: now,
+            last_restart_started_at: None,
+            last_healthy_at: None,
+            settle_window: SETTLE_WINDOW,
         }
+    }
+
+    /// Builder-style settle-window override — tests use this to shrink the
+    /// window from 60s to a few simulated seconds without losing realism.
+    pub fn with_settle_window(mut self, window: Duration) -> Self {
+        self.settle_window = window;
+        self
+    }
+
+    pub fn settle_window(&self) -> Duration {
+        self.settle_window
+    }
+
+    /// Most-recent moment we'd expect the daemon to be cold-booting. The
+    /// settle window is measured from here.
+    fn settle_reference(&self) -> Instant {
+        self.last_restart_started_at
+            .map(|r| r.max(self.boot_at))
+            .unwrap_or(self.boot_at)
+    }
+
+    /// True if we should defer `Down` for now because we're still inside
+    /// the settle window after a fresh boot or restart AND the daemon
+    /// hasn't proven itself Healthy since that reference point.
+    fn in_settle_window(&self, now: Instant) -> bool {
+        // If the daemon has been Healthy since the last boot/restart, the
+        // settle window is over — outages flip to Down per normal rules.
+        if let Some(h) = self.last_healthy_at {
+            if h >= self.settle_reference() {
+                return false;
+            }
+        }
+        now.saturating_duration_since(self.settle_reference()) < self.settle_window
+    }
+
+    /// Seconds we are into the settle window, or `None` if the window has
+    /// closed (daemon was Healthy after the reference moment) or expired.
+    /// Used by the tray tooltip to surface "Starting · 45s into settle
+    /// window" so the operator can see that Governor is patiently waiting
+    /// rather than flapping.
+    pub fn settle_seconds_in(&self, now: Instant) -> Option<u64> {
+        if !self.in_settle_window(now) {
+            return None;
+        }
+        Some(
+            now.saturating_duration_since(self.settle_reference())
+                .as_secs(),
+        )
     }
 
     pub fn state(&self) -> DaemonState {
@@ -164,6 +245,10 @@ impl StateMachine {
         if to == DaemonState::Healthy {
             self.consecutive_unreachable = 0;
             self.backoff_step = 0;
+            // Record the settle-window exit point — subsequent outages
+            // skip the settle deferment because the daemon has proven it
+            // can come up.
+            self.last_healthy_at = Some(now);
         }
         Some(change)
     }
@@ -197,7 +282,14 @@ impl StateMachine {
                     .last_ok_probe
                     .map(|t| now.saturating_duration_since(t) > DEGRADED_TO_DOWN)
                     .unwrap_or(self.consecutive_unreachable >= UNREACHABLE_TO_DOWN);
-                if self.consecutive_unreachable >= UNREACHABLE_TO_DOWN || stale {
+                let promote_to_down =
+                    self.consecutive_unreachable >= UNREACHABLE_TO_DOWN || stale;
+                // Fix BOM P3: do NOT promote to Down while we're still
+                // inside the settle window after a fresh boot or restart
+                // (and the daemon has never been Healthy since). The 40s
+                // cold-boot was being mistakenly read as a crash before
+                // this gate landed.
+                if promote_to_down && !self.in_settle_window(now) {
                     self.transition(DaemonState::Down, now)
                 } else {
                     self.transition(DaemonState::Degraded, now)
@@ -218,6 +310,10 @@ impl StateMachine {
             return self.transition(DaemonState::GiveUp, now);
         }
         self.restart_attempts.push_back(now);
+        // Settle window resets on every fresh restart attempt — the daemon
+        // is now in its cold-boot window again, so post-restart probes
+        // should not flap to Down until the window expires.
+        self.last_restart_started_at = Some(now);
         self.transition(DaemonState::Restarting, now)
     }
 
@@ -257,10 +353,16 @@ impl StateMachine {
     }
 
     /// Operator clears GiveUp / pause and authorizes another restart attempt.
+    /// Equivalent to a fresh boot: the GiveUp counter is cleared and the
+    /// settle window starts over so the next batch of unreachable probes
+    /// doesn't immediately trip Down again.
     pub fn reset(&mut self, now: Instant) -> Option<StateChange> {
         self.restart_attempts.clear();
         self.backoff_step = 0;
         self.consecutive_unreachable = 0;
+        self.boot_at = now;
+        self.last_restart_started_at = None;
+        self.last_healthy_at = None;
         self.transition(DaemonState::Unknown, now)
     }
 
@@ -449,5 +551,146 @@ mod tests {
                 to: DaemonState::Down
             })
         );
+    }
+
+    // ---- P3: settle window (Fix BOM v0.6.5 PR #34 amendment) -------------
+
+    /// Cold-boot scenario: supervisor just started, daemon takes 50s to
+    /// come up. The historical bug: 3 unreachable probes (~15s in) → Down
+    /// → flap-restart of a healthy-but-starting daemon. With the settle
+    /// window, the SM must stay in Degraded until the window expires.
+    #[test]
+    fn cold_boot_stays_degraded_within_settle_window() {
+        let now = Instant::now();
+        let mut sm = StateMachine::new(now);
+        // Five unreachable probes during cold boot, all within the 60s
+        // settle window.
+        for sec in [5, 10, 15, 20, 25] {
+            sm.record_probe(ProbeOutcome::Unreachable, at(now, sec));
+        }
+        assert_eq!(
+            sm.state(),
+            DaemonState::Degraded,
+            "must NOT promote to Down during cold-boot settle window"
+        );
+        // Settle counter exposed for tooltip
+        assert_eq!(sm.settle_seconds_in(at(now, 45)), Some(45));
+    }
+
+    /// Daemon takes 90s — past the 60s settle window. After the window
+    /// expires, normal Down detection MUST kick in.
+    #[test]
+    fn cold_boot_promotes_to_down_after_settle_window_expires() {
+        let now = Instant::now();
+        let mut sm = StateMachine::new(now);
+        // Probe at 65s — outside the 60s settle window
+        let change = sm.record_probe(ProbeOutcome::Unreachable, at(now, 65));
+        // Three failures via stale-last-ok path: last_ok_probe is None and
+        // consecutive_unreachable starts at 1, but stale = (no last_ok_probe
+        // ⇒ depends on consecutive_unreachable). Need 3 failures for that
+        // branch; force 3 within the post-settle window.
+        sm.record_probe(ProbeOutcome::Unreachable, at(now, 66));
+        let final_change = sm.record_probe(ProbeOutcome::Unreachable, at(now, 67));
+        // Either of the latter two should have flipped to Down
+        let final_state = sm.state();
+        assert_eq!(final_state, DaemonState::Down);
+        // First probe inside the settle deferral: change either None or
+        // Unknown→Degraded.
+        let _ = change;
+        let _ = final_change;
+    }
+
+    /// After the daemon was Healthy ONCE, the settle window no longer
+    /// applies — subsequent outages flip to Down per normal rules without
+    /// waiting 60s.
+    #[test]
+    fn once_healthy_disables_settle_window_for_subsequent_outages() {
+        let now = Instant::now();
+        let mut sm = StateMachine::new(now);
+        // Daemon comes up at 5s
+        sm.record_probe(ProbeOutcome::Ok, at(now, 5));
+        assert_eq!(sm.state(), DaemonState::Healthy);
+        // Now three unreachable probes 6-8s in — would have been deferred
+        // pre-fix, but settle window has already closed via last_healthy_at.
+        sm.record_probe(ProbeOutcome::Unreachable, at(now, 6));
+        sm.record_probe(ProbeOutcome::Unreachable, at(now, 7));
+        sm.record_probe(ProbeOutcome::Unreachable, at(now, 36));
+        // The third probe at 36s has DEGRADED_TO_DOWN=30s elapsed since
+        // last_ok at 5s → stale branch fires → Down.
+        assert_eq!(sm.state(), DaemonState::Down);
+    }
+
+    /// Post-restart scenario: daemon was Healthy, then we restart (state
+    /// reset to Restarting). The daemon takes ~40s to come up again. The
+    /// settle window resets at restart time so the post-restart probes do
+    /// not trip Down within the window.
+    #[test]
+    fn restart_resets_settle_window() {
+        let now = Instant::now();
+        let mut sm = StateMachine::new(now);
+        // Day 1: daemon healthy at 5s
+        sm.record_probe(ProbeOutcome::Ok, at(now, 5));
+        // Operator restarts at 100s
+        sm.start_restart(at(now, 100));
+        assert_eq!(sm.state(), DaemonState::Restarting);
+        // Probes at 105-130s come back unreachable (40s cold boot in
+        // progress). With the post-restart settle window in effect, no
+        // Down transition.
+        for sec in [105, 110, 115, 120, 125, 130] {
+            sm.record_probe(ProbeOutcome::Unreachable, at(now, sec));
+        }
+        assert_ne!(
+            sm.state(),
+            DaemonState::Down,
+            "post-restart settle window must defer Down during cold-boot"
+        );
+        // settle_seconds_in is measured from the restart (100s), not boot.
+        let into = sm.settle_seconds_in(at(now, 130));
+        assert_eq!(into, Some(30));
+    }
+
+    /// Settle counter is None outside the window.
+    #[test]
+    fn settle_seconds_in_returns_none_after_window_expires() {
+        let now = Instant::now();
+        let sm = StateMachine::new(now);
+        assert_eq!(sm.settle_seconds_in(at(now, 30)), Some(30));
+        // At 61s, the 60s window has closed.
+        assert_eq!(sm.settle_seconds_in(at(now, 61)), None);
+    }
+
+    /// Reset resurrects the settle window — operator-triggered "Reset &
+    /// Restart" from GiveUp must give the daemon a fresh cold-boot grace
+    /// period.
+    #[test]
+    fn reset_restores_settle_window_for_operator_recovery() {
+        let now = Instant::now();
+        let mut sm = StateMachine::new(now);
+        // 5 attempts fill the window without flipping; the 6th transitions
+        // to GiveUp per existing semantics.
+        for sec in [0, 10, 20, 30, 40, 50] {
+            sm.start_restart(at(now, sec));
+        }
+        assert_eq!(sm.state(), DaemonState::GiveUp);
+        // Operator clicks Reset & Restart at 1000s
+        sm.reset(at(now, 1000));
+        assert_eq!(sm.state(), DaemonState::Unknown);
+        // Now within 60s of the reset, settle window is active again
+        assert!(sm.settle_seconds_in(at(now, 1030)).is_some());
+        // And probes don't flap to Down within the settle period
+        sm.record_probe(ProbeOutcome::Unreachable, at(now, 1010));
+        sm.record_probe(ProbeOutcome::Unreachable, at(now, 1020));
+        sm.record_probe(ProbeOutcome::Unreachable, at(now, 1030));
+        assert_ne!(sm.state(), DaemonState::Down);
+    }
+
+    /// Custom settle-window override for tests/embedded tunings.
+    #[test]
+    fn with_settle_window_overrides_default() {
+        let now = Instant::now();
+        let sm = StateMachine::new(now).with_settle_window(Duration::from_secs(5));
+        assert_eq!(sm.settle_window(), Duration::from_secs(5));
+        assert_eq!(sm.settle_seconds_in(at(now, 3)), Some(3));
+        assert_eq!(sm.settle_seconds_in(at(now, 6)), None);
     }
 }

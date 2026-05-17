@@ -8,17 +8,19 @@
 //! is now the SINGLE source of tray instantiation and the singleton is
 //! reached at runtime via `app.tray_by_id(TRAY_ID)`.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
     tray::{TrayIcon, TrayIconBuilder},
-    AppHandle, Runtime,
+    AppHandle, Manager, Runtime,
 };
 
 use stavr_governor::icons::{decode_png_rgba, IconVariant};
 use stavr_governor::state::{DaemonState, StateMachine};
+use stavr_governor::supervisor::Supervisor;
 
 /// Canonical id of the one-and-only Governor tray icon. All runtime updates
 /// MUST resolve the live tray via `app.tray_by_id(TRAY_ID)` — never build a
@@ -53,21 +55,47 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<TrayIcon<R>> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip("stavR · starting…")
-        .on_menu_event(|app, event| {
-            if event.id.as_ref() == MENU_ID_QUIT {
-                // Hard rule #4: quitting the Governor does NOT stop the
-                // daemon. PM2 keeps the daemon alive; the operator simply
-                // loses the supervision + status surface until they relaunch
-                // Governor.
-                app.exit(0);
-            }
-            // MENU_ID_RESET_RESTART / MENU_ID_PAUSE click handlers are wired
-            // by main.rs after `build()` returns (they need access to the
-            // Supervisor handle, which `build()` does not hold). See
-            // `tray::install_supervisor_menu_handler`.
-        })
+        .on_menu_event(handle_menu_event::<R>)
         .build(app)?;
     Ok(tray)
+}
+
+/// Tauri menu-event dispatcher. The Supervisor handle is fetched from
+/// Tauri's managed state — main.rs `app.manage(supervisor.clone())` makes
+/// it available here. Decoupling like this is what lets `build()` stay
+/// generic over `Runtime`; the supervisor reference is recovered at click
+/// time.
+pub fn handle_menu_event<R: Runtime>(
+    app: &AppHandle<R>,
+    event: tauri::menu::MenuEvent,
+) {
+    match event.id.as_ref() {
+        MENU_ID_QUIT => {
+            // Hard rule #4: quitting Governor does NOT stop the daemon.
+            // PM2 keeps it alive; the operator just loses the supervision
+            // + status surface until they relaunch Governor.
+            app.exit(0);
+        }
+        MENU_ID_RESET_RESTART => {
+            if let Some(sup) = app.try_state::<Arc<Supervisor>>() {
+                match sup.force_restart() {
+                    Ok(_) => log::info!("tray: force_restart invoked (operator)"),
+                    Err(e) => log::warn!("tray: force_restart failed: {e}"),
+                }
+            } else {
+                log::warn!(
+                    "tray: Reset & Restart clicked but Supervisor not in Tauri state — was app.manage() called in main.rs?"
+                );
+            }
+        }
+        MENU_ID_PAUSE => {
+            if let Some(sup) = app.try_state::<Arc<Supervisor>>() {
+                sup.pause();
+                log::info!("tray: pause invoked (operator)");
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Build the standard Governor tray menu. The order is operator-facing
@@ -150,13 +178,17 @@ pub const GIVEUP_HINT: &str = "needs operator action — right-click for Reset &
 /// Pieces are omitted gracefully — pre-probe there's no uptime; right after
 /// startup there's no last-check yet. When `state == GiveUp` the tooltip
 /// appends `GIVEUP_HINT` so the operator can act without needing a second
-/// status overlay tray icon (v0.6.5 PR #34 amendment P1).
+/// status overlay tray icon (v0.6.5 PR #34 amendment P1). When the
+/// supervisor is inside its settle window after a fresh boot or restart,
+/// the tooltip surfaces "Ns into settle window" so the operator can see
+/// Governor is patiently waiting rather than flapping (P3).
 pub fn format_tooltip(
     state: DaemonState,
     uptime: Option<Duration>,
     since_last_probe: Option<Duration>,
+    settle_seconds_in: Option<u64>,
 ) -> String {
-    let mut parts: Vec<String> = Vec::with_capacity(5);
+    let mut parts: Vec<String> = Vec::with_capacity(6);
     parts.push("stavR".to_string());
     parts.push(human_label(state).to_string());
     if let Some(up) = uptime {
@@ -164,6 +196,9 @@ pub fn format_tooltip(
     }
     if let Some(p) = since_last_probe {
         parts.push(format!("last check {}s ago", p.as_secs()));
+    }
+    if let Some(s) = settle_seconds_in {
+        parts.push(format!("{s}s into settle window"));
     }
     if state == DaemonState::GiveUp {
         parts.push(GIVEUP_HINT.to_string());
@@ -179,6 +214,9 @@ pub struct StateSnapshot {
     pub state: DaemonState,
     pub uptime: Option<Duration>,
     pub since_last_probe: Option<Duration>,
+    /// Seconds into the settle window (post-fresh-boot or post-restart),
+    /// or `None` if the window has closed / daemon has been Healthy since.
+    pub settle_seconds_in: Option<u64>,
 }
 
 impl StateSnapshot {
@@ -189,6 +227,7 @@ impl StateSnapshot {
             state: sm.state(),
             uptime: sm.uptime(now),
             since_last_probe: sm.last_probe().map(|t| now.saturating_duration_since(t)),
+            settle_seconds_in: sm.settle_seconds_in(now),
         }
     }
 }
@@ -204,7 +243,12 @@ pub fn apply_state<R: Runtime>(
 ) -> tauri::Result<()> {
     let variant = IconVariant::for_state(snapshot.state, pulse_phase);
     let icon = load_icon(variant)?;
-    let tooltip = format_tooltip(snapshot.state, snapshot.uptime, snapshot.since_last_probe);
+    let tooltip = format_tooltip(
+        snapshot.state,
+        snapshot.uptime,
+        snapshot.since_last_probe,
+        snapshot.settle_seconds_in,
+    );
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         tray.set_icon(Some(icon))?;
         tray.set_tooltip(Some(&tooltip))?;
@@ -265,7 +309,7 @@ mod tests {
     #[test]
     fn format_tooltip_handles_pre_probe_state() {
         // Before any probe completes there's no uptime and no last-check.
-        let s = format_tooltip(DaemonState::Unknown, None, None);
+        let s = format_tooltip(DaemonState::Unknown, None, None, None);
         assert_eq!(s, "stavR · starting…");
     }
 
@@ -275,6 +319,7 @@ mod tests {
             DaemonState::Healthy,
             Some(Duration::from_secs(900)),
             Some(Duration::from_secs(3)),
+            None,
         );
         assert!(s.contains("Healthy"), "{s}");
         assert!(s.contains("uptime 15m"), "{s}");
@@ -290,6 +335,7 @@ mod tests {
             DaemonState::Down,
             None,
             Some(Duration::from_secs(12)),
+            None,
         );
         assert!(s.contains("Down"), "{s}");
         assert!(!s.contains("uptime"), "{s}");
@@ -299,7 +345,12 @@ mod tests {
     #[test]
     fn giveup_label_signals_operator_intervention() {
         assert_eq!(human_label(DaemonState::GiveUp), "Operator needed");
-        let s = format_tooltip(DaemonState::GiveUp, None, Some(Duration::from_secs(1)));
+        let s = format_tooltip(
+            DaemonState::GiveUp,
+            None,
+            Some(Duration::from_secs(1)),
+            None,
+        );
         assert!(s.contains("Operator needed"));
     }
 
@@ -361,7 +412,12 @@ mod tests {
     /// Reset & Restart menu item.
     #[test]
     fn giveup_tooltip_includes_operator_action_hint() {
-        let s = format_tooltip(DaemonState::GiveUp, None, Some(Duration::from_secs(2)));
+        let s = format_tooltip(
+            DaemonState::GiveUp,
+            None,
+            Some(Duration::from_secs(2)),
+            None,
+        );
         assert!(
             s.contains(GIVEUP_HINT),
             "GiveUp tooltip should append the operator hint; got: {s}"
@@ -382,12 +438,43 @@ mod tests {
             DaemonState::StoppedManually,
             DaemonState::Unknown,
         ] {
-            let s = format_tooltip(state, None, Some(Duration::from_secs(1)));
+            let s = format_tooltip(state, None, Some(Duration::from_secs(1)), None);
             assert!(
                 !s.contains(GIVEUP_HINT),
                 "tooltip for {state:?} must not carry GIVEUP_HINT; got: {s}"
             );
         }
+    }
+
+    // ---- P3: settle-window tooltip + StateSnapshot wiring ----------------
+
+    /// During the settle window the tooltip MUST tell the operator
+    /// "Governor is patiently waiting, not stuck." Format from the BOM:
+    /// "Starting · 45s into settle window".
+    #[test]
+    fn format_tooltip_includes_settle_window_seconds() {
+        let s = format_tooltip(DaemonState::Unknown, None, Some(Duration::from_secs(2)), Some(45));
+        assert!(s.contains("45s into settle window"), "{s}");
+        assert!(s.contains("starting"), "{s}");
+    }
+
+    /// `settle_seconds_in = None` (window closed) → no settle phrase.
+    #[test]
+    fn format_tooltip_omits_settle_phrase_when_window_closed() {
+        let s = format_tooltip(DaemonState::Healthy, Some(Duration::from_secs(100)), Some(Duration::from_secs(1)), None);
+        assert!(!s.contains("settle window"), "{s}");
+    }
+
+    /// `StateSnapshot::from` reads `settle_seconds_in` from the state
+    /// machine — so the watcher thread propagates the new field without
+    /// extra wiring at the call site.
+    #[test]
+    fn state_snapshot_propagates_settle_seconds_in() {
+        let now = Instant::now();
+        let sm = StateMachine::new(now);
+        // 10 seconds into a 60-second settle window
+        let snap = StateSnapshot::from(&sm, now + Duration::from_secs(10));
+        assert_eq!(snap.settle_seconds_in, Some(10));
     }
 
     /// Menu contract: the tray must offer Reset & Restart (so the operator

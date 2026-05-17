@@ -18,6 +18,7 @@ use stavr_governor::restart::{OrphanAwareRestarter, Pm2Restarter, Restarter, Sys
 use stavr_governor::supervisor::{
     Clock, HealthProbe, HttpProbe, Supervisor, SystemClock, DEFAULT_HEALTH_URL,
 };
+use tauri::Manager;
 
 mod tray;
 
@@ -87,6 +88,13 @@ fn main() {
 
     tauri::Builder::default()
         .setup(move |app| {
+            // Hand the supervisor to Tauri's managed state so the tray
+            // menu's "Reset & Restart" / "Pause" handlers (in
+            // `tray::handle_menu_event`) can fetch it via
+            // `app.state::<Arc<Supervisor>>()` at click time. The handler
+            // is decoupled from the supervisor reference at build() time
+            // so we can keep `tray::build` generic over Runtime.
+            app.manage(supervisor.clone());
             let _tray = tray::build(app.handle())?;
             log::info!("stavR Governor started; tray icon attached");
 

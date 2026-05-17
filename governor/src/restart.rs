@@ -248,7 +248,7 @@ pub fn restart_with_orphan_kill(
 ) -> Result<u32, RestartError> {
     let mut iteration: u32 = 0;
     let mut killed: u32 = 0;
-    let mut last_pid: Option<u32> = None;
+    let mut last_pid: Option<u32>;
     loop {
         iteration += 1;
         match restarter.restart() {
