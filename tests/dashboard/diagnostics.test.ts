@@ -85,6 +85,29 @@ describe('Diagnostics page — operator-trust empty states (F65)', () => {
     expect(html).toMatch(/data-window="7d">/);
   });
 
+  // F68 — page-JS bug fixes for the LIVE TRACE TAIL. The earlier code
+  // (a) never cleared the "Waiting for events…" placeholder when the
+  // first event arrived, and (b) read worker_id/duration_ms off the
+  // top-level event object instead of payload, so every cell rendered "·".
+  it('LIVE TRACE TAIL JS reads worker_id + bom_id from event payload, not top level', () => {
+    const html = renderDiagnosticsPage({ bricks: [], workers: [] });
+    expect(html).toContain('payload.worker_id');
+    expect(html).toContain('payload.bom_id');
+    expect(html).toContain('payload.duration_ms');
+  });
+
+  it('LIVE TRACE TAIL JS clears the Waiting-for-events placeholder when events arrive', () => {
+    const html = renderDiagnosticsPage({ bricks: [], workers: [] });
+    expect(html).toContain('clearEmptyPlaceholder');
+    expect(html).toContain('.tail-empty');
+  });
+
+  it('LIVE TRACE TAIL header includes a received-counter so operators can see the SSE pipe is alive', () => {
+    const html = renderDiagnosticsPage({ bricks: [], workers: [] });
+    expect(html).toContain('data-role="tail-count"');
+    expect(html).toContain('counter.textContent = String(received)');
+  });
+
   it('No synthetic ascending trend coords leak into the SSR HTML', () => {
     const html = renderDiagnosticsPage({ bricks: [], workers: [] });
     // The previous mockup-style polylines included these monotonic

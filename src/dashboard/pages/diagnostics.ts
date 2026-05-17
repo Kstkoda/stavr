@@ -278,8 +278,15 @@ const DIAGNOSTICS_CSS = `
   text-transform: uppercase; letter-spacing: 0.1em;
   color: var(--ink-2); font-weight: 500;
 }
-.tail-live {
+.tail-count-wrap {
   margin-left: auto;
+  font-family: var(--mono); font-size: 9px; color: var(--ink-3);
+  letter-spacing: 0.06em;
+}
+.tail-count-wrap [data-role="tail-count"] {
+  color: var(--ink-1); font-weight: 600;
+}
+.tail-live {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 3px 9px;
   background: rgba(109,213,140,.08);
@@ -559,28 +566,55 @@ const DIAGNOSTICS_JS = `
   }
   pullHeal();
 
-  // ---- live trace tail via SSE ----
+  // ---- F68 live trace tail via SSE ----
+  // The broker → SSE pipe is already working; the storm-pass report of
+  // "connected dot, but never displays events" was caused by three latent
+  // bugs in the JS that turned every line into "· · · ·":
+  //   1. The "Waiting for events…" placeholder was never cleared when the
+  //      first event arrived, so a near-empty stream looked completely
+  //      stalled to the operator.
+  //   2. worker_id / bom_id were read off the top-level data object
+  //      instead of data.payload, so the worker column always rendered
+  //      as "·" regardless of the event.
+  //   3. duration_ms had the same problem — every latency cell showed "·".
+  // Also surface a tiny "events received" counter on the tail header so
+  // operators can verify the pipe is alive even during quiet periods.
   const tail = document.querySelector('[data-role="tail-body"]');
+  const counter = document.querySelector('[data-role="tail-count"]');
   let paused = false;
+  let received = 0;
+  function clearEmptyPlaceholder() {
+    if (!tail) return;
+    const empty = tail.querySelector('.tail-empty');
+    if (empty) tail.removeChild(empty);
+  }
   if (tail) {
     tail.addEventListener('mouseenter', function(){ paused = true; });
     tail.addEventListener('mouseleave', function(){ paused = false; });
     try {
       const es = new EventSource('/dashboard/stream');
       es.addEventListener('event', function(ev) {
-        if (paused) return;
         try {
           const data = JSON.parse(ev.data || '{}');
+          const payload = (data && typeof data.payload === 'object' && data.payload) ? data.payload : {};
+          received += 1;
+          if (counter) counter.textContent = String(received);
+          if (paused) return;
+          clearEmptyPlaceholder();
           const ts = new Date(data.at || Date.now()).toISOString().slice(11, 19);
-          const w = String(data.worker_id || data.bom_id || '').slice(0,8) || '·';
+          const wid = payload.worker_id || payload.bom_id || payload.id || data.correlation_id || '';
+          const w = String(wid).slice(0, 8) || '·';
           const txt = String(data.kind || '·');
-          const lat = data.duration_ms != null ? data.duration_ms + 'ms' : '·';
-          const cls = String(data.kind || '').indexOf('err') >= 0 ? 'err'
-            : (data.duration_ms && data.duration_ms > 1000 ? 'slow' : '');
+          const dur = (typeof payload.duration_ms === 'number') ? payload.duration_ms
+                    : (typeof payload.duration_sec === 'number') ? Math.round(payload.duration_sec * 1000)
+                    : null;
+          const lat = dur != null ? dur + 'ms' : '·';
+          const cls = txt.indexOf('err') >= 0 || txt.indexOf('fail') >= 0 ? 'err'
+            : (dur && dur > 1000 ? 'slow' : '');
           const line = document.createElement('div');
           line.className = 'tail-line ' + cls;
           line.innerHTML = '<span class="ts">' + ts + '</span>'
-                        + '<span class="w">' + w + '</span>'
+                        + '<span class="w">' + w.replace(/</g,'&lt;') + '</span>'
                         + '<span class="t">' + txt.replace(/</g,'&lt;') + '</span>'
                         + '<span class="lat">' + lat + '</span>';
           tail.appendChild(line);
@@ -750,6 +784,9 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     `<div class="tail-panel glass">`,
     `<div class="tail-head">`,
     `<span class="tail-title">Live trace tail</span>`,
+    // F68 — small "events received" counter so the operator can confirm
+    // the SSE pipe is alive even when the daemon is quiet.
+    `<span class="tail-count-wrap">received <span data-role="tail-count">0</span></span>`,
     `<span class="tail-live">SSE · /dashboard/stream</span>`,
     `</div>`,
     `<div class="tail-body" data-role="tail-body">`,

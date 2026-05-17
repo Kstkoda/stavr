@@ -132,3 +132,79 @@ describe('Operator-trust · /dashboard/api/traffic-summary (F69)', () => {
     expect(widths['24h']).toBeLessThan(widths['7d']);
   });
 });
+
+// F68 — Diagnostics LIVE TRACE TAIL was reported as showing a connected
+// SSE dot but never displaying events. The broker → SSE pipe is in fact
+// healthy; this test pins that contract so a future refactor cannot
+// silently regress it.
+describe('Operator-trust · /dashboard/stream forwarding (F68)', () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await boot();
+  });
+  afterEach(async () => {
+    await h.transports.shutdown();
+  });
+
+  it('forwards a capture_filed publish to the SSE client within 3s', async () => {
+    const controller = new AbortController();
+    const res = await fetch(`${h.base}/dashboard/stream`, {
+      headers: { accept: 'text/event-stream' },
+      signal: controller.signal,
+    });
+    expect(res.ok).toBe(true);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    // Drain the initial ping so the next read returns our event.
+    await reader.read();
+
+    void h.broker.publish({
+      kind: 'capture_filed',
+      at: new Date().toISOString(),
+      source_agent: 'dashboard',
+      payload: { id: 'cap-1', type: 'bug', priority: 'normal', destination: '/tmp/x.jsonl' },
+    });
+
+    let buf = '';
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      if (buf.includes('event: event\n') && buf.includes('capture_filed')) break;
+    }
+    controller.abort();
+    expect(buf).toContain('event: event\n');
+    expect(buf).toContain('capture_filed');
+    expect(buf).toContain('cap-1');
+  });
+
+  it('forwards multiple distinct event kinds in order to the same SSE client', async () => {
+    const controller = new AbortController();
+    const res = await fetch(`${h.base}/dashboard/stream`, {
+      headers: { accept: 'text/event-stream' },
+      signal: controller.signal,
+    });
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    await reader.read();
+
+    const at = new Date().toISOString();
+    void h.broker.publish({ kind: 'worker_spawned', at, source_agent: 'stavr-daemon', payload: { id: 'w1', name: 'w1', type: 'cc', cwd: '.', metadata: {} } });
+    void h.broker.publish({ kind: 'capture_filed', at, source_agent: 'dashboard', payload: { id: 'cap-2', type: 'feature', priority: 'normal', destination: '/tmp/y.jsonl' } });
+
+    let buf = '';
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      if (buf.includes('worker_spawned') && buf.includes('capture_filed')) break;
+    }
+    controller.abort();
+    expect(buf).toContain('worker_spawned');
+    expect(buf).toContain('capture_filed');
+    expect(buf.indexOf('worker_spawned')).toBeLessThan(buf.indexOf('capture_filed'));
+  });
+});
