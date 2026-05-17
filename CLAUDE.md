@@ -65,7 +65,22 @@ When implementing a page that has a canonical mockup, **open the mockup in a bro
 
 If the mockup and existing code disagree, **change the code**.
 
-### 7. Process safety
+### 7. NO-GO handoff is a clean transfer, not a refusal
+
+When an action hits a NO-GO boundary (allowlist deny, scope-exceeded, destructive-without-consent), the AI does NOT just refuse. The correct posture is **stop + hand over with precise manual steps**:
+
+- Name what was attempted and why it's NO-GO
+- Give the operator the exact command sequence to run themselves (PowerShell or bash as appropriate for the platform)
+- Note any verification step the operator should do before/after
+- Don't try to find a workaround. "I can't do X, but here's how YOU do X" is the correct response
+
+**Why:** The operator is sovereign (Lex Insculpta). NO-GO actions are operator-only by design, not because they're impossible. A bare refusal forces the operator to figure out the recovery path; a handoff with concrete steps respects their time and authority. Friction is the point — the operator should feel the weight of the action, but not waste cycles figuring out the mechanics.
+
+**Example (good):** "Bash can't `rm -f .git/index.lock` (mount permission). Run from PowerShell in `C:\dev\cowire`: `Remove-Item .git\index.lock -Force`."
+
+**Example (bad):** "I can't do that." [end of message]
+
+### 8. Process safety
 
 - Daemon process is sacred. Anything that can leak/stall/crash lives in its own subprocess (Steward, Workers).
 - Don't add long-running logic to the daemon's request path.
@@ -99,6 +114,7 @@ If the mockup and existing code disagree, **change the code**.
 2. RUNNER~1 8.3 paths on Windows — always quote paths.
 3. Git `.git/index.lock` after a crashed commit — `Remove-Item .git\index.lock -Force` from PowerShell.
 4. CRLF warnings on `.gitignore` edits are harmless — git normalizes to LF on commit per `.gitattributes`.
+5. **Cowork bash sandbox mount shows stale state for `.git/` files**: `.git/HEAD` may appear truncated (e.g., `ref: refs/heads/feat/` with the branch name cut off), `.git/index.lock` may appear present when it's already gone, and `git status` from the bash mount may report "your current branch appears to be broken" while PowerShell shows the repo is fine. **Trust the PowerShell view, not the bash view.** When `git` errors out from the bash side, switch to PowerShell, verify via `type .git\HEAD` + `git reflog -10` + `dir`, then perform the git op from PowerShell. Writes from bash heredoc still flow through to Windows correctly — verify with `dir filename` from PowerShell. Evidence transcript: `docs/footguns/bash-mount-stale-cache.md`.
 
 ## What to do when stuck
 
