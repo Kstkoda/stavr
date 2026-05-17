@@ -48,6 +48,13 @@ export interface WorkerRecord {
   spawn_params_hash: string;
   termination_reason?: 'completed' | 'crashed' | 'terminated_by_user';
   exit_code?: number;
+  /**
+   * BOM v0.6.6 — finer-grained lifecycle classification. NULL for legacy
+   * rows; derived via src/workers/lifecycle.ts:deriveLifecycleState() at
+   * read time. Orchestrator may eventually write this directly; until
+   * then NULL is the steady state and derivation is authoritative.
+   */
+  lifecycle_state?: string;
 }
 
 export interface DecisionRecord {
@@ -172,6 +179,18 @@ export class EventStore {
       CREATE INDEX IF NOT EXISTS idx_events_kind_created ON events(kind, created_at);
     `);
 
+    // BOM v0.6.6 — additive lifecycle_state column for workers. For
+    // pre-existing rows we leave it NULL; src/workers/lifecycle.ts derives
+    // a value from status + termination_reason + exit_code on read.
+    // Idempotent via pragma probe (matches the created_at pattern above).
+    // The CREATE TABLE statement below also declares the column for fresh
+    // DBs; this block exists solely for upgrading existing on-disk DBs.
+    const workersCols = this.db.prepare(`PRAGMA table_info(workers)`).all() as Array<{ name: string }>;
+    const hasLifecycleState = workersCols.some((r) => r.name === 'lifecycle_state');
+    if (workersCols.length > 0 && !hasLifecycleState) {
+      this.db.exec(`ALTER TABLE workers ADD COLUMN lifecycle_state TEXT`);
+    }
+
     this.db.exec(`
 
       CREATE TABLE IF NOT EXISTS decisions (
@@ -218,12 +237,15 @@ export class EventStore {
         metadata_json TEXT NOT NULL,
         spawn_params_hash TEXT NOT NULL,
         termination_reason TEXT,
-        exit_code INTEGER
+        exit_code INTEGER,
+        lifecycle_state TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_workers_status ON workers(status);
       CREATE INDEX IF NOT EXISTS idx_workers_type ON workers(type);
       CREATE INDEX IF NOT EXISTS idx_workers_name_active
         ON workers(name) WHERE status NOT IN ('terminated', 'crashed');
+      CREATE INDEX IF NOT EXISTS idx_workers_lifecycle_state
+        ON workers(lifecycle_state);
 
       CREATE TABLE IF NOT EXISTS trust_scopes (
         id TEXT PRIMARY KEY,
@@ -1798,6 +1820,7 @@ interface WorkerRow {
   spawn_params_hash: string;
   termination_reason: string | null;
   exit_code: number | null;
+  lifecycle_state: string | null;
 }
 
 function workerRowToRecord(row: WorkerRow): WorkerRecord {
@@ -1815,5 +1838,6 @@ function workerRowToRecord(row: WorkerRow): WorkerRecord {
     spawn_params_hash: row.spawn_params_hash,
     termination_reason: (row.termination_reason as WorkerRecord['termination_reason']) ?? undefined,
     exit_code: row.exit_code ?? undefined,
+    lifecycle_state: row.lifecycle_state ?? undefined,
   };
 }
