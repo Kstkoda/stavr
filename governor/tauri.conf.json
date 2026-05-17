@@ -12,13 +12,6 @@
     "windows": [],
     "security": {
       "csp": null
-    },
-    "trayIcon": {
-      "id": "main",
-      "iconPath": "icons/raido-32.png",
-      "iconAsTemplate": false,
-      "menuOnLeftClick": false,
-      "tooltip": "stavR · starting…"
     }
   },
   "bundle": {
