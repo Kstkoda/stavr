@@ -149,6 +149,13 @@ const DIAGNOSTICS_CSS = `
 .trend-legend .swatch { width: 8px; height: 2px; border-radius: 1px; }
 .trend-svg { flex: 1; width: 100%; min-height: 140px; }
 .trend-svg svg { width: 100%; height: 100%; display: block; }
+.trend-empty {
+  flex: 1; min-height: 140px;
+  display: flex; align-items: center; justify-content: center;
+  text-align: center; padding: 16px;
+  font-family: var(--mono); font-size: 11px;
+  color: var(--ink-3); font-style: italic;
+}
 
 /* Roster table */
 .roster-panel {
@@ -331,25 +338,41 @@ function renderGauge(label: string, value: string, sub: string, status: 'ok' | '
   ].join('');
 }
 
-function renderTrendChart(title: string, lines: { name: string; color: string; points: string }[]): string {
+// Storm Pass #2 F65 — render the trend chart, but if the section has no real
+// data (e.g., zero registered MCPs / zero active workers) replace the
+// polyline body with an explicit empty-state. The page JS overwrites the
+// `data-role` slot with live polyline coords once the windowed summary
+// fetch resolves. Until then we draw a flat-at-zero baseline so the chart
+// never shows fake trending lines.
+function renderTrendChart(title: string, lines: { name: string; color: string }[], opts?: { emptyMessage?: string; slot?: string }): string {
+  const isEmpty = !!opts?.emptyMessage;
+  const slot = opts?.slot ?? '';
+  const flatPoints = '0,118 27,118 55,118 82,118 109,118 136,118 164,118 191,118 218,118 245,118 273,118 300,118';
   return [
-    `<div class="trend-panel glass">`,
+    `<div class="trend-panel glass" ${slot ? `data-role="${slot}"` : ''}>`,
     `<div class="trend-head">`,
     `<span class="trend-title">${escapeHtml(title)}</span>`,
     `<div class="trend-legend">`,
     lines.map((l) => `<span><span class="swatch" style="background:${l.color};"></span>${escapeHtml(l.name)}</span>`).join(''),
     `</div>`,
     `</div>`,
-    `<div class="trend-svg">`,
-    `<svg viewBox="0 0 300 120" preserveAspectRatio="none">`,
-    `<g stroke="rgba(255,255,255,.04)" stroke-width="0.5">`,
-    `<line x1="0" y1="30" x2="300" y2="30"/>`,
-    `<line x1="0" y1="60" x2="300" y2="60"/>`,
-    `<line x1="0" y1="90" x2="300" y2="90"/>`,
-    `</g>`,
-    lines.map((l) => `<polyline fill="none" stroke="${l.color}" stroke-width="1.6" points="${l.points}"/>`).join(''),
-    `</svg>`,
-    `</div>`,
+    isEmpty
+      ? `<div class="trend-empty" data-role="${slot}-empty">${escapeHtml(opts!.emptyMessage!)}</div>`
+      : [
+          `<div class="trend-svg">`,
+          `<svg viewBox="0 0 300 120" preserveAspectRatio="none">`,
+          `<g stroke="rgba(255,255,255,.04)" stroke-width="0.5">`,
+          `<line x1="0" y1="30" x2="300" y2="30"/>`,
+          `<line x1="0" y1="60" x2="300" y2="60"/>`,
+          `<line x1="0" y1="90" x2="300" y2="90"/>`,
+          `</g>`,
+          // Server side we draw flat-at-zero baselines per series; the page
+          // JS replaces these with real coords once the windowed fetch
+          // resolves. Synthetic trending lines are forbidden here.
+          lines.map((l, i) => `<polyline fill="none" stroke="${l.color}" stroke-width="1.6" data-series="${i}" points="${flatPoints}"/>`).join(''),
+          `</svg>`,
+          `</div>`,
+        ].join(''),
     `</div>`,
   ].join('');
 }
@@ -559,11 +582,19 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
       `<span style="color:var(--ink-3);">—</span>`,
     ],
   }));
-  const mcpTrend = renderTrendChart('MCPs · qps + p95 + err', [
-    { name: 'qps',   color: 'var(--green)', points: '0,70 30,68 60,72 90,65 120,70 150,60 180,65 210,58 240,62 270,55 300,58' },
-    { name: 'p95ms', color: 'var(--sky)',   points: '0,60 30,58 60,62 90,55 120,60 150,52 180,58 210,50 240,54 270,48 300,52' },
-    { name: 'err%',  color: 'var(--amber)', points: '0,100 30,95 60,98 90,92 120,90 150,88 180,86 210,82 240,80 270,78 300,76' },
-  ]);
+  const mcpHasData = bricks.length > 0;
+  const mcpTrend = renderTrendChart(
+    'MCPs · qps + p95 + err',
+    [
+      { name: 'qps',   color: 'var(--green)' },
+      { name: 'p95ms', color: 'var(--sky)'   },
+      { name: 'err%',  color: 'var(--amber)' },
+    ],
+    {
+      slot: 'mcp-trend',
+      ...(mcpHasData ? {} : { emptyMessage: 'No data — register an MCP to see traffic.' }),
+    },
+  );
   const mcpSection = renderSection({
     title: 'Section 1 · MCP servers',
     meta: `${bricks.length} registered · live`,
@@ -587,10 +618,14 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
       cols: ['—', '—', 'ACL'],
     })),
   ];
-  const fleetTrend = renderTrendChart('stavR fleet · RSS + loop p99', [
-    { name: 'RSS MB',  color: 'var(--sky)',    points: '0,80 30,82 60,78 90,80 120,75 150,78 180,72 210,76 240,70 270,74 300,68' },
-    { name: 'loop ms', color: 'var(--purple)', points: '0,90 30,88 60,90 90,86 120,88 150,84 180,86 210,82 240,84 270,80 300,82' },
-  ]);
+  const fleetTrend = renderTrendChart(
+    'stavR fleet · RSS + loop p99',
+    [
+      { name: 'RSS MB',  color: 'var(--sky)'    },
+      { name: 'loop ms', color: 'var(--purple)' },
+    ],
+    { slot: 'fleet-trend' },
+  );
   const fleetSection = renderSection({
     title: 'Section 2 · stavR fleet (primary + spawn + peers)',
     meta: `${1 + peers + 1} processes`,
@@ -614,10 +649,18 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
       `<span style="color:var(--ink-3);">—</span>`,
     ],
   }));
-  const workerTrend = renderTrendChart('Workers · throughput', [
-    { name: 'active', color: 'var(--green)', points: '0,80 30,75 60,70 90,72 120,65 150,68 180,62 210,65 240,58 270,60 300,55' },
-    { name: 'crashed', color: 'var(--crit)',  points: '0,110 30,110 60,108 90,110 120,108 150,110 180,108 210,110 240,108 270,110 300,108' },
-  ]);
+  const workerActive = workers.filter((w) => w.status === 'running' || w.status === 'idle').length;
+  const workerTrend = renderTrendChart(
+    'Workers · throughput',
+    [
+      { name: 'active',  color: 'var(--green)' },
+      { name: 'crashed', color: 'var(--crit)'  },
+    ],
+    {
+      slot: 'worker-trend',
+      ...(workerActive > 0 ? {} : { emptyMessage: 'No active workers — spawn a job to see throughput.' }),
+    },
+  );
   const workerSection = renderSection({
     title: 'Section 3 · Workers + scopes',
     meta: `${workers.length} processes`,
