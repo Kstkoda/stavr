@@ -24,6 +24,8 @@ stavR is a small daemon that runs on `127.0.0.1:7777` and sits between any AI as
 
 **5. Local-first dashboard.** An eight-page operations dashboard at `http://127.0.0.1:7777/dashboard` — Home, Topology, Streams, Plans, Decide, Toolkit, Capabilities, Settings. Your data, your event log, your hardware. Binds to `127.0.0.1` only. No cloud, no telemetry, no third-party server.
 
+**6. Out-of-band notifications.** Optional notification fabric — ntfy.sh, SMTP email, Telegram — pulls the operator's attention when the daemon needs a decision. Replies (button taps from phone/watch) record the same audit events as dashboard clicks: out-of-band consent is consent. HMAC-signed, one-shot, 5-minute TTL. See [`docs/notifications.md`](docs/notifications.md) for the setup guide.
+
 ## The plumbing (architecture, not the headline)
 
 Under the planner sits a scope primitive: **trust scopes** are time-boxed, action-capped permission envelopes ("for the next hour, you may merge PRs in `Kstkoda/stavr` up to 10 times"). Anything outside a scope prompts; anything on the **no-go list** prompts regardless of scope. Approving a BOM creates the scope that runs it.
