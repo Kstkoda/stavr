@@ -506,6 +506,35 @@ export class EventStore {
         last_error      TEXT,
         last_error_at   INTEGER
       );
+
+      -- v0.6.9 PR #2 — Layer 0 capability master switch (runtime hard gate).
+      -- Operator can disable a tool globally regardless of any per-actor
+      -- permission tier or active trust scope. Only Lex Insculpta / No-Go
+      -- (source-code constants) override Layer 0; everything else is
+      -- subject to it. Disabling can be permanent or time-bound
+      -- (disabled_until is unix-ms; expiry runs on the next gate check).
+      CREATE TABLE IF NOT EXISTS capability_overrides (
+        tool_id        TEXT PRIMARY KEY,
+        state          TEXT NOT NULL CHECK (state IN ('enabled','disabled-temporary','disabled-permanent')),
+        disabled_until INTEGER,
+        reason         TEXT,
+        set_by         TEXT NOT NULL,
+        set_at         INTEGER NOT NULL
+      );
+
+      -- v0.6.9 PR #2 — per-actor permissions matrix (Layer 3 of the 5-layer
+      -- model). Operator-settable tier per (actor, tool). Falls through to
+      -- the tool's registered default tier when no row exists.
+      CREATE TABLE IF NOT EXISTS actor_permissions (
+        actor_id  TEXT NOT NULL,
+        tool_id   TEXT NOT NULL,
+        tier      TEXT NOT NULL CHECK (tier IN ('AUTO','CONFIRM','EXPLICIT','NO_GO')),
+        set_by    TEXT NOT NULL,
+        set_at    INTEGER NOT NULL,
+        PRIMARY KEY (actor_id, tool_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_actor_permissions_actor ON actor_permissions(actor_id);
+      CREATE INDEX IF NOT EXISTS idx_actor_permissions_tool ON actor_permissions(tool_id);
     `);
 
     // Seed no-go defaults (idempotent via INSERT OR IGNORE).
