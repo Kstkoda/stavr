@@ -1030,6 +1030,11 @@ export function mountDashboardRoutes(
         id: s.id,
         title: s.title,
         status: s.status,
+        description: s.description,
+        allowed_actions: s.allowed_actions.map((a) => ({
+          tool: a.tool,
+          param_constraints: a.param_constraints,
+        })),
         expires_at: s.expires_at ?? undefined,
         actions_executed: s.actions_executed,
         expires_after_actions: s.expires_after_actions ?? undefined,

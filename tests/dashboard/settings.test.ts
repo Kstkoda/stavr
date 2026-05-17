@@ -46,6 +46,39 @@ describe('Settings page — unit', () => {
     expect(html).toContain('2 / 10');
   });
 
+  it('renders a Pending Scopes section with a Grant button for status=proposed (Storm F2)', () => {
+    const html = renderSettingsPage(snap({
+      scopes: [
+        {
+          id: 'ts-pending-1',
+          title: 'host-ops',
+          status: 'proposed',
+          description: 'allow host_exec for 15 minutes',
+          allowed_actions: [{ tool: 'host_exec' }],
+          expires_at: '2030-01-01T00:00:00Z',
+          expires_after_actions: 20,
+        },
+        // active scope must NOT appear in pending grid
+        { id: 'ts-active-1', title: 'unrelated', status: 'active' },
+      ],
+    }));
+    expect(html).toContain('data-section="pending-scopes"');
+    expect(html).toContain('data-scope-id="ts-pending-1"');
+    expect(html).toContain('host-ops');
+    expect(html).toContain('allow host_exec for 15 minutes');
+    expect(html).toContain('data-role="grant"');
+    expect(html).toContain('data-id="ts-pending-1"');
+    // active scope rendered in legacy table, not in pending grid
+    expect(html).toMatch(/data-section="pending-scopes"[\s\S]*?Pending scopes · 1/);
+    expect(html).toMatch(/data-section="scopes"[\s\S]*?1 active/);
+  });
+
+  it('shows the empty-state when no scopes are pending', () => {
+    const html = renderSettingsPage(snap());
+    expect(html).toContain('data-section="pending-scopes"');
+    expect(html).toContain('No pending scope proposals.');
+  });
+
   it('renders no-go rows with toggle/delete only for user-source rules', () => {
     const html = renderSettingsPage(snap({
       noGo: [
