@@ -133,6 +133,10 @@ export const AUDIT_KINDS: ReadonlySet<string> = new Set([
   'cpu_profile_taken',
   'diagnostic_report_taken',
   'capture_filed',
+  // host_exec — every started / completed / denied call is audit-bearing
+  'host_exec_started',
+  'host_exec_completed',
+  'host_exec_denied',
 ]);
 
 export type RetentionClass = 'operational' | 'audit' | 'unknown';

@@ -24,6 +24,7 @@ import { registerCredentialTools } from './credentials/tools.js';
 import { registerStewardAskTool } from './steward-ask-tool.js';
 import { registerProposePlanTool } from './tools/propose-plan.js';
 import { getV02Subsystem } from './steward/v02-wiring.js';
+import { registerHostExecTool } from './security/host-exec-tool.js';
 
 export interface SwitchServerHandle {
   server: McpServer;
@@ -99,6 +100,7 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   registerGithubWriteTools(server, broker, { trustStore });
   registerWorkerTools(server, orchestrator);
   registerTrustScopeTools(server, broker, trustStore);
+  registerHostExecTool(server, broker, { trustStore });
   registerStewardTools(server, broker, stewardStore, trustStore);
   const credentialStore = credentialStoresByBroker.get(broker);
   if (credentialStore) {
