@@ -153,6 +153,57 @@ export const DEFAULT_ALLOWLIST: AllowlistEntry[] = [
     // any args allowed — netstat is read-only.
   },
   {
+    command: 'curl',
+    enabled: true,
+    timeout_default_ms: 30_000,
+    description:
+      'Read-only HTTP against loopback only (localhost / 127.0.0.1) for daemon introspection. ' +
+      '/metrics, /healthz, /api/* without driving a browser. ' +
+      'Banned: non-loopback URLs, write verbs (POST/PUT/PATCH/DELETE), uploads, basic-auth, --resolve smuggle.',
+    validateArgs: (args) => {
+      // Banned write/upload/auth flags
+      const bannedFlags = new Set([
+        '-T', '--upload-file',
+        '-d', '--data', '--data-binary', '--data-raw', '--data-urlencode',
+        '-F', '--form', '--form-string',
+        '--cert', '--key',
+        '-u', '--user',
+      ]);
+      for (const a of args) {
+        if (bannedFlags.has(a)) {
+          return { ok: false, reason: `curl ${a} is banned (write/upload/auth class)` };
+        }
+        if (a === '--resolve' || a === '--connect-to') {
+          return { ok: false, reason: `curl ${a} is banned (loopback bypass vector)` };
+        }
+      }
+      // Banned write verbs via -X / --request
+      for (let i = 0; i < args.length; i++) {
+        if ((args[i] === '-X' || args[i] === '--request') && i + 1 < args.length) {
+          const verb = args[i + 1].toUpperCase();
+          if (verb === 'POST' || verb === 'PUT' || verb === 'PATCH' || verb === 'DELETE') {
+            return { ok: false, reason: `curl -X ${verb} is banned (read-only enforcement)` };
+          }
+        }
+      }
+      // URL enforcement: require explicit http:// or https:// loopback
+      const url = args.find((a) => /^https?:\/\//i.test(a));
+      if (url) {
+        if (!/^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(url)) {
+          return { ok: false, reason: 'curl URL must be loopback (localhost or 127.0.0.1)' };
+        }
+      } else {
+        // No explicit URL with protocol. Allow ONLY if all args are flags
+        // (covers curl --version, curl --help, curl -V).
+        const hasNonFlag = args.some((a) => !a.startsWith('-'));
+        if (hasNonFlag) {
+          return { ok: false, reason: 'curl URL must include explicit http:// or https:// loopback prefix' };
+        }
+      }
+      return { ok: true };
+    },
+  },
+  {
     command: 'node',
     enabled: false,
     timeout_default_ms: FIVE_MIN_MS,
