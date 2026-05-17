@@ -13,7 +13,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use stavr_governor::icons::{self, IconVariant};
-use stavr_governor::restart::Pm2Restarter;
+use stavr_governor::port_check::SystemPortChecker;
+use stavr_governor::restart::{OrphanAwareRestarter, Pm2Restarter, Restarter, SystemKiller};
 use stavr_governor::supervisor::{
     Clock, HealthProbe, HttpProbe, Supervisor, SystemClock, DEFAULT_HEALTH_URL,
 };
@@ -62,7 +63,16 @@ fn main() {
     );
 
     let probe: Arc<dyn HealthProbe> = Arc::new(HttpProbe::new(health_url));
-    let restarter = Arc::new(Pm2Restarter::new(ecosystem_path));
+    // Wrap the raw PM2 restarter with the orphan-aware flow so Windows
+    // restart cycles can recover from PM2's "daemon already running"
+    // failure mode (v0.6.5 PR #34 amendment P2 — orphan Node holding
+    // port 7777 after PM2's SIGTERM didn't actually terminate it).
+    let base_restarter: Arc<dyn Restarter> = Arc::new(Pm2Restarter::new(ecosystem_path));
+    let restarter: Arc<dyn Restarter> = Arc::new(OrphanAwareRestarter::new(
+        base_restarter,
+        Arc::new(SystemPortChecker),
+        Arc::new(SystemKiller),
+    ));
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let supervisor = Arc::new(Supervisor::new(probe, restarter, clock));
 

@@ -5,6 +5,7 @@
 //! and `adr/040-three-process-architecture.md` for the architectural shape.
 
 pub mod icons;
+pub mod port_check;
 pub mod restart;
 pub mod state;
 pub mod supervisor;
