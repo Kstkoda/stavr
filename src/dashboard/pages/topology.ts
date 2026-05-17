@@ -1218,7 +1218,32 @@ export function renderTopologyPage(data?: TopologyData): string {
     x: CENTER_X, y: CENTER_Y,
     meta: { layer: 'steward' },
   };
-  const allNodes: GraphNode[] = [core, ...bricksToNodes(snapshot.bricks), ...workersToNodes(snapshot.workers)];
+  // BOM v0.6.6 P4 — canvas filters out historic workers by default.
+  // Per BOM hard rule #7 the primary view shows currently-active +
+  // recent (within 24h) workers; older historic rows go into the
+  // "Show terminated (N)" toggle below. With 0 active workers the
+  // canvas now shows just the daemon hexagon, not 8 zombie dots.
+  const canvasNow = Date.now();
+  const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const canvasWorkers: WorkerRecord[] = [];
+  const hiddenHistoricWorkers: WorkerRecord[] = [];
+  for (const w of snapshot.workers) {
+    const lifecycle = deriveLifecycleState(w, canvasNow);
+    if (isCurrentlyActive(lifecycle)) {
+      canvasWorkers.push(w);
+      continue;
+    }
+    // Recent terminations stay on canvas so an operator clicking "what
+    // just finished?" doesn't lose context.
+    const endRef = w.ended_at ?? w.last_activity_at ?? w.started_at;
+    const age = canvasNow - Date.parse(endRef);
+    if (Number.isFinite(age) && age <= HISTORY_WINDOW_MS) {
+      canvasWorkers.push(w);
+    } else {
+      hiddenHistoricWorkers.push(w);
+    }
+  }
+  const allNodes: GraphNode[] = [core, ...bricksToNodes(snapshot.bricks), ...workersToNodes(canvasWorkers, canvasNow)];
   layoutGraph(allNodes);
 
   const typeCounts: Record<GraphType, number> = {
@@ -1265,11 +1290,15 @@ export function renderTopologyPage(data?: TopologyData): string {
   const workerHeader = workerCounters.total === workerCounters.active
     ? `${workerCounters.active} worker${workerCounters.active === 1 ? '' : 's'} active`
     : `${workerCounters.active} active · ${workerCounters.total} lifetime`;
+  const hiddenN = hiddenHistoricWorkers.length;
+  const hiddenChip = hiddenN > 0
+    ? ` · <button type="button" class="topo-show-terminated" data-role="show-terminated" aria-pressed="false">Show terminated (${hiddenN})</button>`
+    : '';
   const body = [
     `<div class="topo-page">`,
     `<div class="page-head">`,
     `<h1 class="page-title">Topology</h1>`,
-    `<span class="page-sub" data-role="topology-header">${workerHeader} · ${snapshot.bricks.length} brick${snapshot.bricks.length === 1 ? '' : 's'} · ${snapshot.inFlightBoms.length} in-flight · drag to pin</span>`,
+    `<span class="page-sub" data-role="topology-header">${workerHeader} · ${snapshot.bricks.length} brick${snapshot.bricks.length === 1 ? '' : 's'} · ${snapshot.inFlightBoms.length} in-flight · drag to pin${hiddenChip}</span>`,
     `</div>`,
     filterStrip,
     `<div class="topo-frame">`,

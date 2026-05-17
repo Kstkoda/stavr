@@ -150,6 +150,27 @@ describe('cross-page agreement on active count (BOM v0.6.6 P3 acceptance)', () =
     expect(html).toMatch(/History · 6 panes/);
   });
 
+  it('Topology canvas hides historic workers older than 24h + surfaces a Show terminated toggle', () => {
+    // BOM v0.6.6 P4 acceptance: with 0 active workers and 2 May-15 zombies,
+    // the canvas should NOT render the zombies and should expose a toggle
+    // for them.
+    const html = renderTopologyPage({
+      workers: E2E_WORKERS, // includes the 2 May-15 zombies
+      bricks: [],
+      scopes: [],
+      inFlightBoms: [],
+    });
+    // The two May-15 zombie IDs must NOT appear in the canvas node list.
+    // Canvas nodes are emitted with data-id="<id>" by renderNode; we
+    // assert the zombies are absent from the topo-nodes container.
+    const canvasMatch = html.match(/<div class="topo-nodes">([\s\S]*?)<\/div>\s*<\/div>\s*<aside class="topo-side/);
+    const canvasHtml = canvasMatch ? canvasMatch[1] : html;
+    expect(canvasHtml).not.toContain('data-id="oom-leak-hunt-2026-05-15"');
+    expect(canvasHtml).not.toContain('data-id="leak-hunt-retry-a"');
+    // The toggle MUST surface their existence.
+    expect(html).toMatch(/Show terminated \(2\)/);
+  });
+
   it('Topology roster pill text reads the lifecycle label (operator-kill is distinct from crashed)', () => {
     const html = renderTopologyPage({
       workers: [
