@@ -473,6 +473,39 @@ export class EventStore {
         set_by      TEXT NOT NULL,
         expires_at  INTEGER
       );
+
+      -- v0.6 notifications fabric (see proposed/v0_6-notifications-bom.md).
+      -- correlation_id here is the signed reply-id, distinct from decision
+      -- correlation_id; reply-router maps the action's target_id (inside
+      -- actions_json) to the underlying decision/scope.
+      CREATE TABLE IF NOT EXISTS notifications (
+        id                  TEXT PRIMARY KEY,
+        created_at          INTEGER NOT NULL,
+        correlation_id      TEXT NOT NULL UNIQUE,
+        kind                TEXT NOT NULL,
+        severity            TEXT NOT NULL,
+        title               TEXT NOT NULL,
+        body                TEXT NOT NULL,
+        source_event_id     TEXT,
+        actions_json        TEXT,
+        expires_at          INTEGER,
+        delivered_channels  TEXT,
+        failed_channels     TEXT,
+        consumed_at         INTEGER,
+        consumed_by         TEXT,
+        dispatched_at       INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_notifications_correlation ON notifications(correlation_id);
+      CREATE INDEX IF NOT EXISTS idx_notifications_kind_created ON notifications(kind, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS notification_channels (
+        id              TEXT PRIMARY KEY,
+        enabled         INTEGER NOT NULL DEFAULT 0,
+        config_json     TEXT,
+        last_success_at INTEGER,
+        last_error      TEXT,
+        last_error_at   INTEGER
+      );
     `);
 
     // Seed no-go defaults (idempotent via INSERT OR IGNORE).
