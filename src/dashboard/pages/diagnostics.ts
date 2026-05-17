@@ -18,6 +18,8 @@ import type { WorkerRecord } from '../../persistence.js';
 import type { InstalledBrickLite } from '../adapters/topology.js';
 import { renderShell } from '../shell.js';
 import { renderIcon, resolveIconId } from '../components/icon-sprite.js';
+import { deriveLifecycleState } from '../../workers/lifecycle.js';
+import { fetchWorkerCounters } from '../data/worker-counters.js';
 
 export interface DiagnosticsData {
   bricks?: InstalledBrickLite[];
@@ -746,17 +748,32 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
   });
 
   // ----- Section 3: Workers + scopes -----
-  const workerRows: RosterRow[] = workers.map((w) => ({
-    name: w.name || w.id,
-    iconId: resolveIconId(w.type),
-    status: w.status === 'crashed' ? 'crit' : (w.status === 'running' ? 'ok' : w.status === 'idle' ? 'idle' : 'warn'),
-    cols: [
-      escapeHtml(w.type),
-      `<span style="color:var(--ink-3);">${w.cwd ? escapeHtml(w.cwd.slice(0, 24)) : '—'}</span>`,
-      `<span style="color:var(--ink-3);">—</span>`,
-    ],
-  }));
-  const workerActive = workers.filter((w) => w.status === 'running' || w.status === 'idle').length;
+  // BOM v0.6.6 P3 — Workers gauges + roster read from the single-source
+  // counters so this section agrees with Helm L2 + Topology header. Per
+  // BOM hard rule #5 the row meta carries lifetime AND active counts;
+  // the active gauge is the live one operators key off.
+  const workerNow = Date.now();
+  const workerCounters = fetchWorkerCounters(workers, workerNow);
+  const workerRows: RosterRow[] = workers.map((w) => {
+    const lifecycle = deriveLifecycleState(w, workerNow);
+    const status: 'ok' | 'crit' | 'idle' | 'warn' =
+      lifecycle === 'crashed' || lifecycle === 'killed-by-system' ? 'crit'
+      : lifecycle === 'running' || lifecycle === 'starting' ? 'ok'
+      : lifecycle === 'stale' || lifecycle === 'completed-error' || lifecycle === 'killed-by-operator' ? 'warn'
+      : 'idle';
+    return {
+      name: w.name || w.id,
+      iconId: resolveIconId(w.type),
+      status,
+      cols: [
+        escapeHtml(w.type),
+        `<span style="color:var(--ink-3);">${w.cwd ? escapeHtml(w.cwd.slice(0, 24)) : '—'}</span>`,
+        `<span style="color:var(--ink-3);">${escapeHtml(lifecycle)}</span>`,
+      ],
+    };
+  });
+  const workerActive = workerCounters.active;
+  const workerCrashed = workerCounters.crashed + workerCounters.killed_by_system;
   const workerTrend = renderTrendChart(
     'Workers · throughput',
     [
@@ -770,10 +787,10 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
   );
   const workerSection = renderSection({
     title: 'Section 3 · Workers + scopes',
-    meta: `${workers.length} processes`,
+    meta: `${workerActive} active · ${workerCounters.total} lifetime`,
     gauges: [
-      renderGauge('active',  String(workers.filter((w) => w.status === 'running').length), 'workers', 'ok', 50),
-      renderGauge('crashed', String(workers.filter((w) => w.status === 'crashed').length), 'workers', workers.some((w) => w.status === 'crashed') ? 'crit' : 'ok', workers.some((w) => w.status === 'crashed') ? 100 : 0),
+      renderGauge('active',  String(workerActive), 'workers', 'ok', Math.min(100, workerActive * 12)),
+      renderGauge('crashed', String(workerCrashed), 'workers', workerCrashed > 0 ? 'crit' : 'ok', workerCrashed > 0 ? 100 : 0),
       renderGauge('scopes',  '—', 'active',  'ok', 0),
     ].join(''),
     trend: workerTrend,

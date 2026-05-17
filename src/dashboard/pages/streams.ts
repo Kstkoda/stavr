@@ -14,6 +14,10 @@
 import type { WorkerRecord, StoredEvent } from '../../persistence.js';
 import { renderShell } from '../shell.js';
 import { renderPill, type PillVariant } from '../components/pill.js';
+import {
+  deriveLifecycleState,
+  isCurrentlyActive,
+} from '../../workers/lifecycle.js';
 
 export interface StreamsData {
   workers: WorkerRecord[];
@@ -331,14 +335,39 @@ const STREAMS_JS = `
 export function renderStreamsPage(data?: StreamsData): string {
   const snapshot: StreamsData = data ?? { workers: [], recent: {} };
 
-  // Cap visible workers at 20 — beyond that the grid is unusable.
-  const visible = snapshot.workers.slice(0, 20);
-  const types = Array.from(new Set(visible.map((w) => w.type))).sort();
+  // BOM v0.6.6 P3 — primary view shows ONLY currently-active worker panes.
+  // Historic panes (completed / crashed / killed) move to a collapsible
+  // section below the grid, so the operator still has the audit thread
+  // but the live view stops being polluted by May-15 zombies.
+  const now = Date.now();
+  const active: WorkerRecord[] = [];
+  const historic: WorkerRecord[] = [];
+  for (const w of snapshot.workers) {
+    const state = deriveLifecycleState(w, now);
+    if (isCurrentlyActive(state)) active.push(w);
+    else historic.push(w);
+  }
+
+  // Cap visible (active) workers at 20 — beyond that the grid is unusable.
+  const visible = active.slice(0, 20);
+  const types = Array.from(new Set(active.map((w) => w.type))).sort();
   const statuses: WorkerRecord['status'][] = ['running', 'idle', 'starting', 'crashed', 'terminated'];
 
   const panes = visible.length === 0
     ? `<div class="streams-empty">No workers running. Streams will appear here once stavr spawns a worker.</div>`
     : visible.map((w) => renderPane(w, snapshot.recent[w.id] ?? [])).join('');
+
+  // Historic section — collapsed by default. Renders the same pane shape
+  // so a click still inspects the row, but the grid doesn't fight for
+  // attention with the active panes.
+  const historicPanes = historic.length === 0
+    ? ''
+    : [
+        `<details class="streams-history" data-role="streams-history">`,
+        `<summary>History · ${historic.length} pane${historic.length === 1 ? '' : 's'}</summary>`,
+        `<div class="streams-grid">${historic.slice(0, 40).map((w) => renderPane(w, snapshot.recent[w.id] ?? [])).join('')}</div>`,
+        `</details>`,
+      ].join('');
 
   const typeOptions = ['<option value="*">all types</option>']
     .concat(types.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`))
@@ -350,7 +379,7 @@ export function renderStreamsPage(data?: StreamsData): string {
   const body = [
     `<div class="page-head">`,
     `<h1 class="page-title">Streams</h1>`,
-    `<span class="page-sub">${visible.length} pane${visible.length === 1 ? '' : 's'}${snapshot.workers.length > 20 ? ` · capped at 20 of ${snapshot.workers.length}` : ''}</span>`,
+    `<span class="page-sub" data-role="streams-header">${visible.length} active pane${visible.length === 1 ? '' : 's'}${active.length > 20 ? ` · capped at 20 of ${active.length}` : ''}${historic.length > 0 ? ` · ${historic.length} historic` : ''}</span>`,
     `</div>`,
     `<div class="streams-toolbar">`,
     `<input class="streams-search" data-role="search" type="search" placeholder="Search across panes…" aria-label="Search worker output" />`,
@@ -359,6 +388,7 @@ export function renderStreamsPage(data?: StreamsData): string {
     `<span class="streams-count" data-role="visible-count">${visible.length} visible</span>`,
     `</div>`,
     `<div class="streams-grid" data-role="streams-grid">${panes}</div>`,
+    historicPanes,
   ].join('');
 
   return renderShell({

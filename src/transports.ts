@@ -6,6 +6,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createSwitchServer, getOrCreateTrustStore, getNotifier, getDigestScheduler, getOrCreateToolRegistry } from './server.js';
 import { loadChannelStatuses } from './dashboard/data/channels.js';
 import { fetchToolsData } from './dashboard/data/tools-data.js';
+import { fetchWorkerCounters } from './dashboard/data/worker-counters.js';
+import { deriveLifecycleState } from './workers/lifecycle.js';
 import type { Broker } from './broker.js';
 import type { StoredEvent } from './persistence.js';
 import { startupDecisionSweep } from './tools/decisions.js';
@@ -1066,17 +1068,28 @@ export function mountDashboardRoutes(
   // shape is denser (workers row, sys-chips, intent summary).
   function helmDataRaw(): import('./dashboard/pages/helm.js').HelmData {
     const h = homeData();
-    const workers = broker.store.listWorkers().slice(0, 32).map((w) => ({
-      id: w.id,
-      type: w.type,
-      status: ((): 'idle' | 'running' | 'crashed' | 'cleanup' => {
-        if (w.status === 'running') return 'running';
-        if (w.status === 'crashed') return 'crashed';
-        if (w.status === 'starting') return 'cleanup';
-        return 'idle';
-      })(),
-      current_step: undefined,
-    }));
+    // BOM v0.6.6 — derive lifecycle_state for every worker and feed it
+    // through to the L2 chip + counter summary. Cap raw scan at 64 (twice
+    // the historical 32-chip cap) so the counter math sees enough rows
+    // for "lifetime" but render still slices to 6 active chips in helm.ts.
+    const allWorkers = broker.store.listWorkers();
+    const now = Date.now();
+    const counters = fetchWorkerCounters(allWorkers, now);
+    const workers = allWorkers.slice(0, 32).map((w) => {
+      const lifecycle = deriveLifecycleState(w, now);
+      return {
+        id: w.id,
+        type: w.type,
+        status: ((): 'idle' | 'running' | 'crashed' | 'cleanup' => {
+          if (w.status === 'running') return 'running';
+          if (w.status === 'crashed') return 'crashed';
+          if (w.status === 'starting') return 'cleanup';
+          return 'idle';
+        })(),
+        lifecycle_state: lifecycle,
+        current_step: undefined,
+      };
+    });
     const bricks = broker.store.listInstalledBricks();
     const systems = bricks.slice(0, 32).map((b) => ({
       id: b.id,
@@ -1108,6 +1121,14 @@ export function mountDashboardRoutes(
       boms: h.boms,
       decisions: h.decisions,
       workers,
+      worker_counters: {
+        active: counters.active,
+        completed: counters.completed_clean + counters.completed_error,
+        crashed: counters.crashed + counters.killed_by_system,
+        killed_by_operator: counters.killed_by_operator,
+        stale: counters.stale,
+        total: counters.total,
+      },
       systems,
       digest,
     };

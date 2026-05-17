@@ -18,6 +18,7 @@ function snapshot(over: Partial<HelmData> = {}): HelmData {
     boms: { recent: [], total: 0, open: 0, ...(over.boms ?? {}) },
     decisions: { recent: [], open: 0, ...(over.decisions ?? {}) },
     workers: over.workers ?? [],
+    worker_counters: over.worker_counters,
     systems: over.systems ?? [],
   };
 }
@@ -46,18 +47,65 @@ describe('Helm page — 5-band v8 stack', () => {
   });
 
   it('worker dots are clickable with data-fi-open="worker"', () => {
+    // BOM v0.6.6: L2 chips show ONLY currently-active workers (starting /
+    // running). Both workers in this test are passed lifecycle_state so the
+    // new chip path renders them; data-lifecycle is the forward-compatible
+    // attribute, data-state remains for back-compat with click handlers.
     const html = renderHelmPage(
       snapshot({
         workers: [
-          { id: 'wkr_abcd', type: 'cc', status: 'running', current_step: 'step 1' },
-          { id: 'wkr_efgh', type: 'shell', status: 'idle' },
+          { id: 'wkr_abcd', type: 'cc', status: 'running', lifecycle_state: 'running', current_step: 'step 1' },
+          { id: 'wkr_efgh', type: 'shell', status: 'running', lifecycle_state: 'starting' },
         ],
       }),
     );
     expect(html).toContain('data-worker-id="wkr_abcd"');
     expect(html).toContain('data-state="running"');
+    expect(html).toContain('data-lifecycle="running"');
+    expect(html).toContain('data-lifecycle="starting"');
     expect(html).toContain('data-fi-open="worker"');
-    expect(html).toContain('data-state="idle"');
+  });
+
+  it('historic workers (completed / killed / crashed) are filtered out of L2 chips', () => {
+    // BOM v0.6.6 hard rule #7: primary view never shows historic workers.
+    // The 2026-05-17 scenario had 6 historic rows showing as if active —
+    // this test makes that regression impossible.
+    const html = renderHelmPage(
+      snapshot({
+        workers: [
+          { id: 'old1', type: 'cc', status: 'idle', lifecycle_state: 'completed-clean' },
+          { id: 'old2', type: 'cc', status: 'crashed', lifecycle_state: 'crashed' },
+          { id: 'op-killed', type: 'shell', status: 'idle', lifecycle_state: 'killed-by-operator' },
+        ],
+        worker_counters: {
+          active: 0, completed: 1, crashed: 1, killed_by_operator: 1, stale: 0, total: 3,
+        },
+      }),
+    );
+    expect(html).toContain('No workers running');
+    expect(html).not.toContain('data-worker-id="old1"');
+    expect(html).not.toContain('data-worker-id="old2"');
+    expect(html).not.toContain('data-worker-id="op-killed"');
+    // The counter summary line MUST mention 0 active (not 3) — that's the
+    // exact lie this BOM is fixing.
+    expect(html).toMatch(/0 active/);
+  });
+
+  it('L2 summary distinguishes lifetime vs current per BOM hard rule #5', () => {
+    const html = renderHelmPage(
+      snapshot({
+        workers: [
+          { id: 'a', type: 'cc', status: 'running', lifecycle_state: 'running' },
+        ],
+        worker_counters: {
+          active: 1, completed: 7, crashed: 0, killed_by_operator: 1, stale: 2, total: 11,
+        },
+      }),
+    );
+    expect(html).toMatch(/1 active/);
+    expect(html).toMatch(/7 completed/);
+    expect(html).toMatch(/1 terminated/);
+    expect(html).toMatch(/2 stale/);
   });
 
   it('sys-chips are clickable with data-fi-open="system"', () => {
