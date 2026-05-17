@@ -1525,6 +1525,43 @@ export function mountDashboardRoutes(
     res.json({ window, since: sinceAt, total_tool_calls: events.length, tools });
   });
 
+  // F69 — range-aware traffic summary for the Diagnostics window selector.
+  // Returns 12 buckets across the window for each of {mcp, workers, errors}
+  // plus a total. The page JS turns each bucket array into SVG polyline
+  // coords against the existing 300×120 viewBox.
+  app.get('/dashboard/api/traffic-summary', (req, res) => {
+    const { window, sinceAt } = parseRange(req.query.range);
+    const sinceMs = Date.parse(sinceAt);
+    const nowMs = Date.now();
+    const bucketCount = 12;
+    const bucketWidthMs = (nowMs - sinceMs) / bucketCount;
+    const events = broker.store.getEvents({ sinceAt, limit: 5000 }).events;
+    const mcpKinds = new Set(['steward_tool_call']);
+    const workerKinds = new Set(['worker_spawned', 'worker_progress', 'worker_activity', 'worker_log']);
+    const errorKinds = new Set(['error', 'worker_error', 'bom_step_failed', 'host_exec_denied']);
+    const mcp = new Array(bucketCount).fill(0);
+    const workers = new Array(bucketCount).fill(0);
+    const errors = new Array(bucketCount).fill(0);
+    for (const ev of events) {
+      const t = Date.parse(ev.at);
+      if (!Number.isFinite(t)) continue;
+      const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor((t - sinceMs) / bucketWidthMs)));
+      if (mcpKinds.has(ev.kind)) mcp[idx]++;
+      if (workerKinds.has(ev.kind)) workers[idx]++;
+      if (errorKinds.has(ev.kind)) errors[idx]++;
+    }
+    const sum = (xs: number[]) => xs.reduce((s, n) => s + n, 0);
+    res.json({
+      window,
+      since: sinceAt,
+      buckets: bucketCount,
+      bucket_width_ms: Math.round(bucketWidthMs),
+      mcp: { points: mcp, total: sum(mcp) },
+      workers: { points: workers, total: sum(workers) },
+      errors: { points: errors, total: sum(errors) },
+    });
+  });
+
 
   app.get('/dashboard/workers/:id', (req, res) => {
     const worker = broker.store.getWorker(req.params.id);

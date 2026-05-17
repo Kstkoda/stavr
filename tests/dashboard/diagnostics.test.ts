@@ -62,6 +62,29 @@ describe('Diagnostics page — operator-trust empty states (F65)', () => {
     expect(html).toMatch(/data-role="mcp-trend"[\s\S]*data-series="0"/);
   });
 
+  // F69 — window selector. Clicking 5m/1h/24h/7d must trigger a real
+  // fetch against /dashboard/api/traffic-summary with the range param,
+  // persist the selection in localStorage, and re-render polylines.
+  it('window selector page JS calls /dashboard/api/traffic-summary with the range param', () => {
+    const html = renderDiagnosticsPage({ bricks: [], workers: [] });
+    expect(html).toContain('/dashboard/api/traffic-summary?range=');
+    expect(html).toContain("encodeURIComponent(w)");
+  });
+
+  it('window selector page JS persists the selection in localStorage under stavr.diagWindow', () => {
+    const html = renderDiagnosticsPage({ bricks: [], workers: [] });
+    expect(html).toContain("localStorage.setItem('stavr.diagWindow'");
+    expect(html).toContain("localStorage.getItem('stavr.diagWindow')");
+  });
+
+  it('window selector defaults to 5m on the server-rendered chips', () => {
+    const html = renderDiagnosticsPage({ bricks: [], workers: [] });
+    expect(html).toMatch(/data-window="5m"\s+aria-pressed="true"/);
+    expect(html).toMatch(/data-window="1h">/);
+    expect(html).toMatch(/data-window="24h">/);
+    expect(html).toMatch(/data-window="7d">/);
+  });
+
   it('No synthetic ascending trend coords leak into the SSR HTML', () => {
     const html = renderDiagnosticsPage({ bricks: [], workers: [] });
     // The previous mockup-style polylines included these monotonic

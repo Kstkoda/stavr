@@ -440,19 +440,78 @@ function renderSection(opts: {
 // =================================== JS ===================================
 const DIAGNOSTICS_JS = `
 (function() {
-  // ---- window selector — drives all .trend-svg refresh fetches ----
+  // ---- F69 window selector — drives windowed fetches across all trend
+  // charts. The currently-selected window persists across reloads via
+  // localStorage; default 5m. Clicking a button re-pressed the chip and
+  // triggers refreshAll() which fetches /dashboard/api/traffic-summary
+  // for the new range and re-renders the polylines.
+  const ALLOWED_WINDOWS = ['5m','1h','24h','7d'];
+  function currentWindow() {
+    try {
+      const saved = localStorage.getItem('stavr.diagWindow');
+      if (saved && ALLOWED_WINDOWS.indexOf(saved) >= 0) return saved;
+    } catch (_) {}
+    return '5m';
+  }
+  function setWindow(w) {
+    if (ALLOWED_WINDOWS.indexOf(w) < 0) return;
+    try { localStorage.setItem('stavr.diagWindow', w); } catch (_) {}
+    document.querySelectorAll('.window-bar button').forEach(function(x){
+      x.setAttribute('aria-pressed', x.getAttribute('data-window') === w ? 'true' : 'false');
+    });
+  }
+  setWindow(currentWindow());
+
+  // Project a 12-bucket count array onto the trend-chart 300×120 viewBox.
+  // y range: 6 (top, hottest) .. 118 (bottom, zero). Each series is scaled
+  // independently so a near-flat error series doesn't get drowned out by
+  // a hot mcp series.
+  function pointsFor(values) {
+    if (!Array.isArray(values) || values.length === 0) return '';
+    const max = Math.max(1, Math.max.apply(null, values));
+    const n = values.length;
+    const xs = values.map(function(v, i) {
+      const x = (i * 300 / (n - 1 || 1)).toFixed(1);
+      const norm = v / max;
+      const y = (118 - norm * 112).toFixed(1);
+      return x + ',' + y;
+    });
+    return xs.join(' ');
+  }
+  function applySeries(slot, seriesPoints) {
+    const panel = document.querySelector('[data-role="' + slot + '"]');
+    if (!panel) return;
+    const polylines = panel.querySelectorAll('svg polyline[data-series]');
+    if (polylines.length === 0) return;
+    polylines.forEach(function(p) {
+      const idx = Number(p.getAttribute('data-series') || '0');
+      const pts = seriesPoints[idx];
+      if (typeof pts === 'string' && pts.length > 0) p.setAttribute('points', pts);
+    });
+  }
+  async function refreshAll() {
+    const w = currentWindow();
+    try {
+      const r = await fetch('/dashboard/api/traffic-summary?range=' + encodeURIComponent(w), { headers: { accept: 'application/json' } });
+      if (!r.ok) return;
+      const body = await r.json();
+      const mcpPts = pointsFor(body.mcp && body.mcp.points);
+      const p95Pts = pointsFor(body.workers && body.workers.points);
+      const errPts = pointsFor(body.errors && body.errors.points);
+      applySeries('mcp-trend',    [mcpPts, p95Pts, errPts]);
+      applySeries('fleet-trend',  [mcpPts, errPts]);
+      applySeries('worker-trend', [p95Pts, errPts]);
+    } catch (_) {}
+  }
   document.querySelectorAll('.window-bar button').forEach(function(b) {
     b.addEventListener('click', function() {
-      document.querySelectorAll('.window-bar button').forEach(function(x){ x.setAttribute('aria-pressed', 'false'); });
-      b.setAttribute('aria-pressed', 'true');
-      // Real reloading wired in v0.5 — for now we just rotate the visual
-      // polyline slightly to signal the change.
-      document.querySelectorAll('.trend-svg svg polyline').forEach(function(p) {
-        const pts = (p.getAttribute('points') || '').split(' ');
-        p.setAttribute('points', pts.reverse().join(' '));
-      });
+      const w = b.getAttribute('data-window') || '5m';
+      setWindow(w);
+      refreshAll();
     });
   });
+  refreshAll();
+  setInterval(refreshAll, 10000);
 
   // ---- gauge + trend live refresh from /metrics ----
   async function pull() {

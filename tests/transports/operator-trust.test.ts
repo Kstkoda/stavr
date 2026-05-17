@@ -76,3 +76,59 @@ describe('Operator-trust · /dashboard/api/top-tools (F9)', () => {
     }
   });
 });
+
+// F69 — the Diagnostics window selector (5m/1h/24h/7d) was theatrical
+// (clicks only re-pressed the chip). It now drives a real fetch against
+// /dashboard/api/traffic-summary, which must answer with 12 bucketed
+// counts per series for each allowed range.
+describe('Operator-trust · /dashboard/api/traffic-summary (F69)', () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await boot();
+  });
+  afterEach(async () => {
+    await h.transports.shutdown();
+  });
+
+  it('returns 12 zero buckets per series when empty', async () => {
+    const r = await fetch(`${h.base}/dashboard/api/traffic-summary?range=5m`);
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.window).toBe('5m');
+    expect(body.buckets).toBe(12);
+    expect(body.mcp.points).toHaveLength(12);
+    expect(body.workers.points).toHaveLength(12);
+    expect(body.errors.points).toHaveLength(12);
+    expect(body.mcp.total).toBe(0);
+    expect(body.workers.total).toBe(0);
+    expect(body.errors.total).toBe(0);
+  });
+
+  it('counts real events into mcp/workers/errors buckets', async () => {
+    const at = new Date().toISOString();
+    await h.broker.publish({ kind: 'steward_tool_call', at, source_agent: 'steward', payload: { tool: 'fs.read', args: {} } });
+    await h.broker.publish({ kind: 'steward_tool_call', at, source_agent: 'steward', payload: { tool: 'fs.read', args: {} } });
+    await h.broker.publish({ kind: 'worker_activity', at, source_agent: 'worker:cc', payload: { id: 'w1' } });
+    await h.broker.publish({ kind: 'error', at, source_agent: 'stavr-daemon', payload: { message: 'boom', recoverable: false } });
+
+    const r = await fetch(`${h.base}/dashboard/api/traffic-summary?range=1h`);
+    const body = await r.json();
+    expect(body.mcp.total).toBe(2);
+    expect(body.workers.total).toBe(1);
+    expect(body.errors.total).toBe(1);
+  });
+
+  it('accepts all four windows and reports bucket_width_ms that scales with the window', async () => {
+    const widths: Record<string, number> = {};
+    for (const range of ['5m', '1h', '24h', '7d']) {
+      const r = await fetch(`${h.base}/dashboard/api/traffic-summary?range=${range}`);
+      const body = await r.json();
+      expect(body.window).toBe(range);
+      widths[range] = body.bucket_width_ms;
+    }
+    // Bucket width is monotonically increasing across the window sizes.
+    expect(widths['5m']).toBeLessThan(widths['1h']);
+    expect(widths['1h']).toBeLessThan(widths['24h']);
+    expect(widths['24h']).toBeLessThan(widths['7d']);
+  });
+});
