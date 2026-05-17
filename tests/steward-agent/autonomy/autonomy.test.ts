@@ -49,13 +49,13 @@ describe('v0.5 P4 — autonomy mode selector', () => {
       expect(handle.scheduled).toBeUndefined();
       expect(handle.proactive).toBeUndefined();
       handle.reactive.wake('test-event');
-      // coalesce: tick fires after 50ms
+      // coalesce: tick fires after 50ms; budget 250ms to absorb Windows CI worker timer slack
       return new Promise<void>((resolveFn) => {
         setTimeout(() => {
           expect(triggers).toEqual(['reactive:test-event']);
           handle.stop();
           resolveFn();
-        }, 100);
+        }, 250);
       });
     } finally { b.close(); }
   });
