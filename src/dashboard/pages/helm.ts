@@ -310,16 +310,12 @@ function renderToolCallsBand(d: HelmData): string {
   });
   const histo = values.map((v, i) => `<span class="bar${(i + 1) % 7 === 0 ? ' spike' : ''}" style="height:${v}%"></span>`).join('');
 
-  // Top tools — derived from a static rotation for visual weight; the real
-  // counts arrive via /metrics polling in the page JS.
-  const topTools = [
-    { name: 'github.read_pr',      ct: 412, pct: 92 },
-    { name: 'drive.write',         ct: 304, pct: 68 },
-    { name: 'ollama.generate',     ct: 247, pct: 55 },
-    { name: 'slack.post',          ct: 170, pct: 38 },
-    { name: 'linear.create_issue', ct: 98,  pct: 22 },
-  ];
-  const topRows = topTools.map((t) => `<div class="top-tool-row"><span class="nm">${escapeHtml(t.name)}</span><span class="micro-bar"><div style="width:${t.pct}%;"></div></span><span class="ct">${t.ct}</span></div>`).join('');
+  // Top tools — bound to /dashboard/api/top-tools by the page JS. The
+  // initial server-rendered state is the loading placeholder; if the fetch
+  // returns zero items we replace it with the explicit empty-state copy
+  // ("No tool calls in last hour."). Operator-trust pass (F9): NEVER ship
+  // hardcoded mockup numbers here, the dashboard must not lie.
+  const topRows = `<div class="top-tools-loading" data-role="top-tools-loading">Loading top tools…</div>`;
 
   return [
     `<section class="band glass" data-level="L1" data-slot="tool-calls">`,
@@ -342,7 +338,7 @@ function renderToolCallsBand(d: HelmData): string {
     `</div>`,
     `<div class="l1-panel">`,
     `<div class="label"><span>Top tools · last 1h</span><span>n calls</span></div>`,
-    `<div class="top-tools">${topRows}</div>`,
+    `<div class="top-tools" data-role="top-tools">${topRows}</div>`,
     `</div>`,
     `<div class="l1-panel">`,
     `<div class="label"><span>Trends · 1h</span><span>·</span></div>`,
@@ -714,6 +710,10 @@ body[data-active-page="helm"] > main.page { padding: 14px 18px 16px; overflow: h
   position: relative;
 }
 .top-tool-row .micro-bar > div { height: 100%; background: var(--amber); border-radius: 99px; }
+.top-tools-loading, .top-tools-empty {
+  font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+  font-style: italic; padding: 6px 2px; text-align: center;
+}
 .l1-trends { display: grid; grid-template-rows: 1fr 1fr 1fr; gap: 4px; min-height: 0; }
 .l1-trend-row {
   display: grid; grid-template-columns: 70px 1fr auto;
@@ -849,6 +849,39 @@ const HELM_JS = `
   }
   pullMetrics();
   setInterval(pullMetrics, 5000);
+
+  // F9 — Top tools (last 1h) bind to /dashboard/api/top-tools. The L1 panel
+  // server-renders a "Loading…" placeholder; this swaps in real rows or
+  // the explicit empty-state copy. No hardcoded mockup names allowed here.
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  async function pullTopTools() {
+    const slot = document.querySelector('[data-role="top-tools"]');
+    if (!slot) return;
+    try {
+      const r = await fetch('/dashboard/api/top-tools?range=1h', { headers: { accept: 'application/json' } });
+      if (!r.ok) return;
+      const body = await r.json();
+      const tools = Array.isArray(body && body.tools) ? body.tools : [];
+      if (tools.length === 0) {
+        slot.innerHTML = '<div class="top-tools-empty" data-role="top-tools-empty">No tool calls in last hour.</div>';
+        return;
+      }
+      slot.innerHTML = tools.map(function(t) {
+        return '<div class="top-tool-row">'
+             + '<span class="nm">' + escapeHtml(t.name || '?') + '</span>'
+             + '<span class="micro-bar"><div style="width:' + (Number(t.pct) || 0) + '%;"></div></span>'
+             + '<span class="ct">' + (Number(t.count) || 0) + '</span>'
+             + '</div>';
+      }).join('');
+    } catch (_e) {
+      slot.innerHTML = '<div class="top-tools-empty">Could not load top tools.</div>';
+    }
+  }
+  pullTopTools();
+  setInterval(pullTopTools, 15000);
 })();
 `;
 

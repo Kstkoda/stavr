@@ -93,4 +93,28 @@ describe('Helm page — 5-band v8 stack', () => {
     expect(html).toContain('No workers running');
     expect(html).toContain('No external systems');
   });
+
+  // F9 — operator-trust pass. Storm Pass #2 found the L1 TOP TOOLS panel
+  // was rendering a hardcoded v8-mockup array (github.read_pr / drive.write
+  // / ollama.generate / slack.post / linear.create_issue) regardless of
+  // real traffic. Never again — the slot must be populated by the page JS
+  // via /dashboard/api/top-tools, with an explicit empty-state on zero.
+  it('L1 top-tools renders a server-side loading placeholder, not mockup numbers', () => {
+    const html = renderHelmPage(snapshot());
+    expect(html).toContain('data-role="top-tools"');
+    expect(html).toContain('Loading top tools');
+    // Hardcoded v8-mockup tool names + counts must not appear in the SSR.
+    expect(html).not.toMatch(/github\.read_pr/);
+    expect(html).not.toMatch(/drive\.write/);
+    expect(html).not.toMatch(/ollama\.generate/);
+    expect(html).not.toMatch(/slack\.post/);
+    expect(html).not.toMatch(/linear\.create_issue/);
+    expect(html).not.toMatch(/\b(412|304|247|170|98)\b/);
+  });
+
+  it('L1 top-tools page JS fetches /dashboard/api/top-tools and has empty-state copy', () => {
+    const html = renderHelmPage(snapshot());
+    expect(html).toContain('/dashboard/api/top-tools');
+    expect(html).toContain('No tool calls in last hour.');
+  });
 });
