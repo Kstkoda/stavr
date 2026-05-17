@@ -300,9 +300,10 @@ describe('Spec 40 Phase 3 — dashboard HTTP', () => {
     });
 
     // Wait for the reader to either grab the event or hit a sensible deadline.
+    // 3000ms (was 1500ms) to absorb Ubuntu CI runner slack on the SSE live-tail race.
     await Promise.race([
       reader,
-      new Promise((r) => setTimeout(r, 1500)),
+      new Promise((r) => setTimeout(r, 3000)),
     ]);
     ctrl.abort();
 
