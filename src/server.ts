@@ -96,6 +96,15 @@ export function getCredentialStore(broker: Broker): CredentialStore | undefined 
  * call returns the existing notifier without re-registering channels. Returns
  * undefined when STAVR_NOTIFY_SECRET is unset (fabric is opt-in by design;
  * absence of secret = absence of notifications).
+ *
+ * Test-environment guard (2026-05-17 hotfix): when running under vitest or
+ * NODE_ENV=test, the notifier is still constructed and wired (so test code
+ * can spy on .notify() calls and verify event flow), but real channels are
+ * NOT registered — this prevents test events with throwaway titles like
+ * "q" / "pick one" / "nobody home" from leaking out to the operator's actual
+ * ntfy.sh / email / Telegram channels during CC autonomous runs. Operator can
+ * still register custom test channels via notifier.registerChannel(...) inside
+ * specific tests if needed. Force re-enable with STAVR_NOTIFY_FORCE_CHANNELS=1.
  */
 export function getOrCreateNotifier(broker: Broker): Notifier | undefined {
   const existing = notifiersByBroker.get(broker);
@@ -105,9 +114,14 @@ export function getOrCreateNotifier(broker: Broker): Notifier | undefined {
   const replyBaseUrl = process.env.STAVR_NOTIFY_REPLY_BASE_URL;
   const dashboardBaseUrl = process.env.STAVR_DASHBOARD_BASE_URL;
   const notifier = new Notifier({ secret, replyBaseUrl, db: broker.store.rawDb });
-  notifier.registerChannel(new NtfyChannel());
-  notifier.registerChannel(new EmailChannel());
-  notifier.registerChannel(new TelegramChannel());
+  const isTestEnv =
+    (process.env.VITEST === 'true' || process.env.NODE_ENV === 'test') &&
+    process.env.STAVR_NOTIFY_FORCE_CHANNELS !== '1';
+  if (!isTestEnv) {
+    notifier.registerChannel(new NtfyChannel());
+    notifier.registerChannel(new EmailChannel());
+    notifier.registerChannel(new TelegramChannel());
+  }
   notifiersByBroker.set(broker, notifier);
   wireNotifications(broker, notifier, { dashboardBaseUrl });
   const digestEnabled = process.env.STAVR_NOTIFY_DIGEST_ENABLED !== 'false';

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Raido rune (ᚱ, U+16B1) — stavR brand mark.
+  Iron palette rust orange (#fa9c4c) on transparent background.
+  Geometry hand-tuned at 128x128 for crisp scaling down to 16x16.
+  Stroke-based so halo variants in P3 can simply recolor the stroke.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <g fill="none" stroke="#fa9c4c" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+    <!-- vertical staff -->
+    <line x1="34" y1="20" x2="34" y2="108"/>
+    <!-- upper bow: staff-top → mid-right → staff-middle -->
+    <polyline points="34,20 90,38 34,62"/>
+    <!-- lower leg: staff-middle → bottom-right -->
+    <line x1="34" y1="62" x2="92" y2="108"/>
+  </g>
+</svg>
