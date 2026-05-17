@@ -2,6 +2,28 @@
 
 stavR ships incrementally — small, reviewable PRs that each pass `npm test` and `npm run build` independently. Release notes for major surface changes live in `docs/release-notes-v0.*.md`; this file is the project-level timeline.
 
+## v0.6.5.1 — Governor signing pipeline (in progress)
+
+**Verifiable Governor binaries.** Closes ADR-038 §1+§2 for the Governor binary so Windows 11 Smart App Control (SAC) and macOS Gatekeeper will run a downloaded release without disabling OS-level safety. Driven by the 2026-05-17 ~21:00 incident where SAC killed the freshly-built MVP binary.
+
+### Added
+
+- **Sigstore keyless release workflow** — `.github/workflows/governor-release.yml` triggers on narrow `v0.6.5*` tag push. Builds per-target (win x86_64/aarch64, macos x86_64/aarch64, linux x86_64), signs the binary AND SBOM via `cosign sign-blob --yes` using GitHub Actions OIDC → Fulcio → Rekor. Pinned `sigstore/cosign-installer@v3` + `cosign-release: v2.4.1` so the signing infra itself doesn't float.
+- **CycloneDX SBOM per platform target** — `cargo cyclonedx --format json` pinned to `cargo-cyclonedx 0.5.7`, shipped as `stavr-governor.sbom.cdx.json` alongside the binary. Required on every release (no opt-in path, per BOM open question §4).
+- **Operator-side verify helpers** — `governor/scripts/verify-release.{ps1,sh}` wrap `cosign verify-blob` with the stavR identity regexp + GitHub Actions OIDC issuer.
+- **Local-dev self-signing** — `governor/scripts/dev-sign.{ps1,sh}` for the operator's `cargo build --release` loop. Windows: self-signed cert in `CurrentUser\My` + SignTool + RFC 3161 timestamp. macOS: Developer ID if available, else ad-hoc. Linux: detached GPG. Trusted Root install is opt-in AND prompts (per BOM open question §3 — never silent).
+- **Verify-then-trust installer** — `governor/scripts/install-from-release.{ps1,sh}` downloads release artifacts, cross-checks SHA256, runs verify-release, only then considers the binary installed.
+- **Docs** — `docs/governor-install.md` (operator install guide) + `docs/governor-local-dev.md` (dev-build signing workflow).
+- **Tests** — 40 new shape tests across `tests/release/` (signing-smoke, sbom-format, dev-sign-helpers, install-from-release). Pin cargo-cyclonedx version, cosign-installer version, identity-regexp guard, Trusted Root prompt, SBOM-skip prevention, narrow tag pattern.
+
+### Out of scope (separate BOMs)
+
+- Daemon binary signing (`src/*`) — v0.6.5.2+
+- npm provenance attestations (ADR-038 §3) — v0.6.5.2+
+- Renovate / Dependabot policy gates (ADR-038 §4) — v0.6.5.2+
+- macOS notarization (`xcrun notarytool`) — v0.6.5.2+
+- EV code-signing cert (BOM open question §1) — deferred; Sigstore + MS reputation is the v0.6.5.1 baseline
+
 ## v0.6 — Notifications fabric (in progress)
 
 **Out-of-band operator loop.** The daemon can now pull the operator's attention when needed — and the operator can respond from anywhere. Replies log the same audit events as dashboard clicks; Lex Insculpta posture preserved.
