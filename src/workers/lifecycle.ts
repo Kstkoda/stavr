@@ -42,8 +42,12 @@ export interface LifecycleInput {
   last_activity_at?: string;
   termination_reason?: WorkerRecord['termination_reason'];
   exit_code?: number;
-  /** Optional pre-stored lifecycle_state; if set and valid, returned as-is. */
-  lifecycle_state?: LifecycleState | null;
+  /**
+   * Optional pre-stored lifecycle_state. Typed as `string | null | undefined`
+   * (not `LifecycleState | null | undefined`) because it flows straight from
+   * the DB column which is `TEXT`; the helper validates internally.
+   */
+  lifecycle_state?: string | null;
 }
 
 /**
@@ -68,9 +72,8 @@ export function deriveLifecycleState(
   now: number = Date.now(),
 ): LifecycleState {
   // Prefer the explicit value if present (orchestrator-authoritative).
-  if (input.lifecycle_state) {
-    if (isValidLifecycleState(input.lifecycle_state)) return input.lifecycle_state;
-    // Fall through to derivation if the stored value is garbage.
+  if (input.lifecycle_state && isValidLifecycleState(input.lifecycle_state)) {
+    return input.lifecycle_state;
   }
 
   const { status, termination_reason, exit_code, last_activity_at } = input;
