@@ -253,6 +253,114 @@ describe('host-exec allowlist — curl (loopback-only HTTP)', () => {
   });
 });
 
+describe('host-exec allowlist — gh (GitHub CLI, read-mostly)', () => {
+  it('allows gh pr view', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'view', '28']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows gh pr checks with --json', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'checks', '28', '--json', 'conclusion']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows gh pr comment (operator-attributable write)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'comment', '28', '--body', 'looks good']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows gh issue create (operator-attributable write)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['issue', 'create', '--title', 'F40', '--body', '...']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows gh auth status (read-only credential check)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['auth', 'status']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('allows gh run list and view', () => {
+    expect(validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['run', 'list']).allowed).toBe(true);
+    expect(validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['run', 'view', '12345']).allowed).toBe(true);
+  });
+
+  it('allows gh --version (no subcommand, help flag)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['--version']);
+    expect(r.allowed).toBe(true);
+  });
+
+  it('LOCK gh-pr-merge-denied — use MCP github_merge_pr instead', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'merge', '28', '--squash']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/merge|not allowed/i);
+  });
+
+  it('LOCK gh-pr-close-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'close', '28']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-auth-login-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['auth', 'login']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-auth-logout-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['auth', 'logout']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-secret-set-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['secret', 'set', 'FOO', '--body', 'bar']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/secret|credential/i);
+  });
+
+  it('LOCK gh-release-create-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['release', 'create', 'v1.0']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-repo-delete-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['repo', 'delete', 'Kstkoda/stavr']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-token-arg-denied (--token anywhere in args)', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'view', '28', '--token', 'sekret']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/token|credential/i);
+  });
+
+  it('LOCK gh-with-token-arg-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['pr', 'view', '28', '--with-token', 'sekret']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-api-denied — direct API bypasses subcommand allowlist', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['api', 'repos/Kstkoda/stavr/issues']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/api|bypass/i);
+  });
+
+  it('LOCK gh-extension-install-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['extension', 'install', 'evil/repo']);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/extension|supply/i);
+  });
+
+  it('LOCK gh-unknown-subcommand-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', ['random', 'command']);
+    expect(r.allowed).toBe(false);
+  });
+
+  it('LOCK gh-no-subcommand-denied', () => {
+    const r = validateAllowlistCall(DEFAULT_ALLOWLIST, 'gh', []);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/subcommand/i);
+  });
+});
+
 describe('host-exec config loader — restrict-only semantics', () => {
   it('returns defaults when no config file exists', () => {
     const list = loadHostExecConfig({ configPath: join(tmpdir(), 'definitely-not-there-' + Date.now() + '.json') });

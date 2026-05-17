@@ -204,6 +204,58 @@ export const DEFAULT_ALLOWLIST: AllowlistEntry[] = [
     },
   },
   {
+    command: 'gh',
+    enabled: true,
+    timeout_default_ms: 30_000,
+    description:
+      'GitHub CLI: read PR state, checks, run logs, list issues. ' +
+      'Operator-attributable writes (pr comment, issue create). ' +
+      'Banned: pr merge (use MCP github_merge_pr), close/reopen/edit, auth login/logout, ' +
+      'secret ops, release ops, repo create/delete, api (bypass), extension install.',
+    validateArgs: (args) => {
+      // Universal banned: --token / --with-token (credential leak)
+      for (const a of args) {
+        if (a === '--token' || a === '--with-token' ||
+            a.startsWith('--token=') || a.startsWith('--with-token=')) {
+          return { ok: false, reason: 'gh --token / --with-token is banned (credential leak vector)' };
+        }
+      }
+      // First non-flag arg = category, second = action
+      const nonFlags = args.filter((a) => !a.startsWith('-'));
+      const category = nonFlags[0];
+      const action = nonFlags[1];
+      // Entirely-banned categories
+      const bannedCategories = new Set(['api', 'extension', 'gpg-key', 'ssh-key', 'secret', 'release']);
+      if (category && bannedCategories.has(category)) {
+        return { ok: false, reason: `gh ${category} is banned (write-class / credential / supply-chain)` };
+      }
+      // Per-category action allowlists
+      const allowed: Record<string, Set<string>> = {
+        pr: new Set(['view', 'checks', 'list', 'comment', 'diff', 'status']),
+        issue: new Set(['view', 'list', 'create', 'comment', 'status']),
+        repo: new Set(['view', 'list']),
+        run: new Set(['list', 'view', 'watch']),
+        workflow: new Set(['list', 'view']),
+        auth: new Set(['status']),
+        gist: new Set(['list', 'view']),
+      };
+      if (!category) {
+        // No subcommand — allow only --version/--help class metadata
+        const helpFlags = new Set(['--version', '-v', '--help', '-h']);
+        if (args.some((a) => helpFlags.has(a))) return { ok: true };
+        return { ok: false, reason: 'gh requires a subcommand' };
+      }
+      if (!(category in allowed)) {
+        return { ok: false, reason: `gh ${category} not in allowed categories` };
+      }
+      if (!action || !allowed[category].has(action)) {
+        const allowedList = Array.from(allowed[category]).join(', ');
+        return { ok: false, reason: `gh ${category} ${action ?? '(missing)'} not allowed (allowed: ${allowedList})` };
+      }
+      return { ok: true };
+    },
+  },
+  {
     command: 'node',
     enabled: false,
     timeout_default_ms: FIVE_MIN_MS,
