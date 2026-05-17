@@ -76,6 +76,57 @@ impl IconVariant {
             IconVariant::RestartingDim,
         ]
     }
+
+    /// Pick the icon variant that should be displayed for a given daemon
+    /// state. `pulse_phase` toggles each tick of the supervisor watcher;
+    /// states that don't pulse ignore it and return a stable variant.
+    ///
+    /// State → variant mapping (BOM P3):
+    /// - `Unknown`         → `Restarting` pulse (pre-probe heartbeat)
+    /// - `Healthy`         → `Healthy` (green halo)
+    /// - `Degraded`        → `Degraded` (amber halo)
+    /// - `Down`            → `Down` (red halo)
+    /// - `Restarting`      → `Restarting` / `RestartingDim` pulse (orange)
+    /// - `StoppedManually` → `StoppedManually` (gray halo)
+    /// - `GiveUp`          → `Down` / `RestartingDim` (red + alert pattern)
+    pub fn for_state(state: crate::state::DaemonState, pulse_phase: bool) -> IconVariant {
+        use crate::state::DaemonState;
+        match state {
+            DaemonState::Unknown | DaemonState::Restarting => {
+                if pulse_phase {
+                    IconVariant::RestartingDim
+                } else {
+                    IconVariant::Restarting
+                }
+            }
+            DaemonState::Healthy => IconVariant::Healthy,
+            DaemonState::Degraded => IconVariant::Degraded,
+            DaemonState::Down => IconVariant::Down,
+            DaemonState::StoppedManually => IconVariant::StoppedManually,
+            DaemonState::GiveUp => {
+                // Alert pattern: solid red + a "missing" beat using the dim
+                // orange variant. The contrast between red and orange-dim
+                // reads as "something is wrong" without needing a second
+                // halo color set.
+                if pulse_phase {
+                    IconVariant::RestartingDim
+                } else {
+                    IconVariant::Down
+                }
+            }
+        }
+    }
+
+    /// True if this state should pulse (animated tray icon). The watcher
+    /// thread alternates `pulse_phase` only while pulsing states are active
+    /// so the CPU stays idle in steady-state.
+    pub fn state_pulses(state: crate::state::DaemonState) -> bool {
+        use crate::state::DaemonState;
+        matches!(
+            state,
+            DaemonState::Unknown | DaemonState::Restarting | DaemonState::GiveUp
+        )
+    }
 }
 
 /// Verify a byte slice begins with the canonical PNG signature.
@@ -197,6 +248,81 @@ mod tests {
         let big = decode_png_rgba(BRAND_128).expect("128px brand glyph must decode");
         assert_eq!(big.width, 128);
         assert_eq!(big.height, 128);
+    }
+
+    #[test]
+    fn for_state_maps_each_state_to_an_appropriate_variant() {
+        use crate::state::DaemonState;
+        // Steady states (no pulse) — pulse_phase must not change the result.
+        assert_eq!(
+            IconVariant::for_state(DaemonState::Healthy, false),
+            IconVariant::Healthy
+        );
+        assert_eq!(
+            IconVariant::for_state(DaemonState::Healthy, true),
+            IconVariant::Healthy
+        );
+        assert_eq!(
+            IconVariant::for_state(DaemonState::Degraded, false),
+            IconVariant::Degraded
+        );
+        assert_eq!(
+            IconVariant::for_state(DaemonState::Down, false),
+            IconVariant::Down
+        );
+        assert_eq!(
+            IconVariant::for_state(DaemonState::StoppedManually, false),
+            IconVariant::StoppedManually
+        );
+    }
+
+    #[test]
+    fn for_state_pulses_restarting_and_giveup() {
+        use crate::state::DaemonState;
+        // Restarting alternates between Restarting and RestartingDim.
+        let a = IconVariant::for_state(DaemonState::Restarting, false);
+        let b = IconVariant::for_state(DaemonState::Restarting, true);
+        assert_ne!(a, b, "Restarting must pulse — both phases produced {a:?}");
+
+        // GiveUp uses a different alert pattern (red ↔ orange-dim).
+        let g_a = IconVariant::for_state(DaemonState::GiveUp, false);
+        let g_b = IconVariant::for_state(DaemonState::GiveUp, true);
+        assert_ne!(g_a, g_b, "GiveUp must pulse — both phases produced {g_a:?}");
+        assert_eq!(g_a, IconVariant::Down);
+
+        // Unknown also pulses (pre-probe heartbeat).
+        let u_a = IconVariant::for_state(DaemonState::Unknown, false);
+        let u_b = IconVariant::for_state(DaemonState::Unknown, true);
+        assert_ne!(u_a, u_b);
+    }
+
+    #[test]
+    fn state_pulses_predicate_matches_for_state_behaviour() {
+        use crate::state::DaemonState;
+        for state in [
+            DaemonState::Unknown,
+            DaemonState::Healthy,
+            DaemonState::Degraded,
+            DaemonState::Down,
+            DaemonState::Restarting,
+            DaemonState::StoppedManually,
+            DaemonState::GiveUp,
+        ] {
+            let pulses = IconVariant::state_pulses(state);
+            let a = IconVariant::for_state(state, false);
+            let b = IconVariant::for_state(state, true);
+            if pulses {
+                assert_ne!(
+                    a, b,
+                    "state_pulses({state:?}) says yes but for_state returned the same variant"
+                );
+            } else {
+                assert_eq!(
+                    a, b,
+                    "state_pulses({state:?}) says no but for_state varied"
+                );
+            }
+        }
     }
 
     #[test]

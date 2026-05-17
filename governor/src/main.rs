@@ -10,14 +10,21 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use stavr_governor::icons;
+use stavr_governor::icons::{self, IconVariant};
 use stavr_governor::restart::Pm2Restarter;
 use stavr_governor::supervisor::{
     Clock, HealthProbe, HttpProbe, Supervisor, SystemClock, DEFAULT_HEALTH_URL,
 };
 
 mod tray;
+
+/// How often the tray watcher re-renders the icon. Acceptance criterion
+/// from BOM P3 is "icon reflects state within 1s of state change"; 500 ms
+/// gives a comfortable margin and a clean 2 Hz pulse for the animated
+/// states (Restarting, GiveUp).
+const TRAY_TICK: Duration = Duration::from_millis(500);
 
 /// Resolve the path to `ecosystem.config.cjs`. Override via
 /// `STAVR_ECOSYSTEM_PATH` env var (P6 installer wiring); fall back to the
@@ -72,8 +79,49 @@ fn main() {
         .setup(move |app| {
             let _tray = tray::build(app.handle())?;
             log::info!("stavR Governor started; tray icon attached");
-            // P3 will wire the supervisor's state into the tray icon here.
-            let _state_handle = supervisor.state();
+
+            // Tray watcher: snapshot supervisor state every TRAY_TICK and
+            // push it onto the tray (icon + tooltip). The watcher runs on
+            // its own thread so the Tauri event loop isn't blocked by PNG
+            // decode or set_icon calls, and the state Mutex is held only
+            // long enough to copy a few primitives into a StateSnapshot.
+            let watcher_app = app.handle().clone();
+            let watcher_state = supervisor.state();
+            std::thread::Builder::new()
+                .name("tray-watcher".to_string())
+                .spawn(move || {
+                    let mut prev_state = None;
+                    let mut pulse_phase = false;
+                    loop {
+                        let snapshot = {
+                            let sm = watcher_state.lock();
+                            tray::StateSnapshot::from(&sm, Instant::now())
+                        };
+                        let pulses = IconVariant::state_pulses(snapshot.state);
+                        let state_changed = Some(snapshot.state) != prev_state;
+                        // Skip redundant re-renders: only call set_icon if
+                        // the state changed OR we're in a pulsing state
+                        // (where pulse_phase needs to flip frame).
+                        if state_changed || pulses {
+                            if let Err(e) =
+                                tray::apply_state(&watcher_app, &snapshot, pulse_phase)
+                            {
+                                log::warn!("tray watcher: apply_state failed: {e}");
+                            }
+                        }
+                        if pulses {
+                            pulse_phase = !pulse_phase;
+                        } else {
+                            // Reset phase on entry to a non-pulsing state so
+                            // the next pulse cycle starts at a defined frame.
+                            pulse_phase = false;
+                        }
+                        prev_state = Some(snapshot.state);
+                        std::thread::sleep(TRAY_TICK);
+                    }
+                })
+                .expect("spawn tray watcher thread");
+
             Ok(())
         })
         .run(tauri::generate_context!())
