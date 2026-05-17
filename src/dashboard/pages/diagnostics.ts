@@ -149,6 +149,13 @@ const DIAGNOSTICS_CSS = `
 .trend-legend .swatch { width: 8px; height: 2px; border-radius: 1px; }
 .trend-svg { flex: 1; width: 100%; min-height: 140px; }
 .trend-svg svg { width: 100%; height: 100%; display: block; }
+.trend-empty {
+  flex: 1; min-height: 140px;
+  display: flex; align-items: center; justify-content: center;
+  text-align: center; padding: 16px;
+  font-family: var(--mono); font-size: 11px;
+  color: var(--ink-3); font-style: italic;
+}
 
 /* Roster table */
 .roster-panel {
@@ -271,8 +278,15 @@ const DIAGNOSTICS_CSS = `
   text-transform: uppercase; letter-spacing: 0.1em;
   color: var(--ink-2); font-weight: 500;
 }
-.tail-live {
+.tail-count-wrap {
   margin-left: auto;
+  font-family: var(--mono); font-size: 9px; color: var(--ink-3);
+  letter-spacing: 0.06em;
+}
+.tail-count-wrap [data-role="tail-count"] {
+  color: var(--ink-1); font-weight: 600;
+}
+.tail-live {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 3px 9px;
   background: rgba(109,213,140,.08);
@@ -331,25 +345,41 @@ function renderGauge(label: string, value: string, sub: string, status: 'ok' | '
   ].join('');
 }
 
-function renderTrendChart(title: string, lines: { name: string; color: string; points: string }[]): string {
+// Storm Pass #2 F65 — render the trend chart, but if the section has no real
+// data (e.g., zero registered MCPs / zero active workers) replace the
+// polyline body with an explicit empty-state. The page JS overwrites the
+// `data-role` slot with live polyline coords once the windowed summary
+// fetch resolves. Until then we draw a flat-at-zero baseline so the chart
+// never shows fake trending lines.
+function renderTrendChart(title: string, lines: { name: string; color: string }[], opts?: { emptyMessage?: string; slot?: string }): string {
+  const isEmpty = !!opts?.emptyMessage;
+  const slot = opts?.slot ?? '';
+  const flatPoints = '0,118 27,118 55,118 82,118 109,118 136,118 164,118 191,118 218,118 245,118 273,118 300,118';
   return [
-    `<div class="trend-panel glass">`,
+    `<div class="trend-panel glass" ${slot ? `data-role="${slot}"` : ''}>`,
     `<div class="trend-head">`,
     `<span class="trend-title">${escapeHtml(title)}</span>`,
     `<div class="trend-legend">`,
     lines.map((l) => `<span><span class="swatch" style="background:${l.color};"></span>${escapeHtml(l.name)}</span>`).join(''),
     `</div>`,
     `</div>`,
-    `<div class="trend-svg">`,
-    `<svg viewBox="0 0 300 120" preserveAspectRatio="none">`,
-    `<g stroke="rgba(255,255,255,.04)" stroke-width="0.5">`,
-    `<line x1="0" y1="30" x2="300" y2="30"/>`,
-    `<line x1="0" y1="60" x2="300" y2="60"/>`,
-    `<line x1="0" y1="90" x2="300" y2="90"/>`,
-    `</g>`,
-    lines.map((l) => `<polyline fill="none" stroke="${l.color}" stroke-width="1.6" points="${l.points}"/>`).join(''),
-    `</svg>`,
-    `</div>`,
+    isEmpty
+      ? `<div class="trend-empty" data-role="${slot}-empty">${escapeHtml(opts!.emptyMessage!)}</div>`
+      : [
+          `<div class="trend-svg">`,
+          `<svg viewBox="0 0 300 120" preserveAspectRatio="none">`,
+          `<g stroke="rgba(255,255,255,.04)" stroke-width="0.5">`,
+          `<line x1="0" y1="30" x2="300" y2="30"/>`,
+          `<line x1="0" y1="60" x2="300" y2="60"/>`,
+          `<line x1="0" y1="90" x2="300" y2="90"/>`,
+          `</g>`,
+          // Server side we draw flat-at-zero baselines per series; the page
+          // JS replaces these with real coords once the windowed fetch
+          // resolves. Synthetic trending lines are forbidden here.
+          lines.map((l, i) => `<polyline fill="none" stroke="${l.color}" stroke-width="1.6" data-series="${i}" points="${flatPoints}"/>`).join(''),
+          `</svg>`,
+          `</div>`,
+        ].join(''),
     `</div>`,
   ].join('');
 }
@@ -417,19 +447,78 @@ function renderSection(opts: {
 // =================================== JS ===================================
 const DIAGNOSTICS_JS = `
 (function() {
-  // ---- window selector — drives all .trend-svg refresh fetches ----
+  // ---- F69 window selector — drives windowed fetches across all trend
+  // charts. The currently-selected window persists across reloads via
+  // localStorage; default 5m. Clicking a button re-pressed the chip and
+  // triggers refreshAll() which fetches /dashboard/api/traffic-summary
+  // for the new range and re-renders the polylines.
+  const ALLOWED_WINDOWS = ['5m','1h','24h','7d'];
+  function currentWindow() {
+    try {
+      const saved = localStorage.getItem('stavr.diagWindow');
+      if (saved && ALLOWED_WINDOWS.indexOf(saved) >= 0) return saved;
+    } catch (_) {}
+    return '5m';
+  }
+  function setWindow(w) {
+    if (ALLOWED_WINDOWS.indexOf(w) < 0) return;
+    try { localStorage.setItem('stavr.diagWindow', w); } catch (_) {}
+    document.querySelectorAll('.window-bar button').forEach(function(x){
+      x.setAttribute('aria-pressed', x.getAttribute('data-window') === w ? 'true' : 'false');
+    });
+  }
+  setWindow(currentWindow());
+
+  // Project a 12-bucket count array onto the trend-chart 300×120 viewBox.
+  // y range: 6 (top, hottest) .. 118 (bottom, zero). Each series is scaled
+  // independently so a near-flat error series doesn't get drowned out by
+  // a hot mcp series.
+  function pointsFor(values) {
+    if (!Array.isArray(values) || values.length === 0) return '';
+    const max = Math.max(1, Math.max.apply(null, values));
+    const n = values.length;
+    const xs = values.map(function(v, i) {
+      const x = (i * 300 / (n - 1 || 1)).toFixed(1);
+      const norm = v / max;
+      const y = (118 - norm * 112).toFixed(1);
+      return x + ',' + y;
+    });
+    return xs.join(' ');
+  }
+  function applySeries(slot, seriesPoints) {
+    const panel = document.querySelector('[data-role="' + slot + '"]');
+    if (!panel) return;
+    const polylines = panel.querySelectorAll('svg polyline[data-series]');
+    if (polylines.length === 0) return;
+    polylines.forEach(function(p) {
+      const idx = Number(p.getAttribute('data-series') || '0');
+      const pts = seriesPoints[idx];
+      if (typeof pts === 'string' && pts.length > 0) p.setAttribute('points', pts);
+    });
+  }
+  async function refreshAll() {
+    const w = currentWindow();
+    try {
+      const r = await fetch('/dashboard/api/traffic-summary?range=' + encodeURIComponent(w), { headers: { accept: 'application/json' } });
+      if (!r.ok) return;
+      const body = await r.json();
+      const mcpPts = pointsFor(body.mcp && body.mcp.points);
+      const p95Pts = pointsFor(body.workers && body.workers.points);
+      const errPts = pointsFor(body.errors && body.errors.points);
+      applySeries('mcp-trend',    [mcpPts, p95Pts, errPts]);
+      applySeries('fleet-trend',  [mcpPts, errPts]);
+      applySeries('worker-trend', [p95Pts, errPts]);
+    } catch (_) {}
+  }
   document.querySelectorAll('.window-bar button').forEach(function(b) {
     b.addEventListener('click', function() {
-      document.querySelectorAll('.window-bar button').forEach(function(x){ x.setAttribute('aria-pressed', 'false'); });
-      b.setAttribute('aria-pressed', 'true');
-      // Real reloading wired in v0.5 — for now we just rotate the visual
-      // polyline slightly to signal the change.
-      document.querySelectorAll('.trend-svg svg polyline').forEach(function(p) {
-        const pts = (p.getAttribute('points') || '').split(' ');
-        p.setAttribute('points', pts.reverse().join(' '));
-      });
+      const w = b.getAttribute('data-window') || '5m';
+      setWindow(w);
+      refreshAll();
     });
   });
+  refreshAll();
+  setInterval(refreshAll, 10000);
 
   // ---- gauge + trend live refresh from /metrics ----
   async function pull() {
@@ -477,28 +566,55 @@ const DIAGNOSTICS_JS = `
   }
   pullHeal();
 
-  // ---- live trace tail via SSE ----
+  // ---- F68 live trace tail via SSE ----
+  // The broker → SSE pipe is already working; the storm-pass report of
+  // "connected dot, but never displays events" was caused by three latent
+  // bugs in the JS that turned every line into "· · · ·":
+  //   1. The "Waiting for events…" placeholder was never cleared when the
+  //      first event arrived, so a near-empty stream looked completely
+  //      stalled to the operator.
+  //   2. worker_id / bom_id were read off the top-level data object
+  //      instead of data.payload, so the worker column always rendered
+  //      as "·" regardless of the event.
+  //   3. duration_ms had the same problem — every latency cell showed "·".
+  // Also surface a tiny "events received" counter on the tail header so
+  // operators can verify the pipe is alive even during quiet periods.
   const tail = document.querySelector('[data-role="tail-body"]');
+  const counter = document.querySelector('[data-role="tail-count"]');
   let paused = false;
+  let received = 0;
+  function clearEmptyPlaceholder() {
+    if (!tail) return;
+    const empty = tail.querySelector('.tail-empty');
+    if (empty) tail.removeChild(empty);
+  }
   if (tail) {
     tail.addEventListener('mouseenter', function(){ paused = true; });
     tail.addEventListener('mouseleave', function(){ paused = false; });
     try {
       const es = new EventSource('/dashboard/stream');
       es.addEventListener('event', function(ev) {
-        if (paused) return;
         try {
           const data = JSON.parse(ev.data || '{}');
+          const payload = (data && typeof data.payload === 'object' && data.payload) ? data.payload : {};
+          received += 1;
+          if (counter) counter.textContent = String(received);
+          if (paused) return;
+          clearEmptyPlaceholder();
           const ts = new Date(data.at || Date.now()).toISOString().slice(11, 19);
-          const w = String(data.worker_id || data.bom_id || '').slice(0,8) || '·';
+          const wid = payload.worker_id || payload.bom_id || payload.id || data.correlation_id || '';
+          const w = String(wid).slice(0, 8) || '·';
           const txt = String(data.kind || '·');
-          const lat = data.duration_ms != null ? data.duration_ms + 'ms' : '·';
-          const cls = String(data.kind || '').indexOf('err') >= 0 ? 'err'
-            : (data.duration_ms && data.duration_ms > 1000 ? 'slow' : '');
+          const dur = (typeof payload.duration_ms === 'number') ? payload.duration_ms
+                    : (typeof payload.duration_sec === 'number') ? Math.round(payload.duration_sec * 1000)
+                    : null;
+          const lat = dur != null ? dur + 'ms' : '·';
+          const cls = txt.indexOf('err') >= 0 || txt.indexOf('fail') >= 0 ? 'err'
+            : (dur && dur > 1000 ? 'slow' : '');
           const line = document.createElement('div');
           line.className = 'tail-line ' + cls;
           line.innerHTML = '<span class="ts">' + ts + '</span>'
-                        + '<span class="w">' + w + '</span>'
+                        + '<span class="w">' + w.replace(/</g,'&lt;') + '</span>'
                         + '<span class="t">' + txt.replace(/</g,'&lt;') + '</span>'
                         + '<span class="lat">' + lat + '</span>';
           tail.appendChild(line);
@@ -559,11 +675,19 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
       `<span style="color:var(--ink-3);">—</span>`,
     ],
   }));
-  const mcpTrend = renderTrendChart('MCPs · qps + p95 + err', [
-    { name: 'qps',   color: 'var(--green)', points: '0,70 30,68 60,72 90,65 120,70 150,60 180,65 210,58 240,62 270,55 300,58' },
-    { name: 'p95ms', color: 'var(--sky)',   points: '0,60 30,58 60,62 90,55 120,60 150,52 180,58 210,50 240,54 270,48 300,52' },
-    { name: 'err%',  color: 'var(--amber)', points: '0,100 30,95 60,98 90,92 120,90 150,88 180,86 210,82 240,80 270,78 300,76' },
-  ]);
+  const mcpHasData = bricks.length > 0;
+  const mcpTrend = renderTrendChart(
+    'MCPs · qps + p95 + err',
+    [
+      { name: 'qps',   color: 'var(--green)' },
+      { name: 'p95ms', color: 'var(--sky)'   },
+      { name: 'err%',  color: 'var(--amber)' },
+    ],
+    {
+      slot: 'mcp-trend',
+      ...(mcpHasData ? {} : { emptyMessage: 'No data — register an MCP to see traffic.' }),
+    },
+  );
   const mcpSection = renderSection({
     title: 'Section 1 · MCP servers',
     meta: `${bricks.length} registered · live`,
@@ -587,10 +711,14 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
       cols: ['—', '—', 'ACL'],
     })),
   ];
-  const fleetTrend = renderTrendChart('stavR fleet · RSS + loop p99', [
-    { name: 'RSS MB',  color: 'var(--sky)',    points: '0,80 30,82 60,78 90,80 120,75 150,78 180,72 210,76 240,70 270,74 300,68' },
-    { name: 'loop ms', color: 'var(--purple)', points: '0,90 30,88 60,90 90,86 120,88 150,84 180,86 210,82 240,84 270,80 300,82' },
-  ]);
+  const fleetTrend = renderTrendChart(
+    'stavR fleet · RSS + loop p99',
+    [
+      { name: 'RSS MB',  color: 'var(--sky)'    },
+      { name: 'loop ms', color: 'var(--purple)' },
+    ],
+    { slot: 'fleet-trend' },
+  );
   const fleetSection = renderSection({
     title: 'Section 2 · stavR fleet (primary + spawn + peers)',
     meta: `${1 + peers + 1} processes`,
@@ -614,10 +742,18 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
       `<span style="color:var(--ink-3);">—</span>`,
     ],
   }));
-  const workerTrend = renderTrendChart('Workers · throughput', [
-    { name: 'active', color: 'var(--green)', points: '0,80 30,75 60,70 90,72 120,65 150,68 180,62 210,65 240,58 270,60 300,55' },
-    { name: 'crashed', color: 'var(--crit)',  points: '0,110 30,110 60,108 90,110 120,108 150,110 180,108 210,110 240,108 270,110 300,108' },
-  ]);
+  const workerActive = workers.filter((w) => w.status === 'running' || w.status === 'idle').length;
+  const workerTrend = renderTrendChart(
+    'Workers · throughput',
+    [
+      { name: 'active',  color: 'var(--green)' },
+      { name: 'crashed', color: 'var(--crit)'  },
+    ],
+    {
+      slot: 'worker-trend',
+      ...(workerActive > 0 ? {} : { emptyMessage: 'No active workers — spawn a job to see throughput.' }),
+    },
+  );
   const workerSection = renderSection({
     title: 'Section 3 · Workers + scopes',
     meta: `${workers.length} processes`,
@@ -648,6 +784,9 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     `<div class="tail-panel glass">`,
     `<div class="tail-head">`,
     `<span class="tail-title">Live trace tail</span>`,
+    // F68 — small "events received" counter so the operator can confirm
+    // the SSE pipe is alive even when the daemon is quiet.
+    `<span class="tail-count-wrap">received <span data-role="tail-count">0</span></span>`,
     `<span class="tail-live">SSE · /dashboard/stream</span>`,
     `</div>`,
     `<div class="tail-body" data-role="tail-body">`,

@@ -1488,6 +1488,81 @@ export function mountDashboardRoutes(
     res.json({ workers: broker.store.listWorkers() });
   });
 
+  // F9 / F69 — operator-trust pass. Real top-tools + windowed traffic stats,
+  // sourced from the audit event log (not the synthetic numbers the v8 mockup
+  // shipped with). Both endpoints accept a single `range` param drawn from
+  // {5m,1h,24h,7d}; the Helm L1 panel and Diagnostics window selector both
+  // call them.
+  function parseRange(raw: unknown): { window: '5m' | '1h' | '24h' | '7d'; sinceAt: string } {
+    const allowed: Record<string, number> = { '5m': 5 * 60_000, '1h': 60 * 60_000, '24h': 24 * 60 * 60_000, '7d': 7 * 24 * 60 * 60_000 };
+    const win = typeof raw === 'string' && raw in allowed ? raw : '1h';
+    const sinceAt = new Date(Date.now() - allowed[win]).toISOString();
+    return { window: win as '5m' | '1h' | '24h' | '7d', sinceAt };
+  }
+
+  app.get('/dashboard/api/top-tools', (req, res) => {
+    const { window, sinceAt } = parseRange(req.query.range);
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 5) || 5, 1), 25);
+    const { events } = broker.store.getEvents({ kinds: ['steward_tool_call'], sinceAt, limit: 5000 });
+    const counts = new Map<string, number>();
+    for (const ev of events) {
+      const tool = typeof (ev.payload as { tool?: unknown })?.tool === 'string'
+        ? (ev.payload as { tool: string }).tool
+        : null;
+      if (!tool) continue;
+      counts.set(tool, (counts.get(tool) ?? 0) + 1);
+    }
+    const ranked = [...counts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, limit);
+    const max = ranked.length > 0 ? ranked[0]!.count : 0;
+    const tools = ranked.map((t) => ({
+      name: t.name,
+      count: t.count,
+      pct: max > 0 ? Math.round((t.count / max) * 100) : 0,
+    }));
+    res.json({ window, since: sinceAt, total_tool_calls: events.length, tools });
+  });
+
+  // F69 — range-aware traffic summary for the Diagnostics window selector.
+  // Returns 12 buckets across the window for each of {mcp, workers, errors}
+  // plus a total. The page JS turns each bucket array into SVG polyline
+  // coords against the existing 300×120 viewBox.
+  app.get('/dashboard/api/traffic-summary', (req, res) => {
+    const { window, sinceAt } = parseRange(req.query.range);
+    const sinceMs = Date.parse(sinceAt);
+    const nowMs = Date.now();
+    const bucketCount = 12;
+    const bucketWidthMs = (nowMs - sinceMs) / bucketCount;
+    const events = broker.store.getEvents({ sinceAt, limit: 5000 }).events;
+    const mcpKinds = new Set(['steward_tool_call']);
+    const workerKinds = new Set(['worker_spawned', 'worker_progress', 'worker_activity', 'worker_log']);
+    const errorKinds = new Set(['error', 'worker_error', 'bom_step_failed', 'host_exec_denied']);
+    const mcp = new Array(bucketCount).fill(0);
+    const workers = new Array(bucketCount).fill(0);
+    const errors = new Array(bucketCount).fill(0);
+    for (const ev of events) {
+      const t = Date.parse(ev.at);
+      if (!Number.isFinite(t)) continue;
+      const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor((t - sinceMs) / bucketWidthMs)));
+      if (mcpKinds.has(ev.kind)) mcp[idx]++;
+      if (workerKinds.has(ev.kind)) workers[idx]++;
+      if (errorKinds.has(ev.kind)) errors[idx]++;
+    }
+    const sum = (xs: number[]) => xs.reduce((s, n) => s + n, 0);
+    res.json({
+      window,
+      since: sinceAt,
+      buckets: bucketCount,
+      bucket_width_ms: Math.round(bucketWidthMs),
+      mcp: { points: mcp, total: sum(mcp) },
+      workers: { points: workers, total: sum(workers) },
+      errors: { points: errors, total: sum(errors) },
+    });
+  });
+
+
   app.get('/dashboard/workers/:id', (req, res) => {
     const worker = broker.store.getWorker(req.params.id);
     if (!worker) {
