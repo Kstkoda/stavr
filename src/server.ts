@@ -25,6 +25,8 @@ import { registerStewardAskTool } from './steward-ask-tool.js';
 import { registerProposePlanTool } from './tools/propose-plan.js';
 import { getV02Subsystem } from './steward/v02-wiring.js';
 import { registerHostExecTool } from './security/host-exec-tool.js';
+import { ActorPermissionStore } from './security/actor-permissions.js';
+import { CapabilityOverrideStore } from './security/capability-overrides.js';
 import { ToolRegistry, wrapServerForRegistry } from './tools/registry.js';
 import { Notifier } from './notify/notifier.js';
 import { NtfyChannel } from './notify/channels/ntfy.js';
@@ -71,6 +73,33 @@ export function getOrCreateToolRegistry(broker: Broker): ToolRegistry {
 
 export function getToolRegistry(broker: Broker): ToolRegistry | undefined {
   return toolRegistriesByBroker.get(broker);
+}
+
+const capabilityOverrideStoresByBroker = new WeakMap<Broker, CapabilityOverrideStore>();
+const actorPermissionStoresByBroker = new WeakMap<Broker, ActorPermissionStore>();
+
+/**
+ * Layer 0 capability override store — operator-runtime hard gate
+ * (v0.6.9 PR #2). One per broker, backed by the broker's SQLite store.
+ */
+export function getOrCreateCapabilityOverrideStore(broker: Broker): CapabilityOverrideStore {
+  const existing = capabilityOverrideStoresByBroker.get(broker);
+  if (existing) return existing;
+  const store = new CapabilityOverrideStore(broker.store.rawDb);
+  capabilityOverrideStoresByBroker.set(broker, store);
+  return store;
+}
+
+/**
+ * Layer 3 per-actor permissions matrix (v0.6.9 PR #2). One per broker,
+ * backed by the broker's SQLite store.
+ */
+export function getOrCreateActorPermissionStore(broker: Broker): ActorPermissionStore {
+  const existing = actorPermissionStoresByBroker.get(broker);
+  if (existing) return existing;
+  const store = new ActorPermissionStore(broker.store.rawDb);
+  actorPermissionStoresByBroker.set(broker, store);
+  return store;
 }
 
 function getOrCreateOrchestrator(broker: Broker, trustStore: TrustStore): WorkerOrchestrator {
@@ -177,8 +206,22 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   // wrapped registerTool is in place when subsystems register their
   // tools. Idempotent across sessions — wrapServerForRegistry tags the
   // patched method and bails on a second call.
+  //
+  // v0.6.9 PR #2 — also wire the Layer 0 runtime gate. Every tool
+  // handler is wrapped to hit `CapabilityOverrideStore.check(toolId)`
+  // BEFORE the user-supplied handler runs. If the operator has
+  // disabled the tool via the dashboard, the call returns toolError
+  // immediately without touching the subsystem code.
   const toolRegistry = getOrCreateToolRegistry(broker);
-  wrapServerForRegistry(server, toolRegistry, 'server.ts');
+  const capabilityStore = getOrCreateCapabilityOverrideStore(broker);
+  wrapServerForRegistry(server, toolRegistry, 'server.ts', {
+    check(toolId: string): { allowed: boolean; reason?: string } {
+      const res = capabilityStore.check(toolId);
+      return res.allowed
+        ? { allowed: true }
+        : { allowed: false, reason: res.reason };
+    },
+  });
 
   const trustStore = getOrCreateTrustStore(broker);
   const stewardStore = getOrCreateStewardStore(broker);
