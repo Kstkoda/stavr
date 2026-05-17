@@ -97,6 +97,7 @@ Each PR is independently merge-able: PR #1 ships a working historical browser; P
 - `src/dashboard/data/history/host-exec.ts` (new) — extracts host_exec events from events table grouped by correlation_id
 - `src/dashboard/data/history/commits.ts` (new) — reads git log from working tree via `git log --since --until --format=%H%n%s%n%ae%n%at`
 - `src/dashboard/data/history/ci.ts` (new) — wraps existing GitHub workflow runs query
+- `src/dashboard/data/history/notifications.ts` (new) — `fetchNotificationsHistory({since, until, limit, offset, severity?, source?})` over the `notifications` table (from PR #32 schema)
 - `src/dashboard/data/history/timeline.ts` (new) — merges all sources into a single sorted timeline
 - `tests/dashboard/data/history/*.test.ts` (one per fetcher)
 
@@ -110,14 +111,15 @@ Every fetcher returns `{ items: [...], next_cursor: string | null, total_estimat
 
 ### Acceptance
 
-- 7 fetchers, each with at least 3 tests (happy path, empty result, pagination boundary)
+- 8 fetchers, each with at least 3 tests (happy path, empty result, pagination boundary)
 - All fetchers respect `since`/`until` ISO 8601 timestamps
 - Timeline merger sorts by timestamp DESC, dedupes if same correlation_id appears in multiple source types
+- Notifications fetcher exposes filter by `source_agent` (operator / steward-agent / cowork-claude / cc / federated peer) so operator can answer "who's been alerting me?"
 - No fetcher executes a write (write attempt throws "history is read-only" error)
 - `npm test` passes, build clean
 
 ### Commit
-`feat(history): historical data fetchers across decisions/scopes/boms/plans/host-exec/commits/ci`
+`feat(history): historical data fetchers across decisions/scopes/boms/plans/host-exec/commits/ci/notifications`
 
 ---
 
@@ -135,28 +137,32 @@ Every fetcher returns `{ items: [...], next_cursor: string | null, total_estimat
 `.glass` panel layout:
 
 ```
-┌─ HISTORY ─────────────────────────────────────────────────┐
-│ Range: [Today] [24h] [7d] [Custom: ___]   Tab: [All ▾]   │
-│                                                            │
-│ ┌────────────────────────────────────────────────────────┐│
-│ │ 14:54  test(autonomy): bump 100ms→250ms  38554e6  CI ✓ ││ <- commit
-│ │ 14:53  scope granted to Cowork-Claude (ts-1c5e915d…)   ││ <- scope
-│ │ 14:50  scope proposed: Fix Windows CI flake            ││ <- scope
-│ │ 14:45  PR #31 merged: v0.5 portability                 ││ <- PR
-│ │ 14:44  CC dispatch: v0.6 notifications PR #1           ││ <- BOM/dispatch
-│ │ 14:42  decision approved: github_merge_pr Kstkoda/...  ││ <- decision
-│ │ ...                                                     ││
-│ └────────────────────────────────────────────────────────┘│
-│ [Load more ↓]                                              │
-└────────────────────────────────────────────────────────────┘
+┌─ HISTORY ─────────────────────────────────────────────────────────────┐
+│ Range: [Today] [24h] [7d] [Custom: ___]   Tab: [All ▾]   🔍 Search… │
+│                                                                        │
+│ ┌──────────────────────────────────────────────────────────────────┐ │
+│ │ 14:54  📬 [steward-agent] Retrying with model fallback  ↩ 3 hops │ │ <- notification
+│ │ 14:53  ⌨  test(autonomy): bump 100ms→250ms  38554e6  CI ✓        │ │ <- commit
+│ │ 14:53  🔑 scope granted to Cowork-Claude (ts-1c5e915d…)          │ │ <- scope
+│ │ 14:50  🔑 scope proposed: Fix Windows CI flake                   │ │ <- scope
+│ │ 14:45  ⌨  PR #31 merged: v0.5 portability                        │ │ <- PR
+│ │ 14:44  📜 CC dispatch: v0.6 notifications PR #1                  │ │ <- BOM/dispatch
+│ │ 14:42  ⚖  decision approved: github_merge_pr Kstkoda/...         │ │ <- decision
+│ │ ...                                                                │ │
+│ └──────────────────────────────────────────────────────────────────┘ │
+│ [Load more ↓]                                                          │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 - **Range picker**: Today / 24h / 7d / Custom (with date picker)
-- **Type tabs**: All / Decisions / Scopes / BOMs / Plans / Host-exec / Commits / CI
-- **Row icons**: distinct icon per source type (gavel for decisions, key for scopes, scroll for BOMs, list-checks for plans, terminal for host-exec, git-commit for commits, check-circle/x-circle for CI)
+- **Type tabs**: data-driven from a registered event-kind registry (NOT hardcoded). Initial set: All / Decisions / Scopes / BOMs / Plans / Host-exec / Commits / CI / Notifications. Future event kinds per the universal-signal-trace roadmap (ADR-041) appear as new tabs automatically once their event kinds are registered — no dashboard code change required to surface them. Specifically: **LLM-calls** (prompt + response bodies for our universe only), **DB-queries** (actual SQL text + bound parameters issued by our daemon), **MCP-traffic** (inbound + outbound MCP tool calls), **Worker-events** (granular lifecycle), **Federation-traffic** (cross-stavR A2A — our side only; peer's internal universe stays private).
+- **Row icons**: distinct icon per source type, registered alongside the event kind. Initial: gavel for decisions, key for scopes, scroll for BOMs, list-checks for plans, terminal for host-exec, git-commit for commits, check-circle/x-circle for CI, envelope/bell for notifications. Registry pattern means new kinds bring their own icon.
 - **Status pills**: success/failure/pending/expired/revoked color-coded
-- **Hover**: shows correlation_id + actor (CC / Cowork-Claude / operator)
-- **Click**: opens detail drawer (see P4)
+- **Trace-depth badge** on notification rows: small chip like `↩ 3 hops` indicating the depth of the correlation chain (how many events back the originating trigger is). Helps operator immediately gauge "is this a leaf notification or does it trace far back?"
+- **Source-agent badge** on notification rows: `[steward-agent]`, `[cowork-claude]`, `[cc]`, `[operator]`, or `[peer:<spawn>]` for federated. Operator sees at a glance who's been alerting them.
+- **Hover**: shows correlation_id + actor (CC / Cowork-Claude / operator / steward-agent / federated peer)
+- **Click on notification row**: opens **backward-trace drawer** (see P4) — walks the correlation chain from the notification BACK to its originating event (decision / scope / BOM dispatch / Steward strategy decision / etc.). Operator can scrub their way back through the causation chain even when the trigger came from far away (hours ago, or from a federated peer's machine).
+- **Click on non-notification rows**: opens standard detail drawer (also see P4)
 
 ### Iron palette compliance
 
@@ -236,9 +242,12 @@ Body must include:
 - `src/dashboard/pages/history.ts` — extend row hover/click to surface correlation count + open thread
 - `tests/dashboard/data/history/correlation.test.ts`
 
-### Correlation walk
+### Correlation walk — bidirectional
 
-Starting from a correlation_id, walk:
+The walker supports both directions:
+
+**FORWARD walk** (starting from origin, walking downstream — useful when reviewing a dispatch's outcome):
+Starting from a correlation_id at its originating event, walk:
 1. The originating event (often a decision or scope grant)
 2. All host_exec calls tagged with that correlation_id
 3. The commit(s) those host_exec calls produced
@@ -247,7 +256,18 @@ Starting from a correlation_id, walk:
 6. The merge events (if any)
 7. Any downstream notifications fired (v0.6)
 
-Return as a directed acyclic graph; render flattened with indentation for the UI.
+**BACKWARD walk** (starting from notification, walking upstream — useful when operator gets a notification and asks "where did this come from?"):
+Starting from a notification ID, walk:
+1. The notification (terminal observation)
+2. The `notification_requested` event (or other notifier-subscribed event) that triggered it
+3. The publishing actor's prior action (Steward strategy decision, validation failure, scope grant, etc.)
+4. That action's parent context (which BOM dispatched the work, which trust scope authorized it)
+5. The originating operator action (which BOM the operator approved, which scope the operator granted)
+6. Continue walking back until reaching a leaf with no parent correlation (typically an operator-initiated event)
+
+Both walks return a directed acyclic graph; render flattened with indentation for the UI. The drawer header indicates direction: "TRACE FORWARD from origin" vs "TRACE BACKWARD from notification."
+
+Backward walks are especially important for **distant notifications** — when Steward's strategy self-heal fires a notification 3 hours after the originating operator action, or when a federated peer's BOM dispatch produces a notification on the local machine. The chain might span hours and multiple actors; the backward walk lets the operator follow it to the source without manually correlating timestamps.
 
 ### UI
 
@@ -276,13 +296,17 @@ Side drawer or modal showing:
 
 ### Acceptance
 
-- Correlation walker returns ordered DAG
+- Correlation walker returns ordered DAG (both forward and backward modes)
+- Walker is **kind-agnostic** — accepts any event ID or correlation_id as starting point, regardless of event kind. The walk logic depends only on `correlation_id` linkage, never on the kind enum. This is the foundation for the universal-signal-trace roadmap (future LLM-call, DB-query, MCP-traffic, peer-A2A event kinds will be walkable without walker code changes).
 - Trace renders with proper indentation
 - Click any node in the trace to expand its details inline
-- 5+ tests passing
+- Notification rows trigger backward-walk by default; non-notification rows trigger forward-walk by default
+- "Switch direction" button on the drawer header inverts the walk (operator can scrub either way from any node)
+- Hop-depth badge on the originating row reflects the actual chain length walked
+- 6+ tests passing (including: backward walk from notification all the way to operator action, walk that crosses federated-peer boundary, walk that bottoms out at a system-initiated event with no operator parent, walk that starts from a non-notification non-decision event kind — proves kind-agnostic property)
 
 ### Commit
-`feat(history): correlation-id threading with full trace drawer`
+`feat(history): bidirectional correlation-id threading with backward trace from notifications`
 
 ---
 
