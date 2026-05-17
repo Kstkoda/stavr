@@ -35,7 +35,7 @@ module.exports = {
       ],
       cwd: __dirname,
       // Diagnostic endpoints (POST /debug/heap-snapshot, /debug/cpu-profile,
-      // /debug/diagnostic-report). Locked behind this flag � daemon returns
+      // /debug/diagnostic-report). Locked behind this flag � daemon returns
       // 404 (not 403) when unset to avoid leaking endpoint existence.
       // Personal-machine + loopback-only (ADR-006) makes always-on safe.
       env: {
@@ -58,6 +58,32 @@ module.exports = {
       // Memory ceiling — restart if heap goes wild (defense in depth alongside
       // --max-old-space-size). 7000MB is safely below the 8192 heap cap.
       max_memory_restart: '7000M',
+    },
+    // v0.5 P3 — Steward agent subprocess (ADR-032 §Decision 1).
+    // Lives ALONGSIDE the in-process Steward during the P5 shadow window. The
+    // daemon continues to do real planning via wireV02Subsystem; this entry
+    // runs the new ModelRuntime-backed planner in parallel, writing planned
+    // BOMs to the parity log (P5) but NOT dispatching. Cutover (delete
+    // in-process planner, swap the daemon call site) is a separate, manually
+    // gated commit.
+    {
+      name: 'stavr-steward-agent',
+      script: 'dist/steward-agent/main.js',
+      args: ['--daemon-url', 'http://127.0.0.1:7777'],
+      cwd: __dirname,
+      // Lower heap ceiling than the daemon — Steward shouldn't accumulate
+      // events; if it climbs near the cap that's a planner-context retention
+      // bug worth paging on rather than masking.
+      node_args: ['--max-old-space-size=2048'],
+      max_restarts: 3,
+      restart_delay: 30000,
+      autorestart: true,
+      kill_timeout: 10000,
+      max_memory_restart: '2000M',
+      out_file: './tmp/pm2-steward.out.log',
+      error_file: './tmp/pm2-steward.err.log',
+      merge_logs: true,
+      time: true,
     },
   ],
 };
