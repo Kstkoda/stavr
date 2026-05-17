@@ -1233,6 +1233,40 @@ export function mountDashboardRoutes(
     res.json({ ok: true, scope });
   });
 
+  // Storm F2 — operator-driven grant from the Pending Scopes UI. The MCP
+  // tool `trust_scope_grant` goes through gatedAction → await_decision so a
+  // human can rubber-stamp it from the dashboard. THIS endpoint *is* that
+  // human surface, so it flips proposed→active directly (no second decision
+  // loop). The MCP-tool path remains untouched.
+  app.post('/dashboard/settings/scopes/:id/grant', async (req, res) => {
+    const existing = trustStore.get(req.params.id);
+    if (!existing) { res.status(404).json({ error: 'not_found' }); return; }
+    if (existing.status !== 'proposed') {
+      res.status(409).json({ error: `scope is not 'proposed' (status=${existing.status})` });
+      return;
+    }
+    const granted = trustStore.grant(req.params.id, 'dashboard-user');
+    if (!granted || granted.status !== 'active') {
+      res.status(500).json({ error: 'grant_failed' });
+      return;
+    }
+    await broker.publish({
+      kind: 'trust_scope_granted',
+      at: new Date().toISOString(),
+      correlation_id: granted.id,
+      source_agent: 'dashboard',
+      payload: {
+        scope_id: granted.id,
+        title: granted.title,
+        granted_by: granted.granted_by,
+        granted_at: granted.granted_at,
+        expires_at: granted.expires_at,
+        expires_after_actions: granted.expires_after_actions,
+      },
+    });
+    res.json({ ok: true, scope: granted });
+  });
+
   app.post('/dashboard/settings/scopes/:id/extend', async (req, res) => {
     const body = (req.body ?? {}) as { new_expires_at?: string; new_expires_after_actions?: number };
     if (!body.new_expires_at && body.new_expires_after_actions === undefined) {
