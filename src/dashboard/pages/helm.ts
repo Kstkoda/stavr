@@ -41,6 +41,13 @@ export interface HelmSystem {
   detail?: string;
 }
 
+export interface HelmDigestState {
+  enabled: boolean;
+  hour: number;
+  minute: number;
+  lastFiredAt?: number;
+}
+
 export interface HelmData {
   intent: {
     /** Current Steward focus — what the daemon thinks it's doing right now. */
@@ -62,6 +69,8 @@ export interface HelmData {
   decisions: { recent: DecisionRecord[]; open: number };
   workers: HelmWorker[];
   systems: HelmSystem[];
+  /** v0.6 — daily digest state. Undefined when the notify fabric is disabled. */
+  digest?: HelmDigestState;
 }
 
 const PROFILE_PILL: Record<ProfileMode, { label: string; variant: PillVariant }> = {
@@ -169,9 +178,37 @@ function renderIntentBand(d: HelmData): string {
     `<div class="l4-timeline">`,
     `<div class="label">Recent decisions</div>`,
     timeline,
+    renderDigestRow(d.digest),
     `</div>`,
     `</div>`,
     `</section>`,
+  ].join('');
+}
+
+function renderDigestRow(state?: HelmDigestState): string {
+  // v0.6 P5 — tiny row showing the daily digest schedule. [Edit] opens a
+  // time prompt; [Disable]/[Enable] flips the cron entry. Only renders when
+  // the notify fabric is enabled (state !== undefined).
+  if (!state) return '';
+  const hh = String(state.hour).padStart(2, '0');
+  const mm = String(state.minute).padStart(2, '0');
+  const lastFired = state.lastFiredAt
+    ? new Date(state.lastFiredAt).toISOString().slice(11, 16)
+    : 'never';
+  const status = state.enabled
+    ? `<span class="stat ok">on · ${hh}:${mm}</span>`
+    : `<span class="stat" style="color:var(--ink-3);">off</span>`;
+  const toggleLabel = state.enabled ? 'Disable' : 'Enable';
+  return [
+    `<div class="l4-intent-row helm-digest-row" data-role="helm-digest">`,
+    `<span class="ts">digest</span>`,
+    `<span class="what">Last fired ${escapeHtml(lastFired)} · ${state.enabled ? 'next ' + hh + ':' + mm : 'paused'}</span>`,
+    status,
+    `<span class="row-actions" style="margin-left:auto;display:flex;gap:6px;">`,
+    `<button type="button" class="btn ghost" data-role="digest-edit" style="font-size:10px;padding:2px 8px;">Edit</button>`,
+    `<button type="button" class="btn ghost" data-role="digest-toggle" data-enabled="${state.enabled}" style="font-size:10px;padding:2px 8px;">${toggleLabel}</button>`,
+    `</span>`,
+    `</div>`,
   ].join('');
 }
 
@@ -849,6 +886,40 @@ const HELM_JS = `
   }
   pullMetrics();
   setInterval(pullMetrics, 5000);
+
+  // v0.6 — digest row buttons (Edit hour / Disable-Enable). Lightweight POSTs
+  // to /dashboard/settings/digest; full reload on success so the row reflects.
+  document.addEventListener('click', async function(ev) {
+    const edit = ev.target.closest('[data-role="digest-edit"]');
+    const tog  = ev.target.closest('[data-role="digest-toggle"]');
+    if (edit) {
+      ev.preventDefault();
+      const t = prompt('Digest time (HH:MM, local TZ)', '09:00');
+      if (!t) return;
+      const m = /^([01]?\\d|2[0-3]):([0-5]\\d)$/.exec(t.trim());
+      if (!m) { alert('Bad time — use HH:MM'); return; }
+      try {
+        await fetch('/dashboard/settings/digest', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ hour: Number(m[1]), minute: Number(m[2]) }),
+        });
+        location.reload();
+      } catch (_e) { /* swallow */ }
+    }
+    if (tog) {
+      ev.preventDefault();
+      const enabled = tog.getAttribute('data-enabled') === 'true';
+      try {
+        await fetch('/dashboard/settings/digest', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled: !enabled }),
+        });
+        location.reload();
+      } catch (_e) { /* swallow */ }
+    }
+  });
 
   // F9 — Top tools (last 1h) bind to /dashboard/api/top-tools. The L1 panel
   // server-renders a "Loading…" placeholder; this swaps in real rows or

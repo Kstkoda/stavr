@@ -27,8 +27,8 @@ const META_KEY = 'notify_digest_last_fired_ms';
 
 export class DigestScheduler {
   private timer?: NodeJS.Timeout;
-  private readonly hour: number;
-  private readonly minute: number;
+  private hour: number;
+  private minute: number;
   private readonly now: () => Date;
   private readonly db?: Database.Database;
   private enabled = true;
@@ -61,6 +61,24 @@ export class DigestScheduler {
 
   enable(): void {
     this.enabled = true;
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  setSchedule(hour: number, minute: number): void {
+    if (Number.isInteger(hour) && hour >= 0 && hour <= 23) this.hour = hour;
+    if (Number.isInteger(minute) && minute >= 0 && minute <= 59) this.minute = minute;
+  }
+
+  snapshotState(): { enabled: boolean; hour: number; minute: number; lastFiredAt?: number } {
+    return {
+      enabled: this.enabled,
+      hour: this.hour,
+      minute: this.minute,
+      lastFiredAt: this.getLastFiredMs(),
+    };
   }
 
   async tick(): Promise<boolean> {
