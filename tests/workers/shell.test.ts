@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { createShellSpawner } from '../../src/workers/shell.js';
@@ -33,10 +36,24 @@ const ctx = {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe('shell spawner', () => {
+  let scriptBaseDir: string;
+
+  beforeEach(() => {
+    // v0.6.7 P1 — spawner now writes worker scripts to disk before
+    // invoking. Use a per-test tmp dir to avoid polluting the operator's
+    // ~/.stavr/worker-scripts/ when the test suite runs locally.
+    scriptBaseDir = mkdtempSync(join(tmpdir(), 'stavr-shell-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(scriptBaseDir, { recursive: true, force: true });
+  });
+
   it('captures stdout lines as progress events and emits exit on success', async () => {
     const child = makeFakeChild();
     const spawner = createShellSpawner({
       spawn: ((..._args: unknown[]) => child) as never,
+      scriptBaseDir,
     });
     const inst = await spawner.spawn(
       { cwd: process.cwd(), shell: 'bash', command: 'echo', args: ['hi'], interactive: false },
@@ -64,7 +81,10 @@ describe('shell spawner', () => {
 
   it('non-zero exit reports crashed reason', async () => {
     const child = makeFakeChild();
-    const spawner = createShellSpawner({ spawn: ((..._a: unknown[]) => child) as never });
+    const spawner = createShellSpawner({
+      spawn: ((..._a: unknown[]) => child) as never,
+      scriptBaseDir,
+    });
     const inst = await spawner.spawn(
       { cwd: process.cwd(), shell: 'bash', command: 'false', args: [], interactive: false },
       ctx,
@@ -79,5 +99,54 @@ describe('shell spawner', () => {
     expect(exits).toHaveLength(1);
     expect(exits[0].reason).toBe('crashed');
     expect(exits[0].exitCode).toBe(1);
+  });
+
+  // v0.6.7 P1 — the spawner writes a script file and invokes via -File/
+  // /c <path>/bash <path>. No more `-Command "..."` inline AV trigger.
+
+  it('writes the worker command to a script file and invokes via -File pattern', async () => {
+    let recordedArgv: { argv0: string; argv: string[] } | undefined;
+    const child = makeFakeChild();
+    const fakeSpawn = ((argv0: string, argv: string[]) => {
+      recordedArgv = { argv0, argv };
+      return child;
+    }) as never;
+    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir });
+    const inst = await spawner.spawn(
+      { cwd: process.cwd(), shell: 'powershell', command: 'Write-Host hi', args: [], interactive: false },
+      ctx,
+    );
+    // Spawn argv: powershell.exe -NoLogo -NonInteractive -NoProfile
+    // -ExecutionPolicy Bypass -File <path>
+    expect(recordedArgv?.argv0).toBe('powershell.exe');
+    expect(recordedArgv?.argv).toContain('-File');
+    expect(recordedArgv?.argv).not.toContain('-Command');
+    expect(recordedArgv?.argv[recordedArgv.argv.length - 1]).toContain('wid.ps1');
+    // Script body is on disk under the test baseDir.
+    const scriptPath = recordedArgv!.argv[recordedArgv!.argv.length - 1];
+    const body = readFileSync(scriptPath, 'utf8');
+    expect(body).toContain('Write-Host hi');
+    expect(body).toContain('# worker_id: wid');
+    // Worker metadata exposes the script path so the dashboard can link.
+    expect(inst.metadata.script_path).toBe(scriptPath);
+  });
+
+  it('cmd shell invokes via /c <path>, never inline /c "<cmd>"', async () => {
+    let recordedArgv: { argv0: string; argv: string[] } | undefined;
+    const child = makeFakeChild();
+    const fakeSpawn = ((argv0: string, argv: string[]) => {
+      recordedArgv = { argv0, argv };
+      return child;
+    }) as never;
+    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir });
+    await spawner.spawn(
+      { cwd: process.cwd(), shell: 'cmd', command: 'echo hi', args: [], interactive: false },
+      ctx,
+    );
+    expect(recordedArgv?.argv0).toBe('cmd.exe');
+    expect(recordedArgv?.argv[0]).toBe('/c');
+    expect(recordedArgv?.argv[1]).toContain('wid.cmd');
+    // No /k (would leave the window open).
+    expect(recordedArgv?.argv).not.toContain('/k');
   });
 });
