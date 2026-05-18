@@ -55,7 +55,7 @@ GOVERNOR_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
 cd "${GOVERNOR_DIR}"
 
 echo "[gen-sbom] generating SBOM for target ${TARGET}"
-cargo cyclonedx --target "${TARGET}" --format json --output-pattern bom
+cargo cyclonedx --target "${TARGET}" --format json
 
 # cargo-cyclonedx emits <crate>.cdx.json next to Cargo.toml.
 EMITTED=$(find . -maxdepth 1 -name '*.cdx.json' ! -name "${OUTPUT}" -print -quit || true)
