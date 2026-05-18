@@ -11,6 +11,13 @@ const ShellSpawnParams = z.object({
   command: z.string().min(1),
   args: z.array(z.string()).optional().default([]),
   interactive: z.boolean().optional().default(false),
+  // v0.6.7 P2 — sleep-correct pacing across shells. The script writer
+  // translates these into the right primitive per shell (Start-Sleep /
+  // ping-loopback / sleep). Operators that need pacing MUST go through
+  // these params — `timeout /t N /nobreak` on Windows doesn't actually
+  // sleep in headless mode (verified by the 2026-05-17 stress test).
+  sleepBefore: z.number().int().nonnegative().max(3600).optional(),
+  sleepAfter: z.number().int().nonnegative().max(3600).optional(),
 });
 
 type ShellSpawnParamsT = z.infer<typeof ShellSpawnParams>;
@@ -74,11 +81,16 @@ function startNonInteractive(
   // v0.6.7 P1 — write the command to a script file and invoke via -File
   // / /c <path> / bash <path>. Replaces the prior `-Command "..."`
   // inline pattern that triggered AV heuristics on Windows.
+  //
+  // v0.6.7 P2 — optional sleepBefore/sleepAfter pace the worker without
+  // relying on `timeout /t N` (broken in headless mode on Windows).
   const { path, invocation } = writeWorkerScript({
     workerId: ctx.workerId,
     shell: params.shell,
     command: params.command,
     args: params.args,
+    sleepBefore: params.sleepBefore,
+    sleepAfter: params.sleepAfter,
     baseDir: scriptBaseDir,
   });
   const opts: SpawnOptions = { cwd: params.cwd, stdio: ['ignore', 'pipe', 'pipe'] };

@@ -131,6 +131,65 @@ describe('shell spawner', () => {
     expect(inst.metadata.script_path).toBe(scriptPath);
   });
 
+  // v0.6.7 P2 — sleep-correct pacing weaves into the spawned script.
+
+  it('sleepBefore weaves a shell-correct sleep before the command body', async () => {
+    let recordedArgv: { argv0: string; argv: string[] } | undefined;
+    const child = makeFakeChild();
+    const fakeSpawn = ((argv0: string, argv: string[]) => {
+      recordedArgv = { argv0, argv };
+      return child;
+    }) as never;
+    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir });
+    await spawner.spawn(
+      {
+        cwd: process.cwd(),
+        shell: 'cmd',
+        command: 'echo hi',
+        args: [],
+        interactive: false,
+        sleepBefore: 5,
+      },
+      ctx,
+    );
+    const scriptPath = recordedArgv!.argv[recordedArgv!.argv.length - 1];
+    const body = readFileSync(scriptPath, 'utf8');
+    // CMD uses ping (timeout doesn't sleep in headless); -n is sleep+1
+    expect(body).toContain('ping 127.0.0.1 -n 6 >nul');
+    const pingIdx = body.indexOf('ping 127.0.0.1');
+    const cmdIdx = body.indexOf('echo hi');
+    expect(pingIdx).toBeLessThan(cmdIdx);
+    // And NOT the broken `timeout /t N /nobreak` pattern.
+    expect(body).not.toContain('timeout /t');
+  });
+
+  it('sleepAfter on powershell renders Start-Sleep -Seconds after command', async () => {
+    let recordedArgv: { argv0: string; argv: string[] } | undefined;
+    const child = makeFakeChild();
+    const fakeSpawn = ((argv0: string, argv: string[]) => {
+      recordedArgv = { argv0, argv };
+      return child;
+    }) as never;
+    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir });
+    await spawner.spawn(
+      {
+        cwd: process.cwd(),
+        shell: 'powershell',
+        command: 'Write-Host hi',
+        args: [],
+        interactive: false,
+        sleepAfter: 10,
+      },
+      ctx,
+    );
+    const scriptPath = recordedArgv!.argv[recordedArgv!.argv.length - 1];
+    const body = readFileSync(scriptPath, 'utf8');
+    expect(body).toContain('Start-Sleep -Seconds 10');
+    const cmdIdx = body.indexOf('Write-Host hi');
+    const sleepIdx = body.indexOf('Start-Sleep -Seconds 10');
+    expect(sleepIdx).toBeGreaterThan(cmdIdx);
+  });
+
   it('cmd shell invokes via /c <path>, never inline /c "<cmd>"', async () => {
     let recordedArgv: { argv0: string; argv: string[] } | undefined;
     const child = makeFakeChild();
