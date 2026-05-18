@@ -12,7 +12,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use stavr_governor::event_bridge::{EventBridge, EventSink, UreqFetcher, DEFAULT_STREAM_URL};
+use stavr_governor::event_router::EventRouter;
 use stavr_governor::icons::{self, IconVariant};
+use stavr_governor::notification::TauriToastRenderer;
 use stavr_governor::port_check::SystemPortChecker;
 use stavr_governor::restart::{OrphanAwareRestarter, Pm2Restarter, Restarter, SystemKiller};
 use stavr_governor::supervisor::{
@@ -86,7 +89,12 @@ fn main() {
         .spawn(move || sup_for_thread.run_forever())
         .expect("spawn supervisor thread");
 
+    let stream_url =
+        std::env::var("STAVR_STREAM_URL").unwrap_or_else(|_| DEFAULT_STREAM_URL.to_string());
+
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             // Hand the supervisor to Tauri's managed state so the tray
             // menu's "Reset & Restart" / "Pause" handlers (in
@@ -97,6 +105,33 @@ fn main() {
             app.manage(supervisor.clone());
             let _tray = tray::build(app.handle())?;
             log::info!("stavR Governor started; tray icon attached");
+
+            // P4 — SSE event subscription + OS toast.
+            //
+            // The bridge owns a single long-lived TCP connection to
+            // `/dashboard/stream` (Footgun #6 — never spam parallel SSE
+            // sessions). Events pass through the router (per-kind debounce
+            // + operator-awareness filter) before reaching the OS toast.
+            // Run on a dedicated thread so the Tauri event loop and the
+            // supervisor thread are not blocked by SSE read syscalls.
+            let toast_renderer = TauriToastRenderer::new(app.handle().clone());
+            let router: Arc<EventRouter> = Arc::new(EventRouter::new(toast_renderer));
+            // Stash the router in Tauri state for future tray-menu mute
+            // toggles (P5 candidate: "Mute Notifications · 1h / 1d").
+            app.manage(router.clone());
+            let sink: Arc<dyn EventSink> = router;
+            let bridge = Arc::new(EventBridge::new(
+                stream_url.clone(),
+                Arc::new(UreqFetcher),
+                sink,
+            ));
+            let bridge_thread = bridge.clone();
+            std::thread::Builder::new()
+                .name("event-bridge".to_string())
+                .spawn(move || {
+                    bridge_thread.run_forever();
+                })
+                .expect("spawn event-bridge thread");
 
             // Tray watcher: snapshot supervisor state every TRAY_TICK and
             // push it onto the tray (icon + tooltip). The watcher runs on
