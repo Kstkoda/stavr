@@ -1,0 +1,8 @@
+target/
+# Tauri-build emits `gen/schemas/*.json` with paths embedded from the build host;
+# they're generated per-build and noisy to track. Tauri 2 regenerates them
+# automatically from `tauri.conf.json` via `build.rs`.
+gen/
+# Cargo.lock IS committed for binary crates (reproducible release builds).
+*.icns
+**/.DS_Store

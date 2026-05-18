@@ -1,0 +1,46 @@
+[package]
+name = "stavr-governor"
+version = "0.6.5"
+edition = "2021"
+description = "stavR Governor — Tauri 2 tray companion that supervises the stavR daemon (auto-restart + OS-level status surface)."
+authors = ["stavR contributors"]
+license = "MIT"
+rust-version = "1.77"
+publish = false
+
+[[bin]]
+name = "stavr-governor"
+path = "src/main.rs"
+
+[lib]
+name = "stavr_governor"
+path = "src/lib.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+parking_lot = "0.12"
+ureq = { version = "2", default-features = false, features = ["tls"] }
+thiserror = "1"
+png = "0.17"
+anyhow = "1"
+
+[dev-dependencies]
+mockito = "1"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

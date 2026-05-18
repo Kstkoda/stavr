@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "stavR Governor",
+  "version": "0.6.5",
+  "identifier": "tech.stavr.governor",
+  "build": {
+    "frontendDist": "./dist",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "stavR Governor — supervises the stavR daemon",
+    "longDescription": "Tray companion for the stavR personal MCP gateway. Auto-restarts the daemon on crash with exponential backoff, surfaces health state via the tray icon, and (in v0.6.5 PR #2) renders OS-level toast notifications.",
+    "icon": [
+      "icons/raido-32.png",
+      "icons/raido-128.png",
+      "icons/raido-256.png",
+      "icons/raido-icon.ico"
+    ]
+  }
+}

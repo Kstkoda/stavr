@@ -24,6 +24,34 @@ stavR ships incrementally — small, reviewable PRs that each pass `npm test` an
 - macOS notarization (`xcrun notarytool`) — v0.6.5.2+
 - EV code-signing cert (BOM open question §1) — deferred; Sigstore + MS reputation is the v0.6.5.1 baseline
 
+---
+
+## v0.6.5 — Governor MVP (in progress, PR #34)
+
+**Tray companion that supervises the daemon.** A small Rust + Tauri 2 sidecar (`governor/`) that runs in the system tray, polls `/healthz`, drives `pm2 start` with exponential backoff when the daemon falls over, and surfaces the daemon's state via the Raido-rune tray icon + tooltip. PM2 remains the actual process supervisor; Governor's job is detection, narrow-window auto-recovery, and status surface — per ADR-040.
+
+### Added
+
+- **State machine** — `Unknown / Healthy / Degraded / Down / Restarting / StoppedManually / GiveUp` with explicit transition tests, 5s health-poll cadence, 1/2/4/8/16/32/60s exponential backoff, 5-restarts-in-5-min → `GiveUp` cap. (`governor/src/state.rs`)
+- **HTTP probe + restarter abstractions** — `HealthProbe` / `Restarter` / `Clock` traits so the supervisor is fully unit-testable without spawning real PM2. (`governor/src/{supervisor,restart}.rs`)
+- **Tray icon + tooltip** — Iron-palette Raido glyph swaps state-driven variants (green / amber / red / gray); 2 Hz pulse for `Restarting` / `GiveUp` / pre-probe. Tooltip format: `stavR · <state> · uptime <duration> · last check <N>s ago`. (`governor/src/{icons,tray}.rs`)
+
+### Fix-PR amendments to PR #34 (v0.6.5 fix BOM)
+
+Closes 4 bugs surfaced during the 2026-05-17 21:00 GST smoke test:
+
+- **Dual tray-icon registration** → consolidated to a single `TrayIcon` instance. `tauri.conf.json`'s `app.trayIcon` block was duplicating the code-side `TrayIconBuilder::with_id("main")`; removed the config side. Tray id + menu-item ids promoted to `TRAY_ID` / `MENU_ID_*` constants so the registration and runtime lookup can never drift. (`governor/src/tray.rs`, `governor/tauri.conf.json`)
+- **GiveUp tooltip operator hint** → format_tooltip appends `"needs operator action — right-click for Reset & Restart"` in GiveUp, so the operator gets BOTH the alert AND the recovery path on the same tray (no second "needs operator" overlay icon).
+- **Orphan-Node cleanup before `pm2 start`** → new `port_check` module + `ProcessKiller` trait + `OrphanAwareRestarter` wrapper. On a restart failure, Governor probes port 7777 (Windows: `netstat -ano`, Linux: `ss -tlnp` → fall back to `lsof -i :PORT -t`, macOS: `lsof -i :PORT -t`); if a PID is listening it gets `taskkill /F` (or `kill -9` on Unix) and the restart is retried up to 3 iterations. Handles the Windows scenario where `pm2 stop` leaves the Node process alive holding the daemon port. (`governor/src/port_check.rs`, `governor/src/restart.rs`, `governor/src/main.rs`)
+- **Settle window prevents false-positive Down during cold-boot** → default 60s settle window after every fresh boot or restart, during which Unreachable probes stay in Degraded instead of flipping to Down. Once the daemon has been Healthy at least once after that boot/restart, the window closes and the normal Degraded→Down rules apply. The cold-boot daemon takes ~40s; pre-fix it was being misread as a crash. Tooltip surfaces `Ns into settle window` so the operator can see Governor is patiently waiting rather than flapping. (`governor/src/state.rs`, `governor/src/tray.rs`)
+- **Reset & Restart menu item** → from `GiveUp` (or any state), one operator click clears the 5-in-5-min counter, resets the settle window, and invokes `restart_with_orphan_kill` against port 7777. Wired via Tauri managed state so `tray::build` stays `Runtime`-generic; main.rs `app.manage(supervisor.clone())` makes the handle resolvable in the click handler. "Pause supervision" wired the same way. (`governor/src/{tray,supervisor,main}.rs`)
+
+### Tests
+
+- 69 governor cargo tests pass (28 → 39 after P1, 39 → 55 after P2, 55 → 69 after P3). Cross-platform parsers (`netstat -ano`, `ss -tlnp`, `lsof -t`) validated via fixture strings so a Linux CI run still exercises the Windows parser. Orphan-kill flow covered with mocked PortChecker + ProcessKiller for the clean-restart, orphan-killed-and-retried, clean-port-original-error, kill-failed, and exhaustion paths.
+
+---
+
 ## v0.6 — Notifications fabric (in progress)
 
 **Out-of-band operator loop.** The daemon can now pull the operator's attention when needed — and the operator can respond from anywhere. Replies log the same audit events as dashboard clicks; Lex Insculpta posture preserved.
