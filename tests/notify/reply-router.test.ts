@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { EventStore } from '../../src/persistence.js';
 import { Broker } from '../../src/broker.js';
 import { ReplyRouter } from '../../src/notify/reply-router.js';
+import { TrustStore } from '../../src/trust/store.js';
 import type { NotificationAction } from '../../src/notify/types.js';
 
 describe('v0.6 ReplyRouter', () => {
@@ -134,5 +135,119 @@ describe('v0.6 ReplyRouter', () => {
     });
     expect(events).toContain('progress');
     expect(events).toContain('decision_response');
+  });
+
+  // v0.6.X bonus — grant_scope / reject_scope actions.
+
+  describe('grant_scope / reject_scope routing', () => {
+    let trustStore: TrustStore;
+    let routerWithTrust: ReplyRouter;
+
+    beforeEach(() => {
+      trustStore = new TrustStore(store);
+      routerWithTrust = new ReplyRouter(broker, trustStore);
+    });
+
+    function makeProposedScope() {
+      return trustStore.createProposal({
+        title: 'apps/web review-only',
+        description: 'one-hour read access',
+        allowed_actions: [{ tool: 'fs.read' }],
+        expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        reporting: { cadence: 'on-completion-only', channels: ['dashboard'] },
+      });
+    }
+
+    it('grant_scope flips status to active and emits trust_scope_granted', async () => {
+      const scope = makeProposedScope();
+      const events: string[] = [];
+      broker.onEvent((ev) => events.push(ev.kind));
+
+      const result = await routerWithTrust.route({
+        notificationId: 'n-grant',
+        notificationCorrelationId: 'cid-grant',
+        source: 'telegram',
+        sourceLabel: '8739810100',
+        actionId: 'scope:grant',
+        actions: [{
+          label: 'Grant',
+          action_id: 'scope:grant',
+          kind: 'grant_scope',
+          target_id: scope.id,
+        }],
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.kind).toBe('scope_granted');
+      const after = trustStore.get(scope.id);
+      expect(after?.status).toBe('active');
+      expect(after?.granted_by).toBe('notify:telegram');
+      expect(events).toContain('trust_scope_granted');
+    });
+
+    it('reject_scope marks scope revoked and emits trust_scope_rejected', async () => {
+      const scope = makeProposedScope();
+      const events: string[] = [];
+      broker.onEvent((ev) => events.push(ev.kind));
+
+      const result = await routerWithTrust.route({
+        notificationId: 'n-rej',
+        notificationCorrelationId: 'cid-rej',
+        source: 'telegram',
+        sourceLabel: '8739810100',
+        actionId: 'scope:reject',
+        actions: [{
+          label: 'Reject',
+          action_id: 'scope:reject',
+          kind: 'reject_scope',
+          target_id: scope.id,
+        }],
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.kind).toBe('scope_rejected');
+      const after = trustStore.get(scope.id);
+      expect(after?.status).toBe('revoked');
+      expect(events).toContain('trust_scope_rejected');
+    });
+
+    it('grant_scope returns wrong_state when scope is already active', async () => {
+      const scope = makeProposedScope();
+      trustStore.grant(scope.id, 'dashboard');
+      const result = await routerWithTrust.route({
+        notificationId: 'n-x',
+        notificationCorrelationId: 'cid-x',
+        source: 'telegram',
+        sourceLabel: '8739810100',
+        actionId: 'scope:grant',
+        actions: [{
+          label: 'Grant',
+          action_id: 'scope:grant',
+          kind: 'grant_scope',
+          target_id: scope.id,
+        }],
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toBe('wrong_state');
+    });
+
+    it('grant_scope without TrustStore returns downstream_failed', async () => {
+      const routerWithoutTrust = new ReplyRouter(broker); // no trustStore
+      const result = await routerWithoutTrust.route({
+        notificationId: 'n-y',
+        notificationCorrelationId: 'cid-y',
+        source: 'telegram',
+        sourceLabel: '0',
+        actionId: 'scope:grant',
+        actions: [{
+          label: 'Grant',
+          action_id: 'scope:grant',
+          kind: 'grant_scope',
+          target_id: 'any-id',
+        }],
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toBe('downstream_failed');
+    });
   });
 });
