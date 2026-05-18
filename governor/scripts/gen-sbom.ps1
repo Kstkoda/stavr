@@ -64,7 +64,7 @@ if (-not $Target) {
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
     Write-Host "[gen-sbom] generating SBOM for target $Target" -ForegroundColor Cyan
-    & cargo cyclonedx --target $Target --format json --output-pattern bom
+    & cargo cyclonedx --target $Target --format json
     if ($LASTEXITCODE -ne 0) {
         Fail "cargo cyclonedx exited with code $LASTEXITCODE"
     }

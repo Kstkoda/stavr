@@ -109,7 +109,7 @@ jobs:
 
       - name: Generate CycloneDX SBOM
         run: |
-          cargo cyclonedx --target ${{ matrix.platform.target }} --format json --output-pattern bom
+          cargo cyclonedx --target ${{ matrix.platform.target }} --format json
           # cargo-cyclonedx emits <crate>.cdx.json next to each Cargo.toml.
           # We move the root crate's SBOM into the release dir under a
           # predictable name so downstream upload steps don't have to guess.
