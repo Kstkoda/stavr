@@ -8,7 +8,7 @@
  * The 2026-05-17 lie ("6 active when 0 were running") could not happen
  * if every page read from the same fetcher. This test asserts that.
  */
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { WorkerRecord } from '../../src/persistence.js';
 import { renderHelmPage } from '../../src/dashboard/pages/helm.js';
 import { renderTopologyPage } from '../../src/dashboard/pages/topology.js';
@@ -62,6 +62,19 @@ const HEALTHY = makeWorker({
 });
 
 describe('cross-page agreement on active count (BOM v0.6.6 P3 acceptance)', () => {
+  // Pin the clock to NOW so that `deriveLifecycleState` (and any helper
+  // that defaults `now = Date.now()`) classifies workers consistently
+  // regardless of when CI actually runs the suite. Without this, the
+  // HEALTHY worker's heartbeat ages past STALE_THRESHOLD_MS=1h relative
+  // to the real wall clock and the "1 active" assertion fails.
+  beforeAll(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    vi.setSystemTime(NOW);
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
   it('Helm L2 + Topology header + Diagnostics workers panel all read 0 active for the E2E scenario', () => {
     const expected = fetchActiveWorkerCount(E2E_WORKERS);
     expect(expected).toBe(0);
