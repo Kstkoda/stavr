@@ -110,6 +110,8 @@ export const EventKind = z.enum([
   // v0.6.X bonus — outbound notification coverage expansion
   'cc_quota_warning',
   'worker_dispatch_failed',
+  // v0.6.7 P3 — worker spawn was blocked by an antivirus / EDR product
+  'worker_blocked_by_av',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -781,6 +783,30 @@ export const WorkerDispatchFailedPayload = z.object({
   detail: z.string().optional(),
 });
 
+/** Worker spawn was killed by an antivirus / EDR product. Distinct from
+ *  worker_dispatch_failed: this event has rich AV-product attribution
+ *  pulled from the Windows Event Log or vendor-specific logs, and is the
+ *  signal the operator needs to add a whitelist rule. */
+export const WorkerBlockedByAvPayload = z.object({
+  /** Intended worker id (assigned before the spawn attempt). */
+  worker_id: z.string(),
+  /** Worker display name if set. */
+  name: z.string().optional(),
+  /** Vendor display name (e.g. "Windows Defender", "CrowdStrike Falcon"). */
+  av_product_name: z.string(),
+  /** Vendor-specific event id (Defender 1116/1117/5007, etc.). */
+  av_event_id: z.number().int().nonnegative().optional(),
+  /** First ~240 chars of the AV's event message — enough for the operator
+   *  to recognise the signature name without ballooning the event log. */
+  av_event_message: z.string().max(240).optional(),
+  /** Path to the script the AV blocked (when known). */
+  script_path: z.string().optional(),
+  /** SHA-256 of the script contents — useful for vendor-side rule
+   *  authoring and for correlating across multiple AV blocks of the
+   *  same generated body. */
+  spawned_command_signature: z.string().optional(),
+});
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -874,6 +900,7 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     trust_scope_rejected: TrustScopeRejectedPayload,
     cc_quota_warning: CcQuotaWarningPayload,
     worker_dispatch_failed: WorkerDispatchFailedPayload,
+    worker_blocked_by_av: WorkerBlockedByAvPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);

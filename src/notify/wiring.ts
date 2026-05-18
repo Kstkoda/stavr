@@ -66,6 +66,9 @@ async function handleEvent(ev: StoredEvent, notifier: Notifier, opts: WiringOpts
     case 'cc_quota_warning':
       await emitCcQuotaWarning(ev, notifier, opts);
       break;
+    case 'worker_blocked_by_av':
+      await emitWorkerBlockedByAv(ev, notifier, opts);
+      break;
     default:
       break;
   }
@@ -263,6 +266,38 @@ async function emitCcQuotaWarning(ev: StoredEvent, notifier: Notifier, opts: Wir
     severity: pct >= 95 ? 'crit' : 'warn',
     title: `CC quota at ${pct}%`,
     body: `${p?.detail ?? 'Claude Code quota threshold hit'}${remainingPart}${resetsPart}`,
+    actions,
+    sourceEventId: ev.id,
+  });
+}
+
+async function emitWorkerBlockedByAv(ev: StoredEvent, notifier: Notifier, opts: WiringOpts): Promise<void> {
+  const p = ev.payload as {
+    worker_id?: string;
+    name?: string;
+    av_product_name?: string;
+    av_event_id?: number;
+    av_event_message?: string;
+    script_path?: string;
+  };
+  if (!p?.worker_id || !p?.av_product_name) return;
+  const actions: NotificationAction[] = [];
+  if (opts.dashboardBaseUrl && p.worker_id) {
+    actions.push({
+      label: 'View worker',
+      action_id: 'open:worker',
+      kind: 'link',
+      url: `${opts.dashboardBaseUrl}/dashboard/workers/${encodeURIComponent(p.worker_id)}`,
+    });
+  }
+  const workerLabel = p.name ? `${p.name} (${p.worker_id})` : p.worker_id;
+  const scriptHint = p.script_path ? ` Script: ${p.script_path}.` : '';
+  const reason = p.av_event_message ? ` AV reason: ${p.av_event_message}.` : '';
+  await notifier.notify({
+    kind: 'worker_dispatch_failed', // reuse the existing outbound channel kind
+    severity: 'warn',
+    title: 'stavR worker blocked by AV',
+    body: `Worker ${workerLabel} was killed by ${p.av_product_name}.${scriptHint}${reason} Inspect or whitelist via your AV console.`,
     actions,
     sourceEventId: ev.id,
   });

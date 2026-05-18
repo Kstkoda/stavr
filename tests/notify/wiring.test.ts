@@ -241,6 +241,36 @@ describe('v0.6 notify wiring', () => {
     expect(logs?.url).toContain('/dashboard/workers/w42');
   });
 
+  it('worker_blocked_by_av emits a warn notification with whitelist hint', async () => {
+    wireNotifications(broker, notifier, { dashboardBaseUrl: 'http://127.0.0.1:7777' });
+    await broker.publish({
+      kind: 'worker_blocked_by_av',
+      at: new Date().toISOString(),
+      source_agent: 'worker-spawner',
+      payload: {
+        worker_id: 'w-blocked',
+        name: 'cc-runner',
+        av_product_name: 'Windows Defender',
+        av_event_id: 1116,
+        av_event_message: 'HackTool:PowerShell/Adgholas.A',
+        script_path: 'C:\\Users\\op\\.stavr\\worker-scripts\\w-blocked.ps1',
+      },
+    });
+    await tick();
+    expect(channel.sent.length).toBe(1);
+    const sent = channel.sent[0];
+    expect(sent.severity).toBe('warn');
+    expect(sent.title).toContain('blocked by AV');
+    expect(sent.body).toContain('cc-runner');
+    expect(sent.body).toContain('Windows Defender');
+    expect(sent.body).toContain('HackTool');
+    expect(sent.body).toContain('w-blocked.ps1');
+    expect(sent.body).toContain('whitelist');
+    const link = sent.actions.find((a) => a.action_id === 'open:worker');
+    expect(link?.kind).toBe('link');
+    expect(link?.url).toContain('/dashboard/workers/w-blocked');
+  });
+
   it('cc_quota_warning emits warn at 90% and crit at 95%+', async () => {
     wireNotifications(broker, notifier, { dashboardBaseUrl: 'http://127.0.0.1:7777' });
     await broker.publish({
