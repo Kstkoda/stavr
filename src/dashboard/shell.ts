@@ -47,6 +47,7 @@ export type DashboardPageId =
   | 'decide'
   | 'toolkit'
   | 'mcps'
+  | 'tools'
   | 'capabilities'
   | 'diagnostics'
   | 'settings';
@@ -65,6 +66,7 @@ export const NAV_ENTRIES: NavEntry[] = [
   { id: 'decide',       label: 'Decide',       href: '/dashboard/decide' },
   { id: 'toolkit',      label: 'Toolkit',      href: '/dashboard/toolkit' },
   { id: 'mcps',         label: 'MCPs',         href: '/dashboard/mcps' },
+  { id: 'tools',        label: 'Tools',        href: '/dashboard/tools' },
   { id: 'capabilities', label: 'Capabilities', href: '/dashboard/capabilities' },
   { id: 'diagnostics',  label: 'Diagnostics',  href: '/dashboard/diagnostics' },
   { id: 'settings',     label: 'Settings',     href: '/dashboard/settings' },

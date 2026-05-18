@@ -3,8 +3,9 @@ import type { Server as HttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createSwitchServer, getOrCreateTrustStore, getNotifier, getDigestScheduler } from './server.js';
+import { createSwitchServer, getOrCreateTrustStore, getNotifier, getDigestScheduler, getOrCreateToolRegistry } from './server.js';
 import { loadChannelStatuses } from './dashboard/data/channels.js';
+import { fetchToolsData } from './dashboard/data/tools-data.js';
 import type { Broker } from './broker.js';
 import type { StoredEvent } from './persistence.js';
 import { startupDecisionSweep } from './tools/decisions.js';
@@ -1127,7 +1128,16 @@ export function mountDashboardRoutes(
     };
   }
 
-  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, toolkitData, mcpsData, capabilitiesData, settingsData });
+  function toolsData(): import('./dashboard/data/tools-data.js').ToolsData {
+    // v0.6.9 PR #1 — read the broker's ToolRegistry snapshot.
+    // `getOrCreateToolRegistry` ensures the registry exists even if no
+    // MCP session has been opened yet; the wrap shim populates it on
+    // each `createSwitchServer` call.
+    const registry = getOrCreateToolRegistry(broker);
+    return fetchToolsData(registry);
+  }
+
+  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, toolkitData, mcpsData, toolsData, capabilitiesData, settingsData });
 
   // ---- C9 Settings endpoints ----
 
