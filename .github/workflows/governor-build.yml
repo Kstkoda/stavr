@@ -30,9 +30,14 @@ jobs:
       fail-fast: false
       matrix:
         platform:
+          # macos-x86_64 (Intel) intentionally NOT in this per-push matrix — the
+          # GitHub-hosted macos-13 runner pool is heavily oversubscribed on the
+          # free tier (10h+ queues observed 2026-05-17/18). Intel Mac builds
+          # still happen on tag release via governor-release.yml where the wait
+          # is acceptable. macos-aarch64 (M1+) uses its own runner pool with
+          # short queues, so it stays in per-push.
           - { name: win-x86_64,    runner: windows-latest, target: x86_64-pc-windows-msvc }
           - { name: win-aarch64,   runner: windows-latest, target: aarch64-pc-windows-msvc }
-          - { name: macos-x86_64,  runner: macos-13,       target: x86_64-apple-darwin }
           - { name: macos-aarch64, runner: macos-14,       target: aarch64-apple-darwin }
           - { name: linux-x86_64,  runner: ubuntu-22.04,   target: x86_64-unknown-linux-gnu }
 
@@ -79,7 +84,7 @@ jobs:
             ${{ runner.os }}-${{ matrix.platform.target }}-cargo-
 
       - name: Run unit tests (native target only)
-        if: matrix.platform.target == 'x86_64-pc-windows-msvc' || matrix.platform.target == 'x86_64-apple-darwin' || matrix.platform.target == 'x86_64-unknown-linux-gnu' || matrix.platform.target == 'aarch64-apple-darwin'
+        if: matrix.platform.target == 'x86_64-pc-windows-msvc' || matrix.platform.target == 'x86_64-unknown-linux-gnu' || matrix.platform.target == 'aarch64-apple-darwin'
         run: cargo test --release --target ${{ matrix.platform.target }}
 
       - name: Build release binary
