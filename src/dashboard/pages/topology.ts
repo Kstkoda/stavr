@@ -35,6 +35,13 @@ import { renderFoodLabel } from '../components/food-label.js';
 import { bomToFoodLabel } from '../adapters/bom.js';
 import type { InstalledBrickLite } from '../adapters/topology.js';
 import { resolveIconId, renderIcon } from '../components/icon-sprite.js';
+import {
+  deriveLifecycleState,
+  isCurrentlyActive,
+  lifecycleLabel,
+  type LifecycleState,
+} from '../../workers/lifecycle.js';
+import { fetchWorkerCounters } from '../data/worker-counters.js';
 
 export type { InstalledBrickLite } from '../adapters/topology.js';
 
@@ -101,6 +108,22 @@ const WORKER_STATUS_PILL: Record<string, PillVariant> = {
   terminated: 'neutral',
 };
 
+/**
+ * BOM v0.6.6 P3 — pill variant per derived lifecycle bucket. Replaces
+ * the per-status mapping above for the roster pill, so an operator-killed
+ * worker reads visually different from a clean exit (per BOM hard rule #6).
+ */
+const WORKER_LIFECYCLE_PILL: Record<LifecycleState, PillVariant> = {
+  'starting':          'info',
+  'running':           'info',
+  'completed-clean':   'success',
+  'completed-error':   'warning',
+  'killed-by-operator':'warning', // operator action, not a failure -> distinct from danger
+  'killed-by-system':  'danger',
+  'crashed':           'danger',
+  'stale':             'warning',
+};
+
 function escapeHtml(s: string): string {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -140,9 +163,18 @@ function bricksToNodes(bricks: InstalledBrickLite[]): GraphNode[] {
   });
 }
 
-function workersToNodes(workers: WorkerRecord[]): GraphNode[] {
+function workersToNodes(workers: WorkerRecord[], now: number = Date.now()): GraphNode[] {
   return workers.map((w) => {
-    const status: GraphStatus = w.status === 'crashed' ? 'crit' : (w.status === 'idle' ? 'warn' : 'ok');
+    // BOM v0.6.6: halo color comes from lifecycle_state (status = node
+    // halo per CLAUDE.md §5). Currently-active gets ok; stale gets warn;
+    // failures get crit; operator-kill is warn (not a process failure).
+    const lifecycle = deriveLifecycleState(w, now);
+    const status: GraphStatus =
+      lifecycle === 'crashed' || lifecycle === 'killed-by-system'
+        ? 'crit'
+        : lifecycle === 'completed-error' || lifecycle === 'killed-by-operator' || lifecycle === 'stale'
+        ? 'warn'
+        : 'ok';
     return {
       id: w.id,
       type: 'worker',
@@ -154,7 +186,7 @@ function workersToNodes(workers: WorkerRecord[]): GraphNode[] {
       x: 0, y: 0,
       startedAt: Date.parse(w.started_at) || 0,
       endedAt: w.ended_at ? Date.parse(w.ended_at) : undefined,
-      meta: { type: w.type, status: w.status, cwd: w.cwd || '' },
+      meta: { type: w.type, status: w.status, lifecycle_state: lifecycle, cwd: w.cwd || '' },
     };
   });
 }
@@ -307,15 +339,18 @@ function renderBomSidebar(data: TopologyData): string {
   ].join('');
 }
 
-function renderWorkerRoster(workers: WorkerRecord[]): string {
+function renderWorkerRoster(workers: WorkerRecord[], now: number = Date.now()): string {
   if (workers.length === 0) return '<div class="placeholder">No workers running.</div>';
   return workers.map((w) => {
+    // BOM v0.6.6 P3 — pill text + variant come from lifecycle_state so
+    // operator-kill renders distinct from a clean exit.
+    const lifecycle = deriveLifecycleState(w, now);
     const pill = renderPill({
-      text: w.status,
-      variant: WORKER_STATUS_PILL[w.status] ?? 'neutral',
+      text: lifecycleLabel(lifecycle),
+      variant: WORKER_LIFECYCLE_PILL[lifecycle] ?? 'neutral',
     });
     return [
-      `<li class="roster-row" data-id="${escapeHtml(w.id)}">`,
+      `<li class="roster-row" data-id="${escapeHtml(w.id)}" data-lifecycle="${escapeHtml(lifecycle)}">`,
       `<span class="roster-name">${escapeHtml(w.name)}</span>`,
       `<span class="roster-type">${escapeHtml(w.type)}</span>`,
       pill,
@@ -1183,7 +1218,32 @@ export function renderTopologyPage(data?: TopologyData): string {
     x: CENTER_X, y: CENTER_Y,
     meta: { layer: 'steward' },
   };
-  const allNodes: GraphNode[] = [core, ...bricksToNodes(snapshot.bricks), ...workersToNodes(snapshot.workers)];
+  // BOM v0.6.6 P4 — canvas filters out historic workers by default.
+  // Per BOM hard rule #7 the primary view shows currently-active +
+  // recent (within 24h) workers; older historic rows go into the
+  // "Show terminated (N)" toggle below. With 0 active workers the
+  // canvas now shows just the daemon hexagon, not 8 zombie dots.
+  const canvasNow = Date.now();
+  const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const canvasWorkers: WorkerRecord[] = [];
+  const hiddenHistoricWorkers: WorkerRecord[] = [];
+  for (const w of snapshot.workers) {
+    const lifecycle = deriveLifecycleState(w, canvasNow);
+    if (isCurrentlyActive(lifecycle)) {
+      canvasWorkers.push(w);
+      continue;
+    }
+    // Recent terminations stay on canvas so an operator clicking "what
+    // just finished?" doesn't lose context.
+    const endRef = w.ended_at ?? w.last_activity_at ?? w.started_at;
+    const age = canvasNow - Date.parse(endRef);
+    if (Number.isFinite(age) && age <= HISTORY_WINDOW_MS) {
+      canvasWorkers.push(w);
+    } else {
+      hiddenHistoricWorkers.push(w);
+    }
+  }
+  const allNodes: GraphNode[] = [core, ...bricksToNodes(snapshot.bricks), ...workersToNodes(canvasWorkers, canvasNow)];
   layoutGraph(allNodes);
 
   const typeCounts: Record<GraphType, number> = {
@@ -1223,11 +1283,22 @@ export function renderTopologyPage(data?: TopologyData): string {
     `</svg>`,
   ].join('');
 
+  // BOM v0.6.6 P3 — header shows ACTIVE-vs-LIFETIME per hard rule #5.
+  // Lifetime worker count goes after the active count; the gap surfaces
+  // exactly when historic rows are clogging the DB.
+  const workerCounters = fetchWorkerCounters(snapshot.workers);
+  const workerHeader = workerCounters.total === workerCounters.active
+    ? `${workerCounters.active} worker${workerCounters.active === 1 ? '' : 's'} active`
+    : `${workerCounters.active} active · ${workerCounters.total} lifetime`;
+  const hiddenN = hiddenHistoricWorkers.length;
+  const hiddenChip = hiddenN > 0
+    ? ` · <button type="button" class="topo-show-terminated" data-role="show-terminated" aria-pressed="false">Show terminated (${hiddenN})</button>`
+    : '';
   const body = [
     `<div class="topo-page">`,
     `<div class="page-head">`,
     `<h1 class="page-title">Topology</h1>`,
-    `<span class="page-sub">${snapshot.workers.length} worker${snapshot.workers.length === 1 ? '' : 's'} · ${snapshot.bricks.length} brick${snapshot.bricks.length === 1 ? '' : 's'} · ${snapshot.inFlightBoms.length} in-flight · drag to pin</span>`,
+    `<span class="page-sub" data-role="topology-header">${workerHeader} · ${snapshot.bricks.length} brick${snapshot.bricks.length === 1 ? '' : 's'} · ${snapshot.inFlightBoms.length} in-flight · drag to pin${hiddenChip}</span>`,
     `</div>`,
     filterStrip,
     `<div class="topo-frame">`,

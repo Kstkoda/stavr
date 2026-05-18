@@ -27,9 +27,35 @@ import { renderPill, type PillVariant } from '../components/pill.js';
 export interface HelmWorker {
   id: string;
   type: string;
+  /**
+   * Legacy chip status. Retained for backwards compatibility — every L2
+   * worker chip carries a `data-state` attribute that downstream tests
+   * key off. New code should prefer `lifecycle_state` (added per BOM
+   * v0.6.6 P3) which carries the finer-grained classification.
+   */
   status: 'idle' | 'running' | 'crashed' | 'cleanup';
   uptime_sec?: number;
   current_step?: string;
+  /**
+   * BOM v0.6.6 — derived lifecycle bucket. When present, drives the chip
+   * label and halo color. May be undefined for legacy HelmData payloads
+   * (tests + back-compat snapshots); helm renderers fall back to status.
+   */
+  lifecycle_state?: import('../../workers/lifecycle.js').LifecycleState;
+}
+
+/**
+ * BOM v0.6.6 P3 — single-source counter snapshot for the L2 WORKERS band.
+ * Lifetime counts on the right hand of `0 active · N completed · X crashed`
+ * style display per BOM hard rule #5.
+ */
+export interface HelmWorkerCounters {
+  active: number;
+  completed: number;
+  crashed: number;
+  killed_by_operator: number;
+  stale: number;
+  total: number;
 }
 
 export interface HelmSystem {
@@ -68,6 +94,14 @@ export interface HelmData {
   boms: { recent: Bom[]; total: number; open: number };
   decisions: { recent: DecisionRecord[]; open: number };
   workers: HelmWorker[];
+  /**
+   * BOM v0.6.6 — counters from src/dashboard/data/worker-counters.ts.
+   * When undefined, the L2 band falls back to deriving from workers[]
+   * (length-based; conflates lifetime with currently-active — that's
+   * exactly the lie this PR is fixing, so transports.ts MUST populate
+   * this field).
+   */
+  worker_counters?: HelmWorkerCounters;
   systems: HelmSystem[];
   /** v0.6 — daily digest state. Undefined when the notify fabric is disabled. */
   digest?: HelmDigestState;
@@ -125,6 +159,28 @@ function workerStatusClass(s: HelmWorker['status']): 'ok' | 'warn' | 'crit' | 'i
   if (s === 'cleanup') return 'warn';
   if (s === 'crashed') return 'crit';
   return 'idle';
+}
+
+/**
+ * BOM v0.6.6 P3 — when a worker has a lifecycle_state, its chip uses the
+ * lifecycle halo class instead of the legacy status mapping. Maps the
+ * lifecycle halo categories (ok/warn/crit/neutral/operator) into the
+ * existing iron-palette class names recognised by the L2 CSS.
+ */
+function workerLifecycleClass(
+  state: import('../../workers/lifecycle.js').LifecycleState,
+): 'ok' | 'warn' | 'crit' | 'idle' {
+  switch (state) {
+    case 'starting':
+    case 'running':            return 'ok';
+    case 'killed-by-operator': return 'warn'; // operator action — distinct from crit (failure)
+    case 'killed-by-system':
+    case 'crashed':            return 'crit';
+    case 'stale':              return 'warn';
+    case 'completed-clean':
+    case 'completed-error':
+    default:                   return 'idle';
+  }
 }
 
 function systemHaloStatus(s: HelmSystem['health']): 'ok' | 'warn' | 'crit' {
@@ -288,18 +344,60 @@ function renderPlansBand(d: HelmData): string {
 
 // ============================== L2 WORKERS =============================
 function renderWorkersBand(d: HelmData): string {
-  const workers = d.workers.slice(0, 6);
+  // BOM v0.6.6 hard rule #7: primary view shows ONLY currently-active
+  // workers — never historic chips. If lifecycle_state is populated, we
+  // filter on it; otherwise we fall back to the legacy status mapping
+  // (running/cleanup are the active shapes there).
+  const activeWorkers = d.workers.filter((w) => {
+    if (w.lifecycle_state) {
+      return w.lifecycle_state === 'starting' || w.lifecycle_state === 'running';
+    }
+    // Legacy path: status === 'running' is the only definite active marker.
+    return w.status === 'running' || w.status === 'cleanup';
+  });
+  const workers = activeWorkers.slice(0, 6);
   const empty = workers.length === 0;
+
+  // Per BOM hard rule #5: never display a single number that conflates
+  // lifetime vs currently-active. The counters object (when populated by
+  // transports.ts) carries both; fall back to deriving an "active" count
+  // from the filtered list if missing.
+  const counters: HelmWorkerCounters = d.worker_counters ?? {
+    active: activeWorkers.length,
+    completed: 0,
+    crashed: 0,
+    killed_by_operator: 0,
+    stale: 0,
+    total: d.workers.length,
+  };
+
+  // Compact summary line: "0 active · 7 completed · 1 crashed [· N stale]".
+  const summaryParts: string[] = [`${counters.active} active`];
+  if (counters.completed > 0)          summaryParts.push(`${counters.completed} completed`);
+  if (counters.crashed > 0)            summaryParts.push(`${counters.crashed} crashed`);
+  if (counters.killed_by_operator > 0) summaryParts.push(`${counters.killed_by_operator} terminated`);
+  if (counters.stale > 0)              summaryParts.push(`${counters.stale} stale`);
+  const summary = summaryParts.join(' · ');
+
   // Acceptance test expects "No workers running" string — render an empty
   // worker grid plus a footer note so the string survives.
   const cards = empty
     ? `<div class="l2-empty">No workers running.</div>`
     : workers.map((w) => {
-        const sc = workerStatusClass(w.status);
+        // Prefer lifecycle_state for the visual class so a force-killed
+        // worker reads visually distinct from a clean exit (BOM rule #6).
+        const sc = w.lifecycle_state
+          ? workerLifecycleClass(w.lifecycle_state)
+          : workerStatusClass(w.status);
         const stepText = w.current_step ?? (w.status === 'idle' ? 'idle · ready' : '—');
         const pct = w.status === 'running' ? 40 + ((w.uptime_sec ?? 0) % 50) : (w.status === 'idle' ? 0 : 70);
+        // data-state remains for back-compat; data-lifecycle is the
+        // forward-compatible attribute new tests should key off.
+        const lifecycleAttr = w.lifecycle_state
+          ? ` data-lifecycle="${escapeHtml(w.lifecycle_state)}"`
+          : '';
         return [
-          `<button type="button" class="l2-worker ${sc}" data-state="${escapeHtml(w.status)}"`,
+          `<button type="button" class="l2-worker ${sc}" data-state="${escapeHtml(w.status)}"${lifecycleAttr}`,
           ` data-worker-id="${escapeHtml(w.id)}" data-worker-type="${escapeHtml(w.type)}"`,
           ` data-worker-step="${escapeHtml(w.current_step ?? '')}"`,
           ` data-fi-open="worker">`,
@@ -317,18 +415,21 @@ function renderWorkersBand(d: HelmData): string {
     `<div class="l2-worker idle"><div class="name"><span class="dot idle"></span>—</div><div class="progress"><div style="width:0%;"></div></div><div class="step">slot open</div><div class="meta"><span>—</span><span class="eta">—</span></div></div>`
   ).join('');
 
-  const stuck = workers.filter((w) => w.status === 'crashed').length;
+  const historyLink = counters.total > counters.active
+    ? ` · <a href="/dashboard/streams?status=all" style="color:var(--sky);">view ${counters.total - counters.active} historic →</a>`
+    : '';
+
   return [
     `<section class="band glass" data-level="L2" data-slot="workers">`,
     `<div class="band-head">`,
     `<div>`,
     levelTag('L2', 'WORKERS'),
     `<div class="level-name">Worker subprocesses</div>`,
-    `<div class="level-desc">${workers.length} active · click any worker to inspect</div>`,
+    `<div class="level-desc" data-role="worker-summary">${summary} · click any worker to inspect</div>`,
     `</div>`,
     `<div class="band-agg">`,
-    `<div class="primary">${workers.length} active</div>`,
-    `<div class="secondary">${stuck > 0 ? `<span class="crit">${stuck} stuck</span> · ` : ''}<a href="/dashboard/streams" style="color:var(--sky);">streams →</a></div>`,
+    `<div class="primary">${counters.active} active</div>`,
+    `<div class="secondary">${counters.crashed > 0 ? `<span class="crit">${counters.crashed} crashed</span> · ` : ''}<a href="/dashboard/streams" style="color:var(--sky);">streams →</a>${historyLink}</div>`,
     `</div>`,
     `<div class="band-arrow">› STREAMS</div>`,
     `</div>`,

@@ -2,6 +2,24 @@
 
 stavR ships incrementally — small, reviewable PRs that each pass `npm test` and `npm run build` independently. Release notes for major surface changes live in `docs/release-notes-v0.*.md`; this file is the project-level timeline.
 
+## v0.6.6 — Worker status fidelity (in progress)
+
+**Helm + Topology + Streams + Diagnostics stop lying about worker state.** Closes audit findings #1, #2, #3, #5, #7, #8, #11, #22 from the 2026-05-17 capture. The dashboard's biggest live lie ("6 active workers" while 0 were actually running, the 2026-05-17 E2E session) becomes structurally impossible because all four pages now read from a single source.
+
+### Added
+
+- **lifecycle_state derived classification** — 8 states (`starting` / `running` / `completed-clean` / `completed-error` / `killed-by-operator` / `killed-by-system` / `crashed` / `stale`) replace the old `status` enum's mixed semantics. Force-killed workers render visually distinct from cleanly-completed ones (BOM hard rule #6). `src/workers/lifecycle.ts` + additive `lifecycle_state TEXT` column on `workers` table.
+- **Single-source counters + roster fetchers** — `src/dashboard/data/worker-counters.ts` (active / completed_clean / completed_error / killed_by_operator / killed_by_system / crashed / stale / total) and `worker-roster.ts` (active / historic / stale buckets) are the only places any page reads worker counts from now.
+- **Per-page rendering** — Helm L2 chips filter to currently-active; level-desc summary reads "0 active · 7 completed · 1 crashed · 2 stale" style (BOM hard rule #5). Topology header reads "N active · M lifetime" when those diverge; canvas hides historic workers older than 24h with a "Show terminated (N)" toggle. Streams primary grid shows only active panes; historic collapses into a `<details>` block. Diagnostics Workers section reads from the same fetcher; each row's trailing column shows the lifecycle label.
+
+### Out of scope (separate BOMs)
+
+- AV-block detection + `killed-by-system` heuristic — v0.6.7 (Spawn hygiene)
+- `worker_terminate` reason field — deferred (BOM open question §4)
+- Streams page rename to "Workers" — bigger product question, ADR conversation pending
+
+---
+
 ## v0.6.5.1 — Governor signing pipeline (in progress)
 
 **Verifiable Governor binaries.** Closes ADR-038 §1+§2 for the Governor binary so Windows 11 Smart App Control (SAC) and macOS Gatekeeper will run a downloaded release without disabling OS-level safety. Driven by the 2026-05-17 ~21:00 incident where SAC killed the freshly-built MVP binary.
