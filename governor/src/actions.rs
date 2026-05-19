@@ -108,37 +108,47 @@ impl MuteWindow {
 mod tests {
     use super::*;
 
+    /// Exercises both branches of `dashboard_base()` — env-override (with
+    /// trailing-slash stripping) and the default fallback — in a single
+    /// test. Same parallel-env-mutation race rationale as
+    /// `log_path_env_override_and_fallback` below.
     #[test]
-    fn dashboard_base_strips_trailing_slash() {
+    fn dashboard_base_env_override_and_fallback() {
+        // Branch 1 — env-override wins; trailing slash stripped.
         std::env::set_var("STAVR_DASHBOARD_BASE", "https://example.test/");
         assert_eq!(dashboard_base(), "https://example.test");
-        std::env::remove_var("STAVR_DASHBOARD_BASE");
-    }
 
-    #[test]
-    fn dashboard_base_uses_default_when_unset() {
+        // Branch 2 — fallback when the env var is absent.
         std::env::remove_var("STAVR_DASHBOARD_BASE");
         assert_eq!(dashboard_base(), DEFAULT_DASHBOARD_BASE);
     }
 
+    /// Exercises both branches of `log_path()` — env-override and the
+    /// repo-relative fallback — in a single test. Previously these were two
+    /// separate `#[test]` fns, but `cargo test` runs them in parallel inside
+    /// the same binary, and `std::env::{set_var, remove_var}` is process-
+    /// wide. The two tests raced on `STAVR_LOG_PATH` — one's `remove_var`
+    /// would wipe out the value the other had just set, producing a
+    /// flaky failure (seen on the win-x86_64 CI runner where scheduling
+    /// happened to interleave them; local was luck). Merging both branches
+    /// into one sequential test removes the race without pulling in a
+    /// `serial_test` dependency.
     #[test]
-    fn log_path_honours_env_override() {
+    fn log_path_env_override_and_fallback() {
+        // Branch 1 — env-override wins.
         std::env::set_var("STAVR_LOG_PATH", "/tmp/custom/stavr.log");
         assert_eq!(
             log_path(),
-            std::path::PathBuf::from("/tmp/custom/stavr.log")
+            std::path::PathBuf::from("/tmp/custom/stavr.log"),
         );
-        std::env::remove_var("STAVR_LOG_PATH");
-    }
 
-    #[test]
-    fn log_path_falls_back_to_repo_default() {
+        // Branch 2 — fallback when the env var is absent.
         std::env::remove_var("STAVR_LOG_PATH");
         let p = log_path();
         let s = p.to_string_lossy();
         assert!(
             s.ends_with("tmp/pm2-stavr.out.log") || s.ends_with("tmp\\pm2-stavr.out.log"),
-            "default log path should end with tmp/pm2-stavr.out.log; got {s}"
+            "default log path should end with tmp/pm2-stavr.out.log; got {s}",
         );
     }
 
