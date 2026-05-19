@@ -954,11 +954,20 @@ export function mountDashboardRoutes(
     }));
     // v0.6.10 Task 1 — MCP-category nodes (registry-derived) + peers
     // (peers.yaml). Task 3 — heatmap timeline buckets from the event
-    // store. Pulled together so the topology snapshot stays a single
-    // round-trip from the dashboard.
-    const { mcpCategoryNodes, peers, eventDensity } = fetchTopologyExtras({
+    // store. Task 4a — actor-nodes from source_agent + peers. Pulled
+    // together so the topology snapshot stays a single round-trip
+    // from the dashboard.
+    const { mcpCategoryNodes, peers, eventDensity, actorNodes } = fetchTopologyExtras({
       registry: getOrCreateToolRegistry(broker),
       store: broker.store,
+    });
+    // v0.6.10 Task 5 — permissions snapshot for the side-drawer.
+    // Reuses the same registry + stores the standalone permissions
+    // page consumes; embedded into the page as a JSON blob.
+    const permissions = fetchPermissionsData({
+      registry: getOrCreateToolRegistry(broker),
+      caps: getOrCreateCapabilityOverrideStore(broker),
+      perms: getOrCreateActorPermissionStore(broker),
     });
     return {
       workers,
@@ -969,6 +978,8 @@ export function mountDashboardRoutes(
       mcpCategoryNodes,
       peers,
       eventDensity,
+      actorNodes,
+      permissions,
     };
   }
 

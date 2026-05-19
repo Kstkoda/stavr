@@ -64,6 +64,13 @@ import {
   TOPOLOGY_PARTICLE_INSPECTOR_CSS,
   TOPOLOGY_PARTICLE_INSPECTOR_JS,
 } from '../widgets/topology-particle-inspector.js';
+import {
+  renderPermissionsDataBlob,
+  renderPermissionsDrawer,
+  TOPOLOGY_PERMISSIONS_DRAWER_CSS,
+  TOPOLOGY_PERMISSIONS_DRAWER_JS,
+} from '../widgets/topology-permissions-drawer.js';
+import type { PermissionsData } from '../data/permissions-data.js';
 
 export type { InstalledBrickLite } from '../adapters/topology.js';
 
@@ -110,6 +117,12 @@ export interface TopologyData {
    * `source_agent` strings overlaid with peers.yaml.
    */
   actorNodes?: ActorNodeLite[];
+  /**
+   * v0.6.10 Task 5 — Permissions snapshot for the side-drawer (the
+   * deferred v0.6.9 P8). Embedded as a JSON blob in the page so the
+   * drawer JS can slice rows client-side without an extra round-trip.
+   */
+  permissions?: PermissionsData;
 }
 
 type GraphType = 'core' | 'mcp-remote' | 'mcp-local' | 'webhook' | 'db' | 'model' | 'worker' | 'peer' | 'actor';
@@ -1464,6 +1477,11 @@ export function renderTopologyPage(data?: TopologyData): string {
     // v0.6.10 Task 4c — particle click-inspector, slides in from the
     // right with forensic detail on the clicked particle's event.
     renderParticleInspector(),
+    // v0.6.10 Task 5 — permissions side-drawer slides in from the
+    // left when an actor or worker node is clicked. The data blob
+    // ships inline so the drawer fills on first click.
+    renderPermissionsDrawer(),
+    snapshot.permissions ? renderPermissionsDataBlob(snapshot.permissions) : '',
     `<script id="topo-events" type="application/json">${JSON.stringify(tickMarkers)}</script>`,
   ].join('');
 
@@ -1471,7 +1489,7 @@ export function renderTopologyPage(data?: TopologyData): string {
     title: 'Stavr — Topology',
     activePage: 'topology',
     body,
-    head: `<style>${TOPOLOGY_CSS}\n${TOPOLOGY_TIMELINE_CSS}\n${TOPOLOGY_ACTOR_NODES_CSS}\n${TOPOLOGY_FLOW_PARTICLES_CSS}\n${TOPOLOGY_PARTICLE_INSPECTOR_CSS}</style>`,
-    script: `${TOPOLOGY_JS}\n${TOPOLOGY_TIMELINE_JS}\n${TOPOLOGY_FLOW_PARTICLES_JS}\n${TOPOLOGY_PARTICLE_INSPECTOR_JS}`,
+    head: `<style>${TOPOLOGY_CSS}\n${TOPOLOGY_TIMELINE_CSS}\n${TOPOLOGY_ACTOR_NODES_CSS}\n${TOPOLOGY_FLOW_PARTICLES_CSS}\n${TOPOLOGY_PARTICLE_INSPECTOR_CSS}\n${TOPOLOGY_PERMISSIONS_DRAWER_CSS}</style>`,
+    script: `${TOPOLOGY_JS}\n${TOPOLOGY_TIMELINE_JS}\n${TOPOLOGY_FLOW_PARTICLES_JS}\n${TOPOLOGY_PARTICLE_INSPECTOR_JS}\n${TOPOLOGY_PERMISSIONS_DRAWER_JS}`,
   });
 }

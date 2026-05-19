@@ -226,6 +226,36 @@ describe('Topology page — unit', () => {
     expect(html).toContain('GitHub');
   });
 
+  it('v0.6.10 Task 5 — renders the permissions side-drawer + backdrop on the topology page', () => {
+    const html = renderTopologyPage(snapshot());
+    expect(html).toContain('data-role="topo-perm-drawer"');
+    expect(html).toContain('data-role="topo-perm-backdrop"');
+    expect(html).toContain('data-role="tpd-rows"');
+    expect(html).toContain('data-role="tpd-close"');
+    expect(html).toContain('Open full permissions matrix');
+  });
+
+  it('v0.6.10 Task 5 — permissions data blob ships inline when TopologyData.permissions is supplied', () => {
+    const html = renderTopologyPage(snapshot({
+      permissions: {
+        tools: [
+          { id: 'worker_spawn', category: 'worker', description: '', defaultTier: 'CONFIRM', layer0: null, disabledNow: false },
+        ],
+        actors: ['operator', 'cc'],
+        matrix: [
+          { actor: 'operator', tool: 'worker_spawn', tier: 'AUTO', source: 'matrix' },
+          { actor: 'cc',       tool: 'worker_spawn', tier: 'CONFIRM', source: 'default' },
+        ],
+        disabledCount: 0,
+        toolCount: 1,
+        yamlMirrorEnabled: false,
+      },
+    }));
+    expect(html).toContain('id="topo-permissions-data"');
+    expect(html).toContain('"worker_spawn"');
+    expect(html).toContain('"operator"');
+  });
+
   it('v0.6.10 Task 4c — renders the particle click-inspector with placeholder + cross-link', () => {
     const html = renderTopologyPage(snapshot());
     expect(html).toContain('data-role="topo-particle-inspector"');
