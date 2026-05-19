@@ -1,7 +1,7 @@
 # ADR-034 — stavR as personal MCP gateway (positioning, scope, non-goals)
 
-**Status:** Proposed — **Amended 2026-05-17 (see Amendment §A at bottom)**
-**Date:** 2026-05-16 (original) · 2026-05-17 (amendment)
+**Status:** Proposed — **Amended 2026-05-17 (Amendment §A) — Amended 2026-05-19 (Amendment §B)**
+**Date:** 2026-05-16 (original) · 2026-05-17 (Amendment §A) · 2026-05-19 (Amendment §B)
 **Related:** memory `project_stavr_2026_audit_findings.md`, memory `project_stavr_team_repositioning_decision.md`, ADR-022 (trust scopes), ADR-031 (observability), ADR-035 (federation), ADR-036 (audit integrity), ADR-037 (operator-data lifecycle), ADR-038 (supply-chain), ADR-039 (polyglot core)
 
 ## Context
@@ -165,3 +165,92 @@ The amendment moves Status forward (still "Proposed" overall) when:
 2. ADRs 036-039 land (this amendment is informational; those are load-bearing)
 3. At least one team-mode test exists (e.g., two operators sharing keypairs both successfully grant scopes and the audit log shows both)
 4. Docs include a "team mode quickstart" section in `docs/team-mode.md`
+
+---
+
+## Amendment §B — Extend to "family-scale infrastructure" (2026-05-19)
+
+### Amendment context
+
+During the 2026-05-18/19 long-form design session (memory `project_stavr_federation_design_decisions_2026_05_19.md`), the operator revealed near-term context that materially shifts positioning a second time: **family deployment is no longer hypothetical**.
+
+Specifically:
+- Operator (Kenneth) + 2 sons (11-year-old twins) running their own stavR instances within months
+- Sons exhaust their personal Claude tokens frequently while exploring Claude Code and similar tools
+- Sons have RTX 4080 Super gaming rigs — local model serving (Ollama, llama.cpp) is a first-class capacity tier, not a side option
+- The natural use case is **token-sharing federation**: each son's stavR runs locally on his machine, routes through dad's stavR (via federation per ADR-035) to use dad's Claude account when local capacity is exhausted, governed by trust scopes that limit per-son rate + cost
+
+This is a meaningful step beyond Amendment §A's "small-team trusted-AI broker." It introduces:
+- **Non-developer operators** as first-class users — sons are 11; they need stavR to "just work" without learning the internals
+- **Local GPU as primary capacity tier** — not all model work routes to cloud; sons' rigs do substantial inference locally
+- **Heterogeneous fleet by capability** — Kenneth's machine has Claude API access; sons' machines have local Ollama; capabilities differ per peer
+- **Federation as v0.7 must-have** — previously scheduled v0.8+ candidate per Amendment §A's roadmap; now moves forward because the use case lands within months
+
+### Amended decision
+
+1. **Extend the public-facing category from "personal-or-small-team trusted-AI broker" to "family-scale infrastructure."** Public-facing copy keeps the personal-first lead (still the largest audience) and adds family/household as a recognized deployment shape.
+
+2. **Updated canonical positioning sentence** (extends Amendment §A's phrasing):
+
+   > *"stavR is the personal — or small-team, or household — gateway between your AI assistants and your tools. Local-first, MCP-native, governed by you."*
+
+   The "or household" addition signals the family use case without diluting the solo-developer lead.
+
+3. **Family-mode operating model** (new explicit goals, in addition to Amendment §A's team-mode):
+   - N=2-10 stavR instances per household, each on the relevant user's primary machine
+   - One instance is the "token-bearing" instance (the parent account holder) — others federate through it for shared cloud resources
+   - Per-peer trust scopes limit each federated user (each son gets, e.g., a 50,000-token-per-day scope on the parent's Claude account)
+   - Local-GPU-equipped peers contribute capacity back to the fleet — son's 4080 Super can serve Ollama inference to other peers if scoped to do so
+   - Non-developer operator UX: paired stavR bootstrap via QR code, family-mode dashboard skin with simplified language ("approve" not "grant trust scope"), parent-curated worker types pre-installed
+   - Onboarding ceremony: parent physically present at each child's machine for first-time pairing; passkey + Ed25519 signature establishes the trust root
+
+4. **Original non-goals stay** (still in force from original ADR and Amendment §A):
+   - Not a multi-tenant gateway (no tenant isolation between organizations)
+   - Not a hosted SaaS
+   - Not an SSO target
+   - Not a compliance reporter
+   - Not an enterprise marketplace operator
+   - Not a permission system with fine-grained RBAC
+   - Not a chat / collaboration tool
+   - Not a multi-org product
+
+5. **New non-goals** (clarifying family-mode):
+   - Not a parental-controls product — family mode assumes mutually trusted operators, not adversarial child users (though token quotas via trust scopes do provide soft safety)
+   - Not a school / classroom deployment — family mode is for households (small N, no class management); larger educational deployments would need different abstractions
+   - Not a babysitter for sons' AI use — operator (parent) sees federated audit log but stavR doesn't moderate content or block prompts
+
+6. **Roadmap implications** (concrete; binds the v0.7-v1.0 plan):
+   - **Decision 1 (per-task Originator/Participant/Convener federation roles)** — upgraded from v0.8 candidate to **v0.7 must-have**
+   - **Decision 2 (peer discovery via peers.yaml + mDNS + WebRTC)** — upgraded from v0.8 candidate to **v0.7 must-have**
+   - **Decision 3 v0.7 (Option A passkey for EXPLICIT)** — already v0.7; family-mode pairing ceremony uses the same passkey infrastructure
+   - **Decision 4 (Topology actor-nodes + flow particles + click-inspector)** — already v0.7; family deployment makes the federation traffic visualization immediately valuable (parent sees son's stavR's instructions flowing through their own)
+   - **Decision 5 (Workers as MCP servers via spawner protocol)** — already v0.7; sons' local Ollama instances become worker MCP servers that their stavR consumes; the same MCP-server-as-worker abstraction handles family federation
+   - **Family-mode quickstart docs** become a v0.7 deliverable: `docs/family-mode.md` (in addition to `docs/team-mode.md` from Amendment §A)
+
+### Amendment consequences
+
+**Positive:**
+- Concrete near-term use case (sons + token-sharing) validates the federation architecture before it has to serve abstract "team" deployments
+- Local-GPU capacity tier becomes a first-class concern, opening the lane for Ollama / llama.cpp integration as a natural worker type (Decision 5)
+- Non-developer operator UX requirements force simplification that benefits all operators (sons-must-understand-it is a strong forcing function)
+- Family deployment is an unowned market lane in 2026 — no existing MCP gateway / AI tool product targets households
+
+**Negative we accept:**
+- Family-mode UX simplifications (skin, simplified language) add some surface area that solo-developer operators don't need; mitigation = feature flag / mode toggle, default to developer-mode
+- "Family-scale" positioning may attract use cases (parental controls, classroom deployments) that are out of scope per new non-goals; mitigate via explicit clarifying copy
+- Three positioning amendments in three days (original → §A team → §B family) may signal instability; mitigation = §B is additive, not replacing; all prior framing stays valid
+
+### Amendment alternatives considered
+
+- **Stay at team-mode (Amendment §A only)** — leaves the family use case awkwardly fitted to team-mode abstractions; doesn't accommodate non-developer operators
+- **Drop personal-mode entirely, lead with family** — abandons the larger solo-developer audience
+- **Build separate "stavR Family" product** — fragments codebase; rejected for same reasons as Amendment §A's "stavR Team" rejection
+- **Position around "AI infrastructure for prosumers"** — too generic; loses the relational specificity (family, team) that makes the use cases legible
+
+### Amendment acceptance
+
+The amendment moves Status forward (still "Proposed" overall) when:
+1. ADR-042 lands consolidating the five federation/identity/observability/worker design decisions
+2. `docs/family-mode.md` quickstart exists alongside `docs/team-mode.md`
+3. Decisions 1, 2, 3-v0.7-Option-A, 4, and 5 ship in v0.7 (per the binding roadmap above)
+4. At least one family-mode test exists: two paired stavR instances exchange a federated trust scope and the originating instance can verify the consuming instance's actions via the operator's passkey signature
