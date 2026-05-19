@@ -110,6 +110,33 @@ describe('NtfyChannel', () => {
     expect(result.error).toContain('network down');
   });
 
+  it('strips non-ASCII characters from Title (v0.6.x ntfy header bug fix)', async () => {
+    // Repro: Title containing emoji or other multibyte UTF-8 would crash
+    // Node's http.ClientRequest with `Invalid character in header content`,
+    // failing the entire dispatch silently. We must produce a header value
+    // composed only of printable ASCII so the request actually sends.
+    let captured: Record<string, string> = {};
+    const ch = new NtfyChannel({
+      topic: 'stavr-kst-test-abcd1234',
+      transport: async (_u, h) => {
+        captured = h;
+        return { status: 200, body: '' };
+      },
+    });
+    await ch.send(makeInput({ title: '🚨 worker crashed — bom_7d8\tline' }));
+    // Every byte in captured.Title must be in the printable ASCII range so
+    // Node's http header validator accepts it.
+    for (const ch2 of captured.Title) {
+      const code = ch2.codePointAt(0) ?? 0;
+      expect(code).toBeGreaterThanOrEqual(0x20);
+      expect(code).toBeLessThanOrEqual(0x7e);
+    }
+    // Emoji replaced with '?'; tab → space; em-dash also replaced.
+    expect(captured.Title).toContain('worker crashed');
+    expect(captured.Title).toMatch(/line$/);
+    expect(captured.Title).not.toContain('\t');
+  });
+
   it('crit severity maps to priority 5', async () => {
     let captured: Record<string, string> = {};
     const ch = new NtfyChannel({
