@@ -63,6 +63,15 @@ describe('v0.3 dashboard shell — unit', () => {
     expect(html).toContain('window.openInspector');
     expect(html).toContain('window.closeInspector');
   });
+
+  it('v0.6.11 — exposes __stavrCleanup + __stavrStream singletons for pages', () => {
+    const html = renderShell({ title: 't', activePage: 'home', body: '' });
+    expect(html).toContain('window.__stavrCleanup');
+    expect(html).toContain('window.__stavrStream');
+    expect(html).toContain("addEventListener('pagehide'");
+    // Single EventSource open lives in the shell singleton, not per page.
+    expect(html).toContain("new EventSource('/dashboard/stream')");
+  });
 });
 
 describe('v0.3 dashboard shell — integration', () => {

@@ -92,7 +92,20 @@ describe('Plans page — unit', () => {
     const html = renderPlansPage(snapshot([]));
     expect(html).toContain('/dashboard/stream');
     expect(html).toContain('/dashboard/plans/list');
-    expect(html).toContain('EventSource');
+    // v0.6.11 Phase 1 — Plans subscribes via the shared singleton, no longer
+    // opens its own EventSource.
+    expect(html).toContain('window.__stavrStream');
+  });
+
+  it('v0.6.11 — no longer issues window.location.reload on BOM-set diff', () => {
+    // Reload-on-diff caused the operator's "freeze on enter" — busy bom_*
+    // streams re-entered the reload during the next tick. Replaced with an
+    // opt-in "N new BOMs · refresh" banner.
+    const html = renderPlansPage(snapshot([]));
+    const idx = html.indexOf('PLANS_JS');
+    // Body of PLANS_JS shouldn't contain the auto-reload call any more.
+    expect(html).not.toMatch(/incoming\.has\([^)]+\)\) \{[^}]*window\.location\.reload\(\)/);
+    expect(html).toContain('new-bom-banner');
   });
 
   it('emits filter chips for proposed/running by default plus any with hits', () => {

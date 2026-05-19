@@ -1285,20 +1285,22 @@ const TOPOLOGY_JS = `
   }
 
   // ---------- SSE live updates ----------
-  try {
-    const es = new EventSource('/dashboard/stream');
-    let refreshTimer = null;
-    es.addEventListener('event', function(ev) {
+  let refreshTimer = null;
+  if (window.__stavrStream) {
+    window.__stavrStream.on('event', function(ev) {
       try {
         const data = JSON.parse(ev.data || '{}');
         const k = data && data.kind;
         if (typeof k === 'string' && (k.indexOf('bom_step_') === 0 || k.indexOf('worker_') === 0 || k.indexOf('trust_scope_') === 0)) {
           if (refreshTimer) return;
-          refreshTimer = setTimeout(function() { refreshTimer = null; window.location.reload(); }, 600);
+          refreshTimer = (window.__stavrCleanup ? window.__stavrCleanup.setTimeout : setTimeout)(function() {
+            refreshTimer = null;
+            window.location.reload();
+          }, 600);
         }
       } catch (_) {}
     });
-  } catch (_) {}
+  }
 
   // ---------- jump-to-bom from URL hash ----------
   if (location.hash) {

@@ -689,9 +689,8 @@ const DIAGNOSTICS_JS = `
   if (tail) {
     tail.addEventListener('mouseenter', function(){ paused = true; });
     tail.addEventListener('mouseleave', function(){ paused = false; });
-    try {
-      const es = new EventSource('/dashboard/stream');
-      es.addEventListener('event', function(ev) {
+    if (window.__stavrStream) {
+      window.__stavrStream.on('event', function(ev) {
         try {
           const data = JSON.parse(ev.data || '{}');
           const payload = (data && typeof data.payload === 'object' && data.payload) ? data.payload : {};
@@ -721,7 +720,7 @@ const DIAGNOSTICS_JS = `
           tail.scrollTop = tail.scrollHeight;
         } catch (_) {}
       });
-    } catch (_) {}
+    }
   }
 })();
 `;

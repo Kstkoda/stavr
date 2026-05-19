@@ -537,11 +537,13 @@ const DECIDE_JS = `
   let refreshTimer = null;
   function scheduleRefresh() {
     if (refreshTimer) return;
-    refreshTimer = setTimeout(function() { refreshTimer = null; window.location.reload(); }, 350);
+    refreshTimer = (window.__stavrCleanup ? window.__stavrCleanup.setTimeout : setTimeout)(function() {
+      refreshTimer = null;
+      window.location.reload();
+    }, 350);
   }
-  try {
-    const es = new EventSource('/dashboard/stream');
-    es.addEventListener('event', function(ev) {
+  if (window.__stavrStream) {
+    window.__stavrStream.on('event', function(ev) {
       try {
         const data = JSON.parse(ev.data || '{}');
         if (data && typeof data.kind === 'string'
@@ -551,13 +553,13 @@ const DECIDE_JS = `
         }
       } catch (_) { /* ignore */ }
     });
-    es.addEventListener('open', function() {
+    window.__stavrStream.on('open', function() {
       if (liveStatus) liveStatus.textContent = 'live · listening';
     });
-    es.addEventListener('error', function() {
+    window.__stavrStream.on('error', function() {
       if (liveStatus) liveStatus.textContent = 'live · reconnecting';
     });
-  } catch (_) { /* fall through to no live updates */ }
+  }
 })();
 `;
 

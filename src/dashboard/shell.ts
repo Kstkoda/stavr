@@ -356,6 +356,75 @@ const SHELL_CONN_JS = `
 `;
 
 /**
+ * v0.6.11 Phase 1 — page-lifetime cleanup registry. Pages push dispose fns
+ * via `window.__stavrCleanup.add(fn)`; the registry drains on `pagehide`
+ * so timers, SSE listeners, and in-flight fetches don't leak into unload.
+ * Migrating fix for the Plans-page leave-freeze (see proposed/v0_6_11-perf-findings.md F-2).
+ */
+const SHELL_CLEANUP_JS = `
+(function() {
+  const fns = new Set();
+  function drain() {
+    fns.forEach(function(f) { try { f(); } catch (_) {} });
+    fns.clear();
+  }
+  window.__stavrCleanup = {
+    add: function(fn) { if (typeof fn === 'function') fns.add(fn); return fn; },
+    drain: drain,
+    setInterval: function(fn, ms) {
+      const id = setInterval(fn, ms);
+      fns.add(function() { clearInterval(id); });
+      return id;
+    },
+    setTimeout: function(fn, ms) {
+      const id = setTimeout(fn, ms);
+      fns.add(function() { clearTimeout(id); });
+      return id;
+    },
+  };
+  window.addEventListener('pagehide', drain, { once: true });
+})();
+`;
+
+/**
+ * v0.6.11 Phase 1 — shared SSE stream singleton. Replaces N per-page
+ * `new EventSource('/dashboard/stream')` opens with a single tab-scoped
+ * connection. Pages subscribe with \`window.__stavrStream.on('event', cb)\`
+ * and receive a dispose fn (auto-registered into __stavrCleanup).
+ * Fixes F-3 in proposed/v0_6_11-perf-findings.md.
+ */
+const SHELL_STREAM_JS = `
+(function() {
+  const listeners = { event: new Set(), open: new Set(), error: new Set(), ping: new Set() };
+  let es = null;
+  function ensure() {
+    if (es) return es;
+    try { es = new EventSource('/dashboard/stream'); }
+    catch (_) { es = null; return null; }
+    ['event','open','error','ping'].forEach(function(kind) {
+      es.addEventListener(kind, function(ev) {
+        listeners[kind].forEach(function(cb) { try { cb(ev); } catch (_) {} });
+      });
+    });
+    return es;
+  }
+  function on(kind, cb) {
+    if (!listeners[kind]) return function() {};
+    listeners[kind].add(cb);
+    ensure();
+    const dispose = function() { listeners[kind].delete(cb); };
+    if (window.__stavrCleanup) window.__stavrCleanup.add(dispose);
+    return dispose;
+  }
+  function close() {
+    if (es) { try { es.close(); } catch (_) {} es = null; }
+  }
+  if (window.__stavrCleanup) window.__stavrCleanup.add(close);
+  window.__stavrStream = { on: on, close: close };
+})();
+`;
+
+/**
  * Top-rail clock — updates the GST time pill once per second. The clock
  * needs no daemon round-trip; it just renders the operator's wall time.
  */
@@ -369,7 +438,7 @@ const SHELL_CLOCK_JS = `
     el.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + ' GST';
   }
   tick();
-  setInterval(tick, 1000);
+  (window.__stavrCleanup ? window.__stavrCleanup.setInterval : setInterval)(tick, 1000);
 })();
 `;
 
@@ -458,6 +527,8 @@ export function renderShell(input: RenderShellInput): string {
     `<span class="conn-banner-dot" aria-hidden="true"></span>`,
     `<span data-role="conn-banner-msg">Live updates connected.</span>`,
     `</div>`,
+    `<script>${SHELL_CLEANUP_JS}</script>`,
+    `<script>${SHELL_STREAM_JS}</script>`,
     `<script>${INSPECTOR_JS}</script>`,
     `<script>${SHELL_CONN_JS}</script>`,
     `<script>${SHELL_CLOCK_JS}</script>`,
