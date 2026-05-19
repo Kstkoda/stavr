@@ -1,6 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NtfyChannel } from '../../../src/notify/channels/ntfy.js';
 import type { ChannelSendInput } from '../../../src/notify/types.js';
+
+const ENV_KEYS = ['STAVR_NOTIFY_NTFY_TOPIC', 'STAVR_NOTIFY_NTFY_SERVER'] as const;
+const savedEnv: Record<string, string | undefined> = {};
+beforeEach(() => {
+  for (const k of ENV_KEYS) {
+    savedEnv[k] = process.env[k];
+    delete process.env[k];
+  }
+});
+afterEach(() => {
+  for (const k of ENV_KEYS) {
+    if (savedEnv[k] === undefined) delete process.env[k];
+    else process.env[k] = savedEnv[k];
+  }
+});
 
 function makeInput(overrides: Partial<ChannelSendInput> = {}): ChannelSendInput {
   return {
