@@ -368,6 +368,58 @@ export async function mountTransports(
       });
     });
 
+    // v0.6.x memory-leak fix Phase 3 — live diagnostics surface. Returns
+    // process memory + DB page count + broker counters in one JSON shot
+    // so the operator (and the dashboard) can spot growth without grep'ing
+    // the daemon_memory event tail. Loopback-only (the bind enforces that)
+    // and read-only.
+    app.get('/dashboard/api/diagnostics/memory', (_req, res) => {
+      const mem = process.memoryUsage();
+      let dbPageCount: number | null = null;
+      let dbPageSize: number | null = null;
+      let dbBytes: number | null = null;
+      try {
+        const raw = broker.store.rawDb;
+        const pc = raw.pragma('page_count', { simple: true });
+        const ps = raw.pragma('page_size', { simple: true });
+        if (typeof pc === 'number') dbPageCount = pc;
+        if (typeof ps === 'number') dbPageSize = ps;
+        if (dbPageCount !== null && dbPageSize !== null) {
+          dbBytes = dbPageCount * dbPageSize;
+        }
+      } catch {
+        /* db not reachable or rawDb closed; leave nulls */
+      }
+      res.json({
+        ok: true,
+        at: new Date().toISOString(),
+        process: {
+          rss: mem.rss,
+          heap_total: mem.heapTotal,
+          heap_used: mem.heapUsed,
+          external: mem.external,
+          array_buffers: mem.arrayBuffers,
+          uptime_seconds: Math.round(process.uptime()),
+        },
+        db: {
+          page_count: dbPageCount,
+          page_size: dbPageSize,
+          bytes: dbBytes,
+          event_count: (() => {
+            try { return broker.store.eventCount(); } catch { return null; }
+          })(),
+        },
+        broker: {
+          session_count: broker.sessionCount(),
+          subscription_count: broker.subscriptionCount(),
+          sse_sessions: sseSessions.size,
+        },
+        watchdog: {
+          rss_threshold_mb: Number.parseInt(process.env.STAVR_RSS_WATCHDOG_MB ?? '4000', 10) || 4000,
+        },
+      });
+    });
+
     // bom-diagnostics-2026 C3 — on-demand diagnostic endpoints
     // (heap-snapshot, cpu-profile, diagnostic-report). All three are
     // loopback-only AND gated by STAVR_DEBUG_ENABLED=1. When the gate is off
