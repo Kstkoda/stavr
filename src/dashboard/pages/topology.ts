@@ -33,7 +33,6 @@
 import type { WorkerRecord } from '../../persistence.js';
 import type { Bom } from '../../types/stavr-bom.js';
 import { renderShell } from '../shell.js';
-import { renderScrubber } from '../components/scrubber.js';
 import type { InstalledBrickLite } from '../adapters/topology.js';
 import { resolveIconId, renderIcon } from '../components/icon-sprite.js';
 import {
@@ -46,6 +45,11 @@ import type {
   PeerEntryLite,
   EventDensitySnapshot,
 } from '../data/topology-data.js';
+import {
+  renderTopologyTimeline,
+  TOPOLOGY_TIMELINE_CSS,
+  TOPOLOGY_TIMELINE_JS,
+} from '../widgets/topology-timeline.js';
 
 export type { InstalledBrickLite } from '../adapters/topology.js';
 
@@ -1143,31 +1147,32 @@ const TOPOLOGY_JS = `
     });
   }
 
-  // ---------- time scrubber ----------
-  const scrubber = document.querySelector('.scrubber-slider');
-  const scrubVal = document.querySelector('[data-role="value"]');
-  const scrubTime = document.querySelector('[data-role="scrub-time"]');
-  if (scrubber && events.length > 0) {
-    scrubber.max = events.length;
-    scrubber.value = events.length;
-    scrubber.addEventListener('input', function() {
-      const idx = Number(scrubber.value);
-      if (idx >= events.length) {
-        if (scrubVal) scrubVal.textContent = 'live';
-        if (scrubTime) scrubTime.textContent = '';
-        applySnapshot(idx);
-      } else {
-        const ev = events[idx];
-        if (scrubVal) scrubVal.textContent = '@ ' + (idx + 1) + '/' + events.length;
-        if (scrubTime) scrubTime.textContent = ev && ev.at ? new Date(ev.at).toISOString().slice(11, 19) : '';
-        applySnapshot(idx);
+  // ---------- time scrubber (v0.6.10 Task 3 — heatmap timeline) ----------
+  // The timeline widget owns its own range input + readout; we just hook
+  // into the custom 'topology:scrub' event to drive worker dimming.
+  const timeline = document.querySelector('[data-role="topo-timeline"]');
+  if (timeline) {
+    timeline.addEventListener('topology:scrub', function(ev) {
+      const detail = (ev && ev.detail) || {};
+      const total = Number(detail.total || 0);
+      const idx = Number(detail.idx || 0);
+      if (idx >= total || !detail.bucket) {
+        applySnapshot(events.length);
+        return;
       }
-    });
-    scrubber.addEventListener('change', function() {
-      scrubber.value = events.length;
-      if (scrubVal) scrubVal.textContent = 'live';
-      if (scrubTime) scrubTime.textContent = '';
-      applySnapshot(events.length);
+      // Find the event index whose timestamp is nearest the bucket's
+      // start — gives the existing applySnapshot routine the same
+      // contract it had with the flat scrubber.
+      const target = Date.parse(detail.bucket.at);
+      let nearest = events.length;
+      let bestDelta = Infinity;
+      for (let i = 0; i < events.length; i++) {
+        const at = Date.parse(events[i].at);
+        if (!Number.isFinite(at)) continue;
+        const d = Math.abs(at - target);
+        if (d < bestDelta) { bestDelta = d; nearest = i; }
+      }
+      applySnapshot(nearest);
     });
   }
   function applySnapshot(idx) {
@@ -1294,17 +1299,28 @@ export function renderTopologyPage(data?: TopologyData): string {
   const corePort = snapshot.port ?? 7777;
   const nodesHtml = allNodes.map((n) => renderNode(n, n.id === 'stavr-core', corePort)).join('');
 
-  // Scrubber + tick markers (unchanged contract).
+  // v0.6.10 Task 3 — YouTube-style heatmap timeline replaces the flat
+  // scrubber. The fetcher pre-aggregates buckets; when buckets are
+  // missing (legacy callers, tests with no event store) we fall back to
+  // a single empty bucket so the widget still renders the read-out.
+  const density: EventDensitySnapshot = snapshot.eventDensity ?? {
+    bucketMs: 60_000,
+    from: new Date(Date.now() - 60 * 60_000).toISOString(),
+    to: new Date().toISOString(),
+    buckets: [],
+    peak: 0,
+  };
+  const timelineHtml = renderTopologyTimeline({ density });
+
+  // Tick markers carry the worker-dimming reference; we still build them
+  // so the existing applySnapshot logic that reads `topo-events` has
+  // something to drive against. The page JS now consumes the heatmap's
+  // `topology:scrub` event in addition to the legacy range input.
   const steps = Math.max(1, snapshot.scrubberSteps ?? 30);
   const tickMarkers = Array.from({ length: steps }, (_, i) => ({
     at: new Date(Date.now() - (steps - i) * 60_000).toISOString(),
     kind: 'tick',
   }));
-  const scrubberHtml = renderScrubber({ steps: tickMarkers.length });
-  const scrubberWithTime = scrubberHtml.replace(
-    '<span class="scrubber-value" data-role="value">live</span>',
-    '<span class="scrubber-value" data-role="value">live</span><span class="scrubber-time" data-role="scrub-time"></span>',
-  );
 
   const filterStrip = renderFilterStrip(typeCounts);
   const paletteDoor = renderPaletteDoor();
@@ -1351,7 +1367,7 @@ export function renderTopologyPage(data?: TopologyData): string {
     `<div class="topo-nodes">${nodesHtml}</div>`,
     `</div>`,
     legend,
-    scrubberWithTime,
+    timelineHtml,
     `</div>`,
     `</div>`,
     renderDrawer(),
@@ -1362,7 +1378,7 @@ export function renderTopologyPage(data?: TopologyData): string {
     title: 'Stavr — Topology',
     activePage: 'topology',
     body,
-    head: `<style>${TOPOLOGY_CSS}</style>`,
-    script: TOPOLOGY_JS,
+    head: `<style>${TOPOLOGY_CSS}\n${TOPOLOGY_TIMELINE_CSS}</style>`,
+    script: `${TOPOLOGY_JS}\n${TOPOLOGY_TIMELINE_JS}`,
   });
 }

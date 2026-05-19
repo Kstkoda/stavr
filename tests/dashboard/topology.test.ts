@@ -161,19 +161,47 @@ describe('Topology page — unit', () => {
     expect(html).toContain(`data-started-at="${Date.parse(t0)}"`);
   });
 
-  it('renders an inspector + scrubber (BOM sidebar moved to /plans in v0.6.10 Task 2)', () => {
+  it('renders an inspector + heatmap timeline (BOM sidebar moved to /plans in v0.6.10 Task 2)', () => {
     const html = renderTopologyPage(snapshot({
       workers: [worker({ id: 'w1' })],
       inFlightBoms: [bom({ id: 'bom_1', goal: 'do it', scope_id: 'scope_a' })],
       scopes: [{ id: 'scope_a', title: 'release-cut' }],
     }));
     expect(html).toContain('id="inspector"');
-    expect(html).toContain('class="scrubber-slider"');
+    // v0.6.10 Task 3 — flat scrubber replaced by the heatmap timeline.
+    expect(html).toContain('data-role="topo-timeline"');
+    expect(html).toContain('data-role="topo-tl-slider"');
     // v0.6.10 Task 2 — In-flight BOMs sidebar lives on /dashboard/plans now.
     // Topology is pure-topology; the BOM list must NOT render here.
     expect(html).not.toContain('In-flight BOMs');
     expect(html).not.toContain('release-cut');
     expect(html).not.toContain('do it');
+  });
+
+  it('v0.6.10 Task 3 — heatmap timeline renders zoom chips + ribbon + tooltip surface', () => {
+    const html = renderTopologyPage(snapshot({
+      eventDensity: {
+        bucketMs: 60_000,
+        from: '2026-05-19T11:00:00.000Z',
+        to:   '2026-05-19T12:00:00.000Z',
+        peak: 3,
+        buckets: [
+          { at: '2026-05-19T11:00:00.000Z', count: 0, kinds: {} },
+          { at: '2026-05-19T11:01:00.000Z', count: 3, kinds: { progress: 3 } },
+          { at: '2026-05-19T11:02:00.000Z', count: 1, kinds: { worker_started: 1 } },
+        ],
+      },
+    }));
+    expect(html).toContain('data-role="topo-timeline"');
+    expect(html).toContain('class="topo-tl-zoom"');
+    expect(html).toContain('data-zoom="5"');
+    expect(html).toContain('data-zoom="60"');
+    expect(html).toContain('data-zoom="300"');
+    expect(html).toContain('class="topo-tl-poly"');
+    expect(html).toContain('class="topo-tl-heat"');
+    // Hover hit-zones carry the bucket data the JS tooltip reads.
+    expect(html).toContain('data-count="3"');
+    expect(html).toContain('data-kinds="progress=3"');
   });
 
   it('wires SSE refresh on worker_/bom_step_/trust_scope_ events', () => {
