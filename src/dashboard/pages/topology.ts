@@ -54,6 +54,11 @@ import {
   TOPOLOGY_ACTOR_NODES_CSS,
   type ActorNodeLite,
 } from '../widgets/topology-actor-nodes.js';
+import {
+  renderFlowParticleSurface,
+  TOPOLOGY_FLOW_PARTICLES_CSS,
+  TOPOLOGY_FLOW_PARTICLES_JS,
+} from '../widgets/topology-flow-particles.js';
 
 export type { InstalledBrickLite } from '../adapters/topology.js';
 
@@ -1440,6 +1445,10 @@ export function renderTopologyPage(data?: TopologyData): string {
     paletteDoor,
     `<div class="topo-stage">`,
     svg,
+    // v0.6.10 Task 4b — flow-particle surface sits between the edge
+    // SVG (z-index 1) and the node DOM (z-index 2). Particles read as
+    // flowing under the nodes.
+    renderFlowParticleSurface(),
     `<div class="topo-nodes">${nodesHtml}</div>`,
     `</div>`,
     legend,
@@ -1454,7 +1463,7 @@ export function renderTopologyPage(data?: TopologyData): string {
     title: 'Stavr — Topology',
     activePage: 'topology',
     body,
-    head: `<style>${TOPOLOGY_CSS}\n${TOPOLOGY_TIMELINE_CSS}\n${TOPOLOGY_ACTOR_NODES_CSS}</style>`,
-    script: `${TOPOLOGY_JS}\n${TOPOLOGY_TIMELINE_JS}`,
+    head: `<style>${TOPOLOGY_CSS}\n${TOPOLOGY_TIMELINE_CSS}\n${TOPOLOGY_ACTOR_NODES_CSS}\n${TOPOLOGY_FLOW_PARTICLES_CSS}</style>`,
+    script: `${TOPOLOGY_JS}\n${TOPOLOGY_TIMELINE_JS}\n${TOPOLOGY_FLOW_PARTICLES_JS}`,
   });
 }

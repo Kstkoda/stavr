@@ -226,6 +226,17 @@ describe('Topology page — unit', () => {
     expect(html).toContain('GitHub');
   });
 
+  it('v0.6.10 Task 4b — emits a flow-particle surface for SSE-driven instruction animation', () => {
+    const html = renderTopologyPage(snapshot());
+    expect(html).toContain('data-role="topo-particles"');
+    expect(html).toContain('.tp-dot');
+    // Icon SVG strings for the five classes are inlined in the JS.
+    expect(html).toContain('"operator":');
+    expect(html).toContain('"cc":');
+    expect(html).toContain('"cowork":');
+    expect(html).toContain('"peer":');
+  });
+
   it('v0.6.10 Task 4a — renders actor-nodes with data-actor-class for the color palette', () => {
     const html = renderTopologyPage(snapshot({
       actorNodes: [
