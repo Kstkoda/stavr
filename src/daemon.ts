@@ -29,6 +29,7 @@ import { start as startWorkerWatchdog } from './workers/watchdog.js';
 import { loadConfig } from './config.js';
 import { wireV02Subsystem, type V02SubsystemHandle } from './steward/v02-wiring.js';
 import { startMemoryPoller, type MemoryPollerStop } from './observability/memory-poller.js';
+import { startRssWatchdog, type RssWatchdogStop } from './observability/rss-watchdog.js';
 import { resolveRetentionOpts } from './observability/retention.js';
 import { startOtel, type StartedOtel } from './observability/otel.js';
 import { startEventLoopMonitor, type EventLoopMonitorStop } from './observability/event-loop.js';
@@ -313,6 +314,20 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
+  // v0.6.x memory-leak fix Phase 3 — belt-and-braces RSS watchdog. PM2's
+  // max_memory_restart can miss the window when the event loop is stalled by
+  // a GC death spiral; this in-process check fires a heap snapshot + event
+  // before the wheels come off. Threshold via STAVR_RSS_WATCHDOG_MB (default
+  // 4000 MB; set to 0 to disable).
+  let rssWatchdogStop: RssWatchdogStop | undefined;
+  try {
+    rssWatchdogStop = startRssWatchdog(broker);
+  } catch (err) {
+    logger.error('failed to start rss watchdog; daemon continues without it', {
+      error: (err as Error).message,
+    });
+  }
+
   // bom-diagnostics-2026 C2.4 — event-loop lag + ELU sampling. Prom metrics
   // refresh every 5s; broker `daemon_eventloop` events every 60s for the
   // event log. Both interval handles are unref'd, so they don't block
@@ -423,6 +438,9 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     workerWatchdog.stop();
     if (memoryPollerStop) {
       try { memoryPollerStop(); } catch { /* best effort */ }
+    }
+    if (rssWatchdogStop) {
+      try { rssWatchdogStop(); } catch { /* best effort */ }
     }
     if (eventLoopMonitorStop) {
       try { eventLoopMonitorStop(); } catch { /* best effort */ }
