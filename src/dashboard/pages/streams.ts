@@ -17,6 +17,8 @@ import { renderPill, type PillVariant } from '../components/pill.js';
 import {
   deriveLifecycleState,
   isCurrentlyActive,
+  lifecycleLabel,
+  type LifecycleState,
 } from '../../workers/lifecycle.js';
 
 export interface StreamsData {
@@ -32,6 +34,47 @@ const STATUS_PILL: Record<WorkerRecord['status'], PillVariant> = {
   terminated: 'neutral',
   crashed:    'danger',
 };
+
+/**
+ * v0.6.10 Task 2 — per-lifecycle pill variant for the worker roster table
+ * (lifted from the Topology page; see CLAUDE.md §5 and the BOM v0.6.6 P3
+ * rule that operator-kill must read distinct from a clean exit).
+ */
+const WORKER_LIFECYCLE_PILL: Record<LifecycleState, PillVariant> = {
+  'starting':           'info',
+  'running':            'info',
+  'completed-clean':    'success',
+  'completed-error':    'warning',
+  'killed-by-operator': 'warning',
+  'killed-by-system':   'danger',
+  'crashed':            'danger',
+  'stale':              'warning',
+};
+
+/**
+ * v0.6.10 Task 2 — Worker roster table, lifted from the Topology page.
+ * Renders one row per worker with name + type + lifecycle pill. Sits
+ * below the streams grid as the canonical "list of workers" surface.
+ */
+function renderWorkerRoster(workers: WorkerRecord[], now: number = Date.now()): string {
+  if (workers.length === 0) {
+    return `<div class="streams-roster-empty">No workers running.</div>`;
+  }
+  return workers.map((w) => {
+    const lifecycle = deriveLifecycleState(w, now);
+    const pill = renderPill({
+      text: lifecycleLabel(lifecycle),
+      variant: WORKER_LIFECYCLE_PILL[lifecycle] ?? 'neutral',
+    });
+    return [
+      `<li class="roster-row" data-id="${escapeHtml(w.id)}" data-lifecycle="${escapeHtml(lifecycle)}">`,
+      `<span class="roster-name">${escapeHtml(w.name || w.id)}</span>`,
+      `<span class="roster-type">${escapeHtml(w.type)}</span>`,
+      pill,
+      `</li>`,
+    ].join('');
+  }).join('');
+}
 
 function escapeHtml(s: string): string {
   return String(s)
@@ -230,6 +273,41 @@ const STREAMS_CSS = `
   max-height: none;
   font-size: 13px;
 }
+
+/* v0.6.10 Task 2 — Worker roster table lifted from Topology. */
+.streams-roster {
+  margin-top: 18px;
+  padding: 14px;
+  background: var(--bg-glass);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.streams-roster h2 { margin: 0 0 8px 0; }
+.streams-roster ul { list-style: none; padding: 0; margin: 0; }
+.streams-roster .roster-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.streams-roster .roster-row:last-child { border-bottom: 0; }
+.streams-roster .roster-name { color: var(--ink-0); }
+.streams-roster .roster-type {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.streams-roster-empty {
+  color: var(--ink-3);
+  font-style: italic;
+  font-size: 12px;
+  padding: 8px 0;
+}
 `;
 
 const QUIET_THRESHOLD_MS = 2 * 60 * 1000; // 2 min idle = quiet pane
@@ -389,6 +467,15 @@ export function renderStreamsPage(data?: StreamsData): string {
     `</div>`,
     `<div class="streams-grid" data-role="streams-grid">${panes}</div>`,
     historicPanes,
+    // v0.6.10 Task 2 — Worker roster table lifted from Topology. Shows
+    // the full list (including historic) as a compact alternative view
+    // for operators who'd rather scan rows than panes.
+    `<section class="streams-roster glass" data-role="streams-roster">`,
+    `<h2 class="card-title">Worker roster</h2>`,
+    `<ul>`,
+    renderWorkerRoster(snapshot.workers, now),
+    `</ul>`,
+    `</section>`,
   ].join('');
 
   return renderShell({

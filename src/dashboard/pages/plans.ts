@@ -17,9 +17,32 @@ import {
   RISK_BUCKET,
 } from '../adapters/bom.js';
 
+/**
+ * v0.6.10 Task 2 — in-flight BOMs (proposed / approved / running) grouped
+ * by their trust scope, lifted out of the Topology page so that page can
+ * stay pure-topology. The sidebar mirrors the layout previously rendered
+ * under `.topo-side` so existing operator habits transfer.
+ */
+export interface InFlightScopeLite {
+  id: string;
+  title: string;
+  expires_at?: string;
+  actions_executed?: number;
+  expires_after_actions?: number;
+}
+
 export interface PlansData {
   boms: Bom[];
   totals: Record<BomStatus, number>;
+  /**
+   * v0.6.10 Task 2 — in-flight BOMs (status ∈ {proposed, approved, running})
+   * surfaced as a side panel for operator at-a-glance. Optional so callers
+   * that haven't been updated keep working; transports.ts plumbs the live
+   * list when the daemon mounts.
+   */
+  inFlightBoms?: Bom[];
+  /** Scopes referenced by `inFlightBoms` — used to render the group headers. */
+  scopes?: InFlightScopeLite[];
 }
 
 const STATUS_PILL: Record<BomStatus, PillVariant> = {
@@ -108,6 +131,58 @@ function renderBomRow(bom: Bom): string {
     `<div class="detail-placeholder">Loading steps…</div>`,
     `</section>`,
     `</article>`,
+  ].join('');
+}
+
+/**
+ * v0.6.10 Task 2 — render the In-flight BOMs side panel that previously
+ * lived on the Topology page. Groups BOMs by `scope_id` so an operator can
+ * see what each trust scope is currently spending its budget on.
+ */
+function renderInFlightSidebar(
+  boms: Bom[],
+  scopes: InFlightScopeLite[],
+): string {
+  if (boms.length === 0) {
+    return [
+      `<aside class="plans-inflight glass" data-role="plans-inflight">`,
+      `<h2 class="card-title">In-flight BOMs</h2>`,
+      `<div class="placeholder">Nothing running.</div>`,
+      `</aside>`,
+    ].join('');
+  }
+  const groups = new Map<string, Bom[]>();
+  for (const b of boms) {
+    const key = b.scope_id ?? '_unscoped';
+    const arr = groups.get(key) ?? [];
+    arr.push(b);
+    groups.set(key, arr);
+  }
+  const groupsHtml = Array.from(groups.entries()).map(([scopeId, list]) => {
+    const scope = scopes.find((s) => s.id === scopeId);
+    const heading = scope
+      ? `${escapeHtml(scope.title)} · <span class="scope-id">${escapeHtml(scopeId.slice(0, 12))}</span>`
+      : `<em>unscoped</em>`;
+    const items = list.map((b) => {
+      const fl = bomToFoodLabel(b);
+      return renderFoodLabel({
+        ...fl,
+        modelMix: undefined,
+        name: fl.name.length > 40 ? fl.name.slice(0, 38) + '…' : fl.name,
+      });
+    }).join('');
+    return [
+      `<section class="scope-group">`,
+      `<h3 class="scope-h">${heading}</h3>`,
+      `<div class="scope-boms">${items}</div>`,
+      `</section>`,
+    ].join('');
+  }).join('');
+  return [
+    `<aside class="plans-inflight glass" data-role="plans-inflight">`,
+    `<h2 class="card-title">In-flight BOMs · ${boms.length}</h2>`,
+    groupsHtml,
+    `</aside>`,
   ].join('');
 }
 
@@ -302,6 +377,50 @@ const PLANS_CSS = `
   background: var(--bg-surface);
   border-radius: 10px;
   border: 1px dashed var(--border-strong);
+}
+
+/* v0.6.10 Task 2 — in-flight sidebar lifted from Topology. */
+.plans-frame {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 14px;
+  align-items: start;
+  min-height: 0;
+}
+@media (max-width: 1100px) { .plans-frame { grid-template-columns: 1fr; } }
+.plans-inflight {
+  padding: 14px;
+  overflow-y: auto;
+  max-height: 70vh;
+}
+.plans-inflight .scope-group + .scope-group {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.plans-inflight .scope-h {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 8px 0;
+  font-family: var(--mono);
+}
+.plans-inflight .scope-id {
+  font-family: var(--mono);
+  color: var(--ink-3);
+}
+.plans-inflight .scope-boms {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plans-inflight .scope-boms .food-label { font-size: 11px; }
+.plans-inflight .placeholder {
+  color: var(--ink-3);
+  font-style: italic;
+  font-size: 12px;
+  padding: 8px 0;
 }
 `;
 
@@ -535,13 +654,20 @@ export function renderPlansPage(data?: PlansData): PlansPageRender {
   const rows = snapshot.boms.length === 0
     ? `<div class="empty-plans">No BOMs yet — propose one and it'll appear here.</div>`
     : snapshot.boms.map(renderBomRow).join('');
+  // v0.6.10 Task 2 — in-flight BOMs sidebar lifted from Topology.
+  const inFlightBoms = snapshot.inFlightBoms ?? [];
+  const inFlightScopes = snapshot.scopes ?? [];
+  const sidebar = renderInFlightSidebar(inFlightBoms, inFlightScopes);
   const body = [
     `<div class="page-head">`,
     `<h1 class="page-title">Stavr — Plans</h1>`,
-    `<span class="page-sub">${snapshot.boms.length} BOM${snapshot.boms.length === 1 ? '' : 's'}</span>`,
+    `<span class="page-sub">${snapshot.boms.length} BOM${snapshot.boms.length === 1 ? '' : 's'}${inFlightBoms.length > 0 ? ` · ${inFlightBoms.length} in-flight` : ''}</span>`,
     `</div>`,
     renderTopBar(snapshot.totals),
+    `<div class="plans-frame">`,
     `<div class="plans-list" data-role="plans-list">${rows}</div>`,
+    sidebar,
+    `</div>`,
   ].join('');
   return renderShell({
     title: 'Stavr — Plans',

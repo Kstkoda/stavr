@@ -889,7 +889,22 @@ export function mountDashboardRoutes(
       failed: 0, cancelled: 0, rejected: 0,
     } as Record<typeof boms[number]['status'], number>;
     for (const b of boms) totals[b.status]++;
-    return { boms, totals };
+    // v0.6.10 Task 2 — in-flight BOMs sidebar lifted from Topology to
+    // Plans. Carry both the BOM list and the scopes referenced by them
+    // so the side panel can render scope-group headers without a second
+    // store query.
+    const inFlightBoms = boms.filter(
+      (b) => b.status === 'approved' || b.status === 'running' || b.status === 'proposed',
+    );
+    const active = trustStore.list({ status: 'active' });
+    const scopes = active.map((s) => ({
+      id: s.id,
+      title: s.title,
+      expires_at: s.expires_at,
+      actions_executed: s.actions_executed,
+      expires_after_actions: s.expires_after_actions,
+    }));
+    return { boms, totals, inFlightBoms, scopes };
   }
 
   // Decide page snapshot — open decisions for action, plus the most

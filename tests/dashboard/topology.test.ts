@@ -161,7 +161,7 @@ describe('Topology page — unit', () => {
     expect(html).toContain(`data-started-at="${Date.parse(t0)}"`);
   });
 
-  it('renders an inspector + scrubber + bom sidebar', () => {
+  it('renders an inspector + scrubber (BOM sidebar moved to /plans in v0.6.10 Task 2)', () => {
     const html = renderTopologyPage(snapshot({
       workers: [worker({ id: 'w1' })],
       inFlightBoms: [bom({ id: 'bom_1', goal: 'do it', scope_id: 'scope_a' })],
@@ -169,16 +169,11 @@ describe('Topology page — unit', () => {
     }));
     expect(html).toContain('id="inspector"');
     expect(html).toContain('class="scrubber-slider"');
-    expect(html).toContain('In-flight BOMs');
-    expect(html).toContain('release-cut');
-    expect(html).toContain('do it');
-  });
-
-  it('shows an empty placeholder when no BOMs are in flight', () => {
-    const html = renderTopologyPage(snapshot({
-      workers: [worker({ id: 'w1' })],
-    }));
-    expect(html).toContain('Nothing running.');
+    // v0.6.10 Task 2 — In-flight BOMs sidebar lives on /dashboard/plans now.
+    // Topology is pure-topology; the BOM list must NOT render here.
+    expect(html).not.toContain('In-flight BOMs');
+    expect(html).not.toContain('release-cut');
+    expect(html).not.toContain('do it');
   });
 
   it('wires SSE refresh on worker_/bom_step_/trust_scope_ events', () => {
@@ -216,18 +211,19 @@ describe('Topology page — unit', () => {
     expect(html).toContain('Twin A');
   });
 
-  it('emits a roster row per worker with a status pill', () => {
+  it('v0.6.10 Task 2 — Worker roster table moved to /streams; topology is pure-topology', () => {
     const html = renderTopologyPage(snapshot({
       workers: [
         worker({ id: 'w1', name: 'alpha', status: 'running' }),
         worker({ id: 'w2', name: 'beta',  status: 'idle' }),
       ],
     }));
-    expect(html).toContain('Worker roster');
-    expect(html).toContain('alpha');
-    expect(html).toContain('beta');
-    expect(html).toContain('pill-info');
-    expect(html).toContain('pill-success');
+    // Workers still appear as constellation NODES (canvas), not as a roster table.
+    expect(html).toContain('data-id="w1"');
+    expect(html).toContain('data-id="w2"');
+    // The roster table section must NOT render on Topology anymore.
+    expect(html).not.toContain('Worker roster');
+    expect(html).not.toContain('class="topo-roster');
   });
 });
 

@@ -19,27 +19,26 @@
  *  - Edit-mode parked with a v0.7 badge in the palette door.
  *
  * Worker nodes carry data-id + data-layer="worker" + data-started-at;
- * In-flight BOMs sidebar, Worker roster table, and SSE subscription are
- * unchanged from v0.4. The bricks/workers data fed in still drives the
- * node set, but the visual layer is now graph-first instead of
- * bus-row-stacked. The v0.3/v8 legacy scaffolding (topo-bus structural
- * axis, topo-mode-chips RADIAL/HEAT/HISTORY switcher, "STAVR DAEMON"
- * core label) was removed in v0.4.1 — see CLAUDE.md invariant #1.
+ * the SSE subscription refreshes on worker_/bom_step_/trust_scope_ events.
+ * The bricks/workers data fed in still drives the node set, but the
+ * visual layer is now graph-first instead of bus-row-stacked. The v0.3/v8
+ * legacy scaffolding (topo-bus structural axis, topo-mode-chips
+ * RADIAL/HEAT/HISTORY switcher, "STAVR DAEMON" core label) was removed
+ * in v0.4.1 — see CLAUDE.md invariant #1.
+ *
+ * v0.6.10 Task 2 — the In-flight BOMs sidebar moved to
+ * /dashboard/plans and the Worker roster table moved to
+ * /dashboard/streams. Topology is now pure-topology (constellation only).
  */
 import type { WorkerRecord } from '../../persistence.js';
 import type { Bom } from '../../types/stavr-bom.js';
 import { renderShell } from '../shell.js';
 import { renderScrubber } from '../components/scrubber.js';
-import { renderPill, type PillVariant } from '../components/pill.js';
-import { renderFoodLabel } from '../components/food-label.js';
-import { bomToFoodLabel } from '../adapters/bom.js';
 import type { InstalledBrickLite } from '../adapters/topology.js';
 import { resolveIconId, renderIcon } from '../components/icon-sprite.js';
 import {
   deriveLifecycleState,
   isCurrentlyActive,
-  lifecycleLabel,
-  type LifecycleState,
 } from '../../workers/lifecycle.js';
 import { fetchWorkerCounters } from '../data/worker-counters.js';
 import type {
@@ -121,30 +120,6 @@ interface GraphEdge {
   /** Optional label text shown along the path. */
   label?: string;
 }
-
-const WORKER_STATUS_PILL: Record<string, PillVariant> = {
-  idle:     'success',
-  running:  'info',
-  starting: 'info',
-  crashed:  'danger',
-  terminated: 'neutral',
-};
-
-/**
- * BOM v0.6.6 P3 — pill variant per derived lifecycle bucket. Replaces
- * the per-status mapping above for the roster pill, so an operator-killed
- * worker reads visually different from a clean exit (per BOM hard rule #6).
- */
-const WORKER_LIFECYCLE_PILL: Record<LifecycleState, PillVariant> = {
-  'starting':          'info',
-  'running':           'info',
-  'completed-clean':   'success',
-  'completed-error':   'warning',
-  'killed-by-operator':'warning', // operator action, not a failure -> distinct from danger
-  'killed-by-system':  'danger',
-  'crashed':           'danger',
-  'stale':             'warning',
-};
 
 function escapeHtml(s: string): string {
   return String(s)
@@ -368,65 +343,9 @@ function renderEdge(n: Map<string, GraphNode>, e: GraphEdge): string {
   ].join('');
 }
 
-function renderBomSidebar(data: TopologyData): string {
-  if (data.inFlightBoms.length === 0) {
-    return [
-      `<aside class="topo-side glass">`,
-      `<h2 class="card-title">In-flight BOMs</h2>`,
-      `<div class="placeholder">Nothing running.</div>`,
-      `</aside>`,
-    ].join('');
-  }
-  const groups = new Map<string, Bom[]>();
-  for (const b of data.inFlightBoms) {
-    const key = b.scope_id ?? '_unscoped';
-    const arr = groups.get(key) ?? [];
-    arr.push(b);
-    groups.set(key, arr);
-  }
-  const groupsHtml = Array.from(groups.entries()).map(([scopeId, boms]) => {
-    const scope = data.scopes.find((s) => s.id === scopeId);
-    const heading = scope
-      ? `${escapeHtml(scope.title)} · <span class="scope-id">${escapeHtml(scopeId.slice(0, 12))}</span>`
-      : `<em>unscoped</em>`;
-    const items = boms.map((b) => {
-      const fl = bomToFoodLabel(b);
-      return renderFoodLabel({ ...fl, modelMix: undefined, name: fl.name.length > 40 ? fl.name.slice(0, 38) + '…' : fl.name });
-    }).join('');
-    return [
-      `<section class="scope-group">`,
-      `<h3 class="scope-h">${heading}</h3>`,
-      `<div class="scope-boms">${items}</div>`,
-      `</section>`,
-    ].join('');
-  }).join('');
-  return [
-    `<aside class="topo-side glass">`,
-    `<h2 class="card-title">In-flight BOMs · ${data.inFlightBoms.length}</h2>`,
-    groupsHtml,
-    `</aside>`,
-  ].join('');
-}
-
-function renderWorkerRoster(workers: WorkerRecord[], now: number = Date.now()): string {
-  if (workers.length === 0) return '<div class="placeholder">No workers running.</div>';
-  return workers.map((w) => {
-    // BOM v0.6.6 P3 — pill text + variant come from lifecycle_state so
-    // operator-kill renders distinct from a clean exit.
-    const lifecycle = deriveLifecycleState(w, now);
-    const pill = renderPill({
-      text: lifecycleLabel(lifecycle),
-      variant: WORKER_LIFECYCLE_PILL[lifecycle] ?? 'neutral',
-    });
-    return [
-      `<li class="roster-row" data-id="${escapeHtml(w.id)}" data-lifecycle="${escapeHtml(lifecycle)}">`,
-      `<span class="roster-name">${escapeHtml(w.name)}</span>`,
-      `<span class="roster-type">${escapeHtml(w.type)}</span>`,
-      pill,
-      `</li>`,
-    ].join('');
-  }).join('');
-}
+// v0.6.10 Task 2 — renderBomSidebar moved to src/dashboard/pages/plans.ts
+// (now lives as `renderInFlightSidebar`).
+// v0.6.10 Task 2 — renderWorkerRoster moved to src/dashboard/pages/streams.ts.
 
 function renderFilterStrip(typeCounts: Record<GraphType, number>): string {
   const cell = (cls: string, label: string, type: GraphType) =>
@@ -613,6 +532,8 @@ const TOPOLOGY_CSS = `
   min-height: 0;
 }
 @media (max-width: 1100px) { .topo-frame { grid-template-columns: 1fr; } }
+/* v0.6.10 Task 2 — Topology is canvas-only; sidebars moved off page. */
+.topo-frame-solo { grid-template-columns: 1fr; }
 
 /* canvas */
 .topo-canvas {
@@ -859,8 +780,7 @@ const TOPOLOGY_CSS = `
 .placeholder { color: var(--ink-3); font-style: italic; font-size: 12px; padding: 8px 0; }
 
 /* roster */
-.topo-roster { padding: 14px; }
-.topo-roster h2 { margin-bottom: 6px; }
+/* v0.6.10 Task 2 — .topo-roster removed; roster lives on /dashboard/streams now. */
 .roster-row {
   display: grid; grid-template-columns: 1fr auto auto;
   gap: 10px; align-items: center;
@@ -1416,7 +1336,10 @@ export function renderTopologyPage(data?: TopologyData): string {
     `<span class="page-sub" data-role="topology-header">${workerHeader} · ${snapshot.bricks.length} brick${snapshot.bricks.length === 1 ? '' : 's'} · ${snapshot.inFlightBoms.length} in-flight · drag to pin${hiddenChip}</span>`,
     `</div>`,
     filterStrip,
-    `<div class="topo-frame">`,
+    // v0.6.10 Task 2 — Topology page is now pure-topology: the BOM
+    // sidebar moved to /dashboard/plans and the Worker roster moved
+    // to /dashboard/streams. Operators reach those from the topbar.
+    `<div class="topo-frame topo-frame-solo">`,
     `<div class="topo-canvas glass" data-role="topo-canvas" data-live="on">`,
     `<div class="grid-bg"></div>`,
     `<div class="cluster-blob c-mcp"></div>`,
@@ -1430,14 +1353,6 @@ export function renderTopologyPage(data?: TopologyData): string {
     legend,
     scrubberWithTime,
     `</div>`,
-    renderBomSidebar(snapshot),
-    `</div>`,
-    `<section class="topo-roster glass">`,
-    `<h2 class="card-title">Worker roster</h2>`,
-    `<ul style="list-style:none;padding:0;margin:0;">`,
-    renderWorkerRoster(snapshot.workers),
-    `</ul>`,
-    `</section>`,
     `</div>`,
     renderDrawer(),
     `<script id="topo-events" type="application/json">${JSON.stringify(tickMarkers)}</script>`,

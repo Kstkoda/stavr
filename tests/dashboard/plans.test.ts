@@ -106,6 +106,34 @@ describe('Plans page — unit', () => {
     expect(html).toContain('data-status="done"');
     expect(html).toContain('data-status="failed"');
   });
+
+  it('v0.6.10 Task 2 — renders in-flight BOMs sidebar grouped by scope (lifted from Topology)', () => {
+    const data: PlansData = {
+      boms: [],
+      totals: { proposed: 0, approved: 0, running: 0, done: 0, failed: 0, cancelled: 0, rejected: 0 },
+      inFlightBoms: [
+        bom({ id: 'bom_inf_a', goal: 'do it', status: 'running', scope_id: 'scope_a' }),
+      ],
+      scopes: [{ id: 'scope_a', title: 'release-cut' }],
+    };
+    const html = renderPlansPage(data);
+    expect(html).toContain('data-role="plans-inflight"');
+    expect(html).toContain('In-flight BOMs');
+    expect(html).toContain('release-cut');
+    expect(html).toContain('do it');
+  });
+
+  it('v0.6.10 Task 2 — in-flight sidebar shows "Nothing running." placeholder when empty', () => {
+    const data: PlansData = {
+      boms: [],
+      totals: { proposed: 0, approved: 0, running: 0, done: 0, failed: 0, cancelled: 0, rejected: 0 },
+      inFlightBoms: [],
+      scopes: [],
+    };
+    const html = renderPlansPage(data);
+    expect(html).toContain('data-role="plans-inflight"');
+    expect(html).toContain('Nothing running.');
+  });
 });
 
 describe('splitEnvelope', () => {
