@@ -189,6 +189,33 @@ describe('Topology page — unit', () => {
     expect(html).toContain('trust_scope_');
   });
 
+  it('v0.6.10 Task 1 — renders MCP-category nodes from the registry', () => {
+    const html = renderTopologyPage(snapshot({
+      mcpCategoryNodes: [
+        { id: 'mcp-cat-worker', category: 'worker', display_name: 'Workers', tool_count: 3, source: 'registry' },
+        { id: 'mcp-cat-github', category: 'github', display_name: 'GitHub',  tool_count: 1, source: 'registry' },
+      ],
+    }));
+    expect(html).toContain('data-id="mcp-cat-worker"');
+    expect(html).toContain('data-id="mcp-cat-github"');
+    expect(html).toContain('data-type="mcp-local"');
+    expect(html).toContain('Workers');
+    expect(html).toContain('GitHub');
+  });
+
+  it('v0.6.10 Task 1 — renders peer nodes from peers.yaml feed', () => {
+    const html = renderTopologyPage(snapshot({
+      peers: [
+        { id: 'twin-a', display_name: 'Twin A', status: 'ok', role: 'child' },
+        { id: 'twin-b', display_name: 'twin-b', status: 'unknown' },
+      ],
+    }));
+    expect(html).toContain('data-id="peer-twin-a"');
+    expect(html).toContain('data-id="peer-twin-b"');
+    expect(html).toContain('data-type="peer"');
+    expect(html).toContain('Twin A');
+  });
+
   it('emits a roster row per worker with a status pill', () => {
     const html = renderTopologyPage(snapshot({
       workers: [

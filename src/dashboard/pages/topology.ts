@@ -42,6 +42,11 @@ import {
   type LifecycleState,
 } from '../../workers/lifecycle.js';
 import { fetchWorkerCounters } from '../data/worker-counters.js';
+import type {
+  McpCategoryNodeLite,
+  PeerEntryLite,
+  EventDensitySnapshot,
+} from '../data/topology-data.js';
 
 export type { InstalledBrickLite } from '../adapters/topology.js';
 
@@ -65,6 +70,23 @@ export interface TopologyData {
    * "this · <port>" subtitle. Plumbed in by transports.ts at mount-time
    * from opts.port. Defaults to 7777 (the stavr CLI default) when absent. */
   port?: number;
+  /**
+   * v0.6.10 Task 1 — virtual MCP nodes derived from the in-process tool
+   * registry, one per category. Lets the operator see stavR's own tool
+   * surfaces on the constellation even before any external brick is
+   * installed.
+   */
+  mcpCategoryNodes?: McpCategoryNodeLite[];
+  /**
+   * v0.6.10 Task 1 — federation peers from `${STAVR_HOME}/peers.yaml`.
+   * Empty when the file is absent (default operator state today).
+   */
+  peers?: PeerEntryLite[];
+  /**
+   * v0.6.10 Task 3 — pre-aggregated heatmap timeline buckets. Replaces
+   * the flat scrubber polyline; thickness ∝ sqrt(count) in the renderer.
+   */
+  eventDensity?: EventDensitySnapshot;
 }
 
 type GraphType = 'core' | 'mcp-remote' | 'mcp-local' | 'webhook' | 'db' | 'model' | 'worker' | 'peer';
@@ -159,6 +181,53 @@ function bricksToNodes(bricks: InstalledBrickLite[]): GraphNode[] {
       status: 'ok',
       x: 0, y: 0,
       meta: { kind: String(b.kind) },
+    };
+  });
+}
+
+/**
+ * v0.6.10 Task 1 — turn ToolRegistry categories into MCP-local nodes so
+ * the canvas is populated even when no bricks are installed in manifest.
+ * Each category becomes one `t-mcp-local` round node labelled with the
+ * category and tool count.
+ */
+function mcpCategoryNodesToGraph(mcps: McpCategoryNodeLite[]): GraphNode[] {
+  return mcps.map((m) => ({
+    id: m.id,
+    type: 'mcp-local',
+    displayName: m.display_name,
+    role: `${m.tool_count} tool${m.tool_count === 1 ? '' : 's'}`,
+    iconId: resolveIconId(m.display_name),
+    shape: 'round',
+    status: 'ok',
+    x: 0,
+    y: 0,
+    meta: { category: m.category, tool_count: String(m.tool_count), source: m.source },
+  }));
+}
+
+/**
+ * v0.6.10 Task 1 — federation peers as t-peer nodes. Status carries
+ * directly to the halo so an unknown peer reads as a faint ring.
+ */
+function peersToNodes(peers: PeerEntryLite[]): GraphNode[] {
+  return peers.map((p) => {
+    const status: GraphStatus =
+      p.status === 'crit' ? 'crit' : p.status === 'warn' ? 'warn' : 'ok';
+    const meta: Record<string, string> = { peer_status: p.status };
+    if (p.endpoint) meta.endpoint = p.endpoint;
+    if (p.role) meta.role = p.role;
+    return {
+      id: `peer-${p.id}`,
+      type: 'peer',
+      displayName: p.display_name,
+      role: p.role,
+      iconId: resolveIconId('peer'),
+      shape: 'round',
+      status,
+      x: 0,
+      y: 0,
+      meta,
     };
   });
 }
@@ -1267,7 +1336,29 @@ export function renderTopologyPage(data?: TopologyData): string {
       hiddenHistoricWorkers.push(w);
     }
   }
-  const allNodes: GraphNode[] = [core, ...bricksToNodes(snapshot.bricks), ...workersToNodes(canvasWorkers, canvasNow)];
+  // v0.6.10 Task 1 — pull in MCP-category nodes (registry-derived, even
+  // when zero bricks are installed) and federation peers. The legacy
+  // bricksToNodes pass stays so installed external MCPs / webhooks / DBs
+  // still show up; the two sources are additive and de-duped by id.
+  const brickNodes = bricksToNodes(snapshot.bricks);
+  const mcpNodes = mcpCategoryNodesToGraph(snapshot.mcpCategoryNodes ?? []);
+  const peerNodes = peersToNodes(snapshot.peers ?? []);
+  const workerNodes = workersToNodes(canvasWorkers, canvasNow);
+
+  const seen = new Set<string>();
+  const dedup = (n: GraphNode): boolean => {
+    if (seen.has(n.id)) return false;
+    seen.add(n.id);
+    return true;
+  };
+  seen.add(core.id);
+  const allNodes: GraphNode[] = [
+    core,
+    ...brickNodes.filter(dedup),
+    ...mcpNodes.filter(dedup),
+    ...peerNodes.filter(dedup),
+    ...workerNodes.filter(dedup),
+  ];
   layoutGraph(allNodes);
 
   const typeCounts: Record<GraphType, number> = {

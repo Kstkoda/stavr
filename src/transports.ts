@@ -15,6 +15,7 @@ import {
 import { loadChannelStatuses } from './dashboard/data/channels.js';
 import { fetchToolsData } from './dashboard/data/tools-data.js';
 import { fetchWorkerCounters } from './dashboard/data/worker-counters.js';
+import { fetchTopologyExtras } from './dashboard/data/topology-data.js';
 import { deriveLifecycleState } from './workers/lifecycle.js';
 import { fetchPermissionsData } from './dashboard/data/permissions-data.js';
 import { TIERS, defaultTierFor, type Tier } from './tools/categories.js';
@@ -936,7 +937,24 @@ export function mountDashboardRoutes(
       actions_executed: s.actions_executed,
       expires_after_actions: s.expires_after_actions,
     }));
-    return { workers, bricks, scopes, inFlightBoms, port: ctx.port };
+    // v0.6.10 Task 1 — MCP-category nodes (registry-derived) + peers
+    // (peers.yaml). Task 3 — heatmap timeline buckets from the event
+    // store. Pulled together so the topology snapshot stays a single
+    // round-trip from the dashboard.
+    const { mcpCategoryNodes, peers, eventDensity } = fetchTopologyExtras({
+      registry: getOrCreateToolRegistry(broker),
+      store: broker.store,
+    });
+    return {
+      workers,
+      bricks,
+      scopes,
+      inFlightBoms,
+      port: ctx.port,
+      mcpCategoryNodes,
+      peers,
+      eventDensity,
+    };
   }
 
   // Streams page snapshot — workers + last few events per worker.
