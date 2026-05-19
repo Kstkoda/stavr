@@ -136,6 +136,66 @@ const DIAGNOSTICS_CSS = `
 }
 @media (max-width: 1100px) { .sec-body { grid-template-columns: 1fr; } }
 
+/* v0.6.11 Phase 4 — Memory + Perf section */
+.sec-body.perf-body {
+  grid-template-columns: 1.4fr 1.6fr 1fr 0.8fr;
+}
+@media (max-width: 1280px) { .sec-body.perf-body { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 720px)  { .sec-body.perf-body { grid-template-columns: 1fr; } }
+.perf-card {
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  min-height: 180px;
+}
+.perf-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.perf-card-title { font-family: var(--mono); font-size: 11px; color: var(--ink-1); letter-spacing: 0.04em; }
+.perf-card-meta  { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+.perf-chart { width: 100%; height: 110px; display: block; }
+.perf-chart .grid line { stroke: var(--line-2); stroke-width: 0.6; stroke-dasharray: 2 4; }
+.perf-chart .series { fill: none; stroke-width: 1.6; }
+.perf-chart .series-heap { stroke: var(--info, #6ea8fe); }
+.perf-chart .series-rss  { stroke: var(--warn, #e2a942); }
+.perf-legend { display: flex; gap: 14px; font-family: var(--mono); font-size: 10px; color: var(--ink-2); }
+.perf-legend .lg { display: inline-flex; align-items: center; gap: 5px; }
+.perf-legend .lg::before { content: ""; display: inline-block; width: 10px; height: 2px; }
+.perf-legend .lg-heap::before { background: var(--info, #6ea8fe); }
+.perf-legend .lg-rss::before  { background: var(--warn, #e2a942); }
+.perf-legend .lg-meta { margin-left: auto; color: var(--ink-3); }
+.perf-table { display: flex; flex-direction: column; gap: 0; font-family: var(--mono); font-size: 11px; max-height: 200px; overflow-y: auto; }
+.perf-row {
+  display: grid;
+  grid-template-columns: 1fr 36px 44px 44px 44px 38px;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  align-items: center;
+}
+.perf-row.perf-head { color: var(--ink-3); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; border-bottom-color: var(--line-2); }
+.perf-row span:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+.perf-row .label { color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.perf-row .p95-slow { color: var(--warn); }
+.perf-row .p95-crit { color: var(--crit); }
+.perf-empty { color: var(--ink-3); font-style: italic; font-size: 11px; padding: 16px 4px; }
+.evt-bars { display: flex; flex-direction: column; gap: 4px; font-family: var(--mono); font-size: 11px; max-height: 200px; overflow-y: auto; }
+.evt-bar-row { display: grid; grid-template-columns: 1fr 40px; align-items: center; gap: 6px; }
+.evt-bar-row .evt-bar-track { position: relative; height: 14px; background: rgba(255,255,255,0.04); border-radius: 3px; overflow: hidden; }
+.evt-bar-row .evt-bar-fill  { position: absolute; left: 0; top: 0; bottom: 0; background: var(--info, #6ea8fe); opacity: 0.6; }
+.evt-bar-row .evt-bar-label { font-size: 10px; color: var(--ink-1); position: absolute; left: 6px; top: 50%; transform: translateY(-50%); }
+.evt-bar-row .evt-bar-count { text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.evt-empty { color: var(--ink-3); font-style: italic; font-size: 11px; padding: 12px 4px; }
+.perf-card-action .perf-action-desc { font-size: 11px; color: var(--ink-2); margin: 0; line-height: 1.4; }
+.perf-action-row { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+.perf-action-btn {
+  background: var(--bg-glass-2, rgba(255,255,255,0.04));
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-family: var(--mono); font-size: 11px;
+  color: var(--ink-1); cursor: pointer;
+}
+.perf-action-btn:hover { background: rgba(255,255,255,0.06); border-color: var(--line-2); }
+.perf-action-status { font-family: var(--mono); font-size: 10px; color: var(--ok); }
+
 /* Gauge */
 .gauges-panel {
   padding: 12px 14px;
@@ -450,6 +510,85 @@ function renderRoster(title: string, headers: string[], rows: RosterRow[]): stri
   ].join('');
 }
 
+/**
+ * v0.6.11 Phase 4 — Memory + perf panel for the diagnostics page.
+ * Server-rendered shell; JS in PERF_PANEL_JS polls
+ * /dashboard/api/diagnostics/memory + /dashboard/api/perf and tails the
+ * SSE stream to update the inline SVG charts.
+ *
+ * Anchored as #perf so /dashboard/diagnostics#perf deep-links here.
+ */
+function renderPerfSection(): string {
+  return [
+    `<section class="diag-sec" id="perf">`,
+    `<div class="sec-head">`,
+    `<span class="sec-title">Section · Memory + Perf</span>`,
+    `<span class="sec-bar"></span>`,
+    `<span class="sec-meta" data-role="perf-meta">live · sample every 10s</span>`,
+    `</div>`,
+    `<div class="sec-body perf-body">`,
+    // Memory card (heap_used + RSS line chart, last ~10 min)
+    `<div class="perf-card glass">`,
+    `<div class="perf-card-head">`,
+    `<span class="perf-card-title">Memory · heap_used / RSS</span>`,
+    `<span class="perf-card-meta" data-role="mem-now">·</span>`,
+    `</div>`,
+    `<svg class="perf-chart" data-role="mem-chart" viewBox="0 0 600 140" preserveAspectRatio="none" aria-label="Memory chart">`,
+    `<g class="grid">`,
+    `<line x1="0" y1="35" x2="600" y2="35" />`,
+    `<line x1="0" y1="70" x2="600" y2="70" />`,
+    `<line x1="0" y1="105" x2="600" y2="105" />`,
+    `</g>`,
+    `<polyline class="series series-heap" data-role="mem-heap" points="" />`,
+    `<polyline class="series series-rss" data-role="mem-rss" points="" />`,
+    `</svg>`,
+    `<div class="perf-legend">`,
+    `<span class="lg lg-heap">heap_used</span>`,
+    `<span class="lg lg-rss">rss</span>`,
+    `<span class="lg lg-meta" data-role="mem-meta">no samples yet</span>`,
+    `</div>`,
+    `</div>`,
+    // Endpoint latency table (top-K from /dashboard/api/perf)
+    `<div class="perf-card glass">`,
+    `<div class="perf-card-head">`,
+    `<span class="perf-card-title">Endpoint latency · p50 / p95 / p99</span>`,
+    `<span class="perf-card-meta" data-role="perf-meta-count">·</span>`,
+    `</div>`,
+    `<div class="perf-table" data-role="perf-table">`,
+    `<div class="perf-row perf-head">`,
+    `<span>endpoint</span><span>n</span><span>p50</span><span>p95</span><span>p99</span><span>err%</span>`,
+    `</div>`,
+    `<div class="perf-empty" data-role="perf-empty">No traffic yet — exercise the daemon to populate.</div>`,
+    `</div>`,
+    `</div>`,
+    // Event throughput per kind (counts last 60s from SSE tail)
+    `<div class="perf-card glass">`,
+    `<div class="perf-card-head">`,
+    `<span class="perf-card-title">Event throughput · last 60s</span>`,
+    `<span class="perf-card-meta" data-role="evt-total">0 events</span>`,
+    `</div>`,
+    `<div class="evt-bars" data-role="evt-bars">`,
+    `<div class="evt-empty">No events received yet.</div>`,
+    `</div>`,
+    `</div>`,
+    // Operator-only "Run synthetic load" — EXPLICIT-tier handoff. Copies the
+    // exact load-runner.mjs command to clipboard for the operator to run.
+    `<div class="perf-card perf-card-action glass">`,
+    `<div class="perf-card-head">`,
+    `<span class="perf-card-title">Run synthetic load</span>`,
+    `<span class="perf-card-meta">EXPLICIT · operator-only</span>`,
+    `</div>`,
+    `<p class="perf-action-desc">Phase 2 harness — hammers MCP + SSE + page nav for verification. Copies the command to clipboard; you run it locally.</p>`,
+    `<div class="perf-action-row">`,
+    `<button type="button" class="perf-action-btn" data-role="perf-copy-load">Copy load-runner command</button>`,
+    `<span class="perf-action-status" data-role="perf-copy-status"></span>`,
+    `</div>`,
+    `</div>`,
+    `</div>`,
+    `</section>`,
+  ].join('');
+}
+
 function renderSection(opts: {
   title: string;
   meta: string;
@@ -686,6 +825,180 @@ const DIAGNOSTICS_JS = `
     const empty = tail.querySelector('.tail-empty');
     if (empty) tail.removeChild(empty);
   }
+  // ---- v0.6.11 Phase 4 — Memory + Perf section drivers ----
+  (function initPerfPanel() {
+    const memHeap = document.querySelector('[data-role="mem-heap"]');
+    const memRss  = document.querySelector('[data-role="mem-rss"]');
+    if (!memHeap || !memRss) return;
+    const memNow  = document.querySelector('[data-role="mem-now"]');
+    const memMeta = document.querySelector('[data-role="mem-meta"]');
+    const perfTable = document.querySelector('[data-role="perf-table"]');
+    const perfEmpty = document.querySelector('[data-role="perf-empty"]');
+    const perfMetaCount = document.querySelector('[data-role="perf-meta-count"]');
+    const evtBars = document.querySelector('[data-role="evt-bars"]');
+    const evtTotal = document.querySelector('[data-role="evt-total"]');
+    const copyBtn = document.querySelector('[data-role="perf-copy-load"]');
+    const copyStatus = document.querySelector('[data-role="perf-copy-status"]');
+
+    const W = 600, H = 140, MAX_POINTS = 60;
+    const heapPts = []; // {t, mb}
+    const rssPts  = [];
+    function pushPoint(arr, v) {
+      arr.push(v);
+      while (arr.length > MAX_POINTS) arr.shift();
+    }
+    function buildPoints(arr, maxVal) {
+      if (arr.length === 0) return '';
+      const denom = Math.max(1, maxVal);
+      return arr.map(function(v, i) {
+        const x = (i / Math.max(1, MAX_POINTS - 1)) * W;
+        const y = H - 6 - (v / denom) * (H - 12);
+        return x.toFixed(1) + ',' + y.toFixed(1);
+      }).join(' ');
+    }
+    function fmtMB(bytes) { return (bytes / 1024 / 1024).toFixed(1) + ' MB'; }
+
+    async function refreshMem() {
+      try {
+        const r = await fetch('/dashboard/api/diagnostics/memory');
+        if (!r.ok) return;
+        const body = await r.json();
+        const heapMB = body.process.heap_used / 1024 / 1024;
+        const rssMB  = body.process.rss / 1024 / 1024;
+        pushPoint(heapPts, heapMB);
+        pushPoint(rssPts, rssMB);
+        const peak = Math.max.apply(null, rssPts.concat(heapPts).concat([1]));
+        memHeap.setAttribute('points', buildPoints(heapPts, peak));
+        memRss.setAttribute('points', buildPoints(rssPts, peak));
+        if (memNow) memNow.textContent = 'heap ' + heapMB.toFixed(0) + ' MB · rss ' + rssMB.toFixed(0) + ' MB';
+        if (memMeta) memMeta.textContent = heapPts.length + ' samples · peak ' + peak.toFixed(0) + ' MB';
+      } catch (_) { /* ignore */ }
+    }
+
+    function renderPerfTable(snapshot) {
+      const endpoints = snapshot && snapshot.endpoints || {};
+      const labels = Object.keys(endpoints);
+      if (labels.length === 0) {
+        if (perfEmpty) perfEmpty.style.display = '';
+        if (perfMetaCount) perfMetaCount.textContent = '0 endpoints';
+        return;
+      }
+      if (perfEmpty) perfEmpty.style.display = 'none';
+      if (perfMetaCount) perfMetaCount.textContent = labels.length + ' endpoint' + (labels.length === 1 ? '' : 's');
+      // Sort by p95 desc; top 15.
+      const rows = labels.map(function(l) { return Object.assign({ label: l }, endpoints[l]); })
+        .sort(function(a, b) { return (b.p95_ms || 0) - (a.p95_ms || 0); })
+        .slice(0, 15);
+      // Drop any existing data rows; preserve head + empty.
+      perfTable.querySelectorAll('.perf-row.perf-data').forEach(function(r) { r.remove(); });
+      rows.forEach(function(r) {
+        const div = document.createElement('div');
+        div.className = 'perf-row perf-data';
+        const errPct = (r.error_rate * 100).toFixed(1);
+        const p95cls = r.p95_ms > 200 ? 'p95-crit' : r.p95_ms > 100 ? 'p95-slow' : '';
+        div.innerHTML =
+          '<span class="label" title="' + (r.label || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;') + '">' + (r.label || '').replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span>'
+          + '<span>' + (r.count != null ? r.count : '·') + '</span>'
+          + '<span>' + (r.p50_ms != null ? r.p50_ms.toFixed(1) : '·') + '</span>'
+          + '<span class="' + p95cls + '">' + (r.p95_ms != null ? r.p95_ms.toFixed(1) : '·') + '</span>'
+          + '<span>' + (r.p99_ms != null ? r.p99_ms.toFixed(1) : '·') + '</span>'
+          + '<span>' + errPct + '</span>';
+        perfTable.appendChild(div);
+      });
+    }
+    async function refreshPerf() {
+      try {
+        const r = await fetch('/dashboard/api/perf');
+        if (!r.ok) return;
+        renderPerfTable(await r.json());
+      } catch (_) { /* ignore */ }
+    }
+
+    // Event throughput — count events per kind over a 60s rolling window.
+    const evtCounts = new Map();
+    const evtBuffer = []; // [{ at, kind }]
+    function recordEvent(kind) {
+      const now = Date.now();
+      evtBuffer.push({ at: now, kind: kind });
+      evtCounts.set(kind, (evtCounts.get(kind) || 0) + 1);
+      // Trim entries older than 60s.
+      while (evtBuffer.length && evtBuffer[0].at < now - 60_000) {
+        const old = evtBuffer.shift();
+        const c = evtCounts.get(old.kind) - 1;
+        if (c <= 0) evtCounts.delete(old.kind); else evtCounts.set(old.kind, c);
+      }
+    }
+    function renderEvtBars() {
+      const entries = Array.from(evtCounts.entries()).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 12);
+      if (entries.length === 0) {
+        evtBars.innerHTML = '<div class="evt-empty">No events received yet.</div>';
+        if (evtTotal) evtTotal.textContent = '0 events';
+        return;
+      }
+      const peak = entries[0][1];
+      evtBars.innerHTML = entries.map(function(e) {
+        const pct = Math.min(100, (e[1] / Math.max(1, peak)) * 100);
+        const label = String(e[0]).replace(/</g,'&lt;');
+        return '<div class="evt-bar-row">'
+          + '<div class="evt-bar-track">'
+          + '<div class="evt-bar-fill" style="width:' + pct.toFixed(1) + '%"></div>'
+          + '<span class="evt-bar-label">' + label + '</span>'
+          + '</div>'
+          + '<span class="evt-bar-count">' + e[1] + '</span>'
+          + '</div>';
+      }).join('');
+      const total = entries.reduce(function(a, e) { return a + e[1]; }, 0);
+      if (evtTotal) evtTotal.textContent = total + ' event' + (total === 1 ? '' : 's');
+    }
+    if (window.__stavrStream) {
+      window.__stavrStream.on('event', function(ev) {
+        try {
+          const data = JSON.parse(ev.data || '{}');
+          if (data && typeof data.kind === 'string') recordEvent(data.kind);
+        } catch (_) {}
+      });
+    }
+    if (window.__stavrCleanup) {
+      window.__stavrCleanup.setInterval(renderEvtBars, 2000);
+      window.__stavrCleanup.setInterval(refreshMem, 10_000);
+      window.__stavrCleanup.setInterval(refreshPerf, 10_000);
+    } else {
+      setInterval(renderEvtBars, 2000);
+      setInterval(refreshMem, 10_000);
+      setInterval(refreshPerf, 10_000);
+    }
+    refreshMem();
+    refreshPerf();
+    renderEvtBars();
+
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async function() {
+        const port = (location.port || '7777');
+        const cmd = 'node tmp/perf/load-runner.mjs --port ' + port + ' --minutes 90 --modes mcp_request,sse_churn,mixed_rw,page_nav --rps-mcp 5 --sse-churn-per-sec 2 --rw-rps 3 --nav-rps 1';
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(cmd);
+          } else {
+            const ta = document.createElement('textarea');
+            ta.value = cmd; document.body.appendChild(ta); ta.select();
+            document.execCommand('copy'); document.body.removeChild(ta);
+          }
+          if (copyStatus) copyStatus.textContent = 'copied ✓ run in repo root';
+        } catch (_) {
+          if (copyStatus) copyStatus.textContent = 'copy failed — see console';
+          console.log(cmd);
+        }
+        setTimeout(function() { if (copyStatus) copyStatus.textContent = ''; }, 4000);
+      });
+    }
+
+    // Deep-link: /dashboard/diagnostics#perf scrolls into view.
+    if (location.hash === '#perf') {
+      const el = document.getElementById('perf');
+      if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+  })();
+
   if (tail) {
     tail.addEventListener('mouseenter', function(){ paused = true; });
     tail.addEventListener('mouseleave', function(){ paused = false; });
@@ -735,6 +1048,7 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
   // pass `data.versions` for determinism.
   const versions = data?.versions ?? snapshotBuildVersions();
   const buildVersionsSection = renderBuildVersionsSection(versions);
+  const perfSection = renderPerfSection();
 
   // ----- Jobs banner -----
   const jobs = [
@@ -926,6 +1240,7 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     `</div>`,
     `<div class="diag-top">${jobsBanner}</div>`,
     buildVersionsSection,
+    perfSection,
     mcpSection,
     fleetSection,
     workerSection,

@@ -3,14 +3,19 @@
 **Owner:** CC (autonomous)
 **Sensitivity:** careful (touches live dashboard, perf-critical paths, multiple pages)
 **Branch:** `feat/v0.6.11-perf-and-ux-pass`
-**Base:** `main` (post PR #47, post PR #45 merge — see prerequisite below)
+**Base:** `main` (post PR #45 merged 2026-05-19 09:11Z, post PR #47 merged 2026-05-19 08:52Z)
 **Estimated scope:** 7 phases, ~3-6 hour autonomous run
 
 ---
 
-## Prerequisite
+## Current state (verified 2026-05-19 via GitHub API)
 
-PR #45 (topology revamp) should be merged before this BOM starts. If still open when CC begins, do **Phase −1**: merge PR #45 (rebase-merge to preserve phase commits), rebase this branch on top, then proceed. If PR #45 has any conflicts with this BOM's Phase 6 topology changes, resolve in favor of PR #45's structure and add this BOM's polish on top.
+- PR #45 (topology revamp) — MERGED
+- PR #46 (leak fix BOM doc) — MERGED
+- PR #47 (memory leak fix) — MERGED
+- No prerequisite blockers; start directly from `main`.
+
+The audit findings doc `proposed/v0_6_11-ux-audit-findings.md` was generated AGAINST the post-PR-#45 dashboard, so its Topology findings reflect what PR #45 actually shipped (vs what was planned). Notably PR #45 did NOT fully remove the worker roster from Topology (it duplicates with Streams). TO1/TO2 findings remain in scope for this BOM Phase 6b.
 
 ## Context — operator-led signal collection complete (2026-05-19)
 
