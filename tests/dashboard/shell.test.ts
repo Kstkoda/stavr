@@ -42,7 +42,11 @@ describe('v0.3 dashboard shell — unit', () => {
     expect(html).toContain('<!doctype html>');
     expect(html).toContain('<title>Test</title>');
     expect(html).toContain('--bg-base:        #0a0a0f;');
-    expect(html).toContain('STAVR');
+    // v0.6.11 Phase 5 (UX audit T1) — wordmark is `stav` + Raido rune; the
+    // SR-only `STAVR` duplicate was dropped. The visible wordmark is the
+    // brand and screen-readers read it natively.
+    expect(html).toContain('class="stav"');
+    expect(html).toContain('brand-mark');
     expect(html).toContain('<div id="probe">hi</div>');
     for (const entry of NAV_ENTRIES) {
       expect(html).toContain(`href="${entry.href}"`);
@@ -62,6 +66,15 @@ describe('v0.3 dashboard shell — unit', () => {
     expect(html).toContain('id="inspector"');
     expect(html).toContain('window.openInspector');
     expect(html).toContain('window.closeInspector');
+  });
+
+  it('v0.6.11 — renders daemon version chip beside the wordmark', () => {
+    const html = renderShell({ title: 't', activePage: 'helm', body: '' });
+    expect(html).toContain('class="brand-version"');
+    // The chip must show the current package.json#version; the shell loads
+    // it once at module init so the resolved string ends up baked into the
+    // markup.
+    expect(html).toMatch(/class="brand-version"[^>]*>v[^<]+</);
   });
 
   it('v0.6.11 — exposes __stavrCleanup + __stavrStream singletons for pages', () => {

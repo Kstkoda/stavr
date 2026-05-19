@@ -14,6 +14,9 @@
  * watchdog-pip mount contract depend on it.
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { TOKENS_CSS } from './tokens.js';
 import { FOOD_LABEL_CSS } from './components/food-label.js';
 import { BRICK_CSS } from './components/brick.js';
@@ -157,7 +160,19 @@ button { font: inherit; }
   filter: drop-shadow(0 0 6px var(--rust-glow));
   animation: rune-pulse 4s ease-in-out infinite;
 }
-.brand-sr { position: absolute; left: -9999px; }
+/* v0.6.11 Phase 5 — daemon version chip beside the wordmark. */
+.brand-version {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  margin-left: 6px;
+  border-radius: 5px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--line-2);
+  color: var(--ink-2);
+  align-self: center;
+}
 @keyframes rune-pulse {
   0%,100% { filter: drop-shadow(0 0 4px var(--rust-glow)); }
   50%     { filter: drop-shadow(0 0 12px var(--rust-glow)); }
@@ -458,14 +473,36 @@ function renderNav(active: DashboardPageId): string {
   }).join('');
 }
 
+/**
+ * v0.6.11 Phase 5 — daemon version chip in the topbar (UX audit T2 + B1).
+ * Read once at module load from package.json so each renderShell() call is
+ * just a string concat. Falls back to 'dev' when package.json isn't
+ * resolvable (test envs that mock the filesystem).
+ */
+const DAEMON_VERSION: string = (() => {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    // src/dashboard/shell.ts → ../../package.json  (works for src + dist
+    // because dist/dashboard/shell.js sits at the same depth).
+    const pkgPath = resolve(here, '..', '..', 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    return typeof pkg.version === 'string' && pkg.version ? pkg.version : 'dev';
+  } catch {
+    return 'dev';
+  }
+})();
+
+export function getDashboardVersion(): string { return DAEMON_VERSION; }
+
 function renderBrand(): string {
-  // Visible: rust rune badge + `stav` + Raido rune `ᚱ`.
-  // SR-only `STAVR` keeps screen-readers + the long-standing shell test happy.
+  // Visible: rust rune badge + `stav` + Raido rune `ᚱ` + version chip.
+  // UX audit T1 (DECIDED): drop the SR-only `STAVR` duplicate — the visible
+  // wordmark IS the brand. Screen readers announce the visible text fine.
   return [
     `<div class="brand">`,
     `<span class="brand-mark" aria-hidden="true">ᚱ</span>`,
     `<span class="word"><span class="stav">stav</span><i class="rune-i">ᚱ</i></span>`,
-    `<span class="brand-sr">STAVR</span>`,
+    `<span class="brand-version" aria-label="daemon version">v${escapeHtml(DAEMON_VERSION)}</span>`,
     `</div>`,
   ].join('');
 }
