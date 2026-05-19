@@ -226,6 +226,25 @@ describe('Topology page — unit', () => {
     expect(html).toContain('GitHub');
   });
 
+  it('v0.6.10 Task 4a — renders actor-nodes with data-actor-class for the color palette', () => {
+    const html = renderTopologyPage(snapshot({
+      actorNodes: [
+        { id: 'actor-operator-op',  actorClass: 'operator', display_name: 'operator', status: 'ok',   source_agent: 'op' },
+        { id: 'actor-cc-cc-feat-1', actorClass: 'cc',       display_name: 'cc-feat-1', status: 'ok',   source_agent: 'cc-feat-1' },
+        { id: 'actor-cowork-cw',    actorClass: 'cowork',   display_name: 'cowork',   status: 'warn', source_agent: 'cw' },
+      ],
+    }));
+    expect(html).toContain('data-id="actor-operator-op"');
+    expect(html).toContain('data-id="actor-cc-cc-feat-1"');
+    expect(html).toContain('data-id="actor-cowork-cw"');
+    expect(html).toContain('data-actor-class="operator"');
+    expect(html).toContain('data-actor-class="cc"');
+    expect(html).toContain('data-actor-class="cowork"');
+    expect(html).toContain('class="gnode actor-node"');
+    // Actor filter chip is part of the legend strip.
+    expect(html).toContain('data-type="actor"');
+  });
+
   it('v0.6.10 Task 1 — renders peer nodes from peers.yaml feed', () => {
     const html = renderTopologyPage(snapshot({
       peers: [

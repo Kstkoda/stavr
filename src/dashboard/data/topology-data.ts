@@ -30,6 +30,10 @@ import type { ToolRegistry } from '../../tools/registry.js';
 import type { ToolCategory } from '../../tools/categories.js';
 import type { EventStore, StoredEvent } from '../../persistence.js';
 import { stavrHome } from '../../config.js';
+import {
+  deriveActorNodes,
+  type ActorNodeLite,
+} from '../widgets/topology-actor-nodes.js';
 
 export const PEERS_YAML_FILENAME = 'peers.yaml';
 
@@ -95,6 +99,12 @@ export interface TopologyExtras {
   mcpCategoryNodes: McpCategoryNodeLite[];
   peers: PeerEntryLite[];
   eventDensity: EventDensitySnapshot;
+  /**
+   * v0.6.10 Task 4a — first-class actor-nodes (operator + CC +
+   * Cowork-Claude + remote peers). Derived from recent events'
+   * `source_agent` strings overlaid with peers.yaml.
+   */
+  actorNodes: ActorNodeLite[];
 }
 
 // ---------------- peers.yaml ----------------
@@ -294,5 +304,10 @@ export function fetchTopologyExtras(input: FetchTopologyExtrasInput): TopologyEx
     bucketMs,
     bucketCount,
   });
-  return { mcpCategoryNodes, peers, eventDensity };
+  const actorNodes = deriveActorNodes({
+    events,
+    peers,
+    now: input.now,
+  });
+  return { mcpCategoryNodes, peers, eventDensity, actorNodes };
 }

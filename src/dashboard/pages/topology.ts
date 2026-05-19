@@ -50,6 +50,10 @@ import {
   TOPOLOGY_TIMELINE_CSS,
   TOPOLOGY_TIMELINE_JS,
 } from '../widgets/topology-timeline.js';
+import {
+  TOPOLOGY_ACTOR_NODES_CSS,
+  type ActorNodeLite,
+} from '../widgets/topology-actor-nodes.js';
 
 export type { InstalledBrickLite } from '../adapters/topology.js';
 
@@ -90,9 +94,15 @@ export interface TopologyData {
    * the flat scrubber polyline; thickness ∝ sqrt(count) in the renderer.
    */
   eventDensity?: EventDensitySnapshot;
+  /**
+   * v0.6.10 Task 4a — first-class actor-nodes for operator + CC +
+   * Cowork-Claude + remote peers. Derived from recent events'
+   * `source_agent` strings overlaid with peers.yaml.
+   */
+  actorNodes?: ActorNodeLite[];
 }
 
-type GraphType = 'core' | 'mcp-remote' | 'mcp-local' | 'webhook' | 'db' | 'model' | 'worker' | 'peer';
+type GraphType = 'core' | 'mcp-remote' | 'mcp-local' | 'webhook' | 'db' | 'model' | 'worker' | 'peer' | 'actor';
 type GraphShape = 'hex' | 'round' | 'square';
 type GraphStatus = 'ok' | 'warn' | 'crit';
 
@@ -112,6 +122,12 @@ interface GraphNode {
   endedAt?: number;
   /** Free-form metadata for the inspector. */
   meta?: Record<string, string>;
+  /**
+   * v0.6.10 Task 4a — when this node is an actor, the family (operator
+   * / cc / cowork / peer / default). Drives the --actor-* color token
+   * and the actor-glyph ring.
+   */
+  actorClass?: 'operator' | 'cc' | 'cowork' | 'peer' | 'default';
 }
 
 interface GraphEdge {
@@ -211,6 +227,41 @@ function peersToNodes(peers: PeerEntryLite[]): GraphNode[] {
   });
 }
 
+/**
+ * v0.6.10 Task 4a — actor-node converter. Maps an ActorNodeLite into a
+ * GraphNode tagged with type='actor' + the actorClass so the renderer
+ * can attach `.actor-node[data-actor-class=...]`.
+ */
+function actorsToNodes(actors: ActorNodeLite[]): GraphNode[] {
+  return actors.map((a) => {
+    const status: GraphStatus =
+      a.status === 'crit' ? 'crit' : a.status === 'warn' ? 'warn' : 'ok';
+    const iconHint =
+      a.actorClass === 'operator' ? 'operator'
+      : a.actorClass === 'cc' ? 'worker'
+      : a.actorClass === 'cowork' ? 'worker'
+      : a.actorClass === 'peer' ? 'peer'
+      : 'rune';
+    const meta: Record<string, string> = { actor_class: a.actorClass };
+    if (a.source_agent) meta.source_agent = a.source_agent;
+    if (a.last_seen_at) meta.last_seen_at = a.last_seen_at;
+    if (a.peer_id) meta.peer_id = a.peer_id;
+    return {
+      id: a.id,
+      type: 'actor',
+      displayName: a.display_name,
+      role: a.role,
+      iconId: resolveIconId(iconHint),
+      shape: 'round',
+      status,
+      x: 0,
+      y: 0,
+      actorClass: a.actorClass,
+      meta,
+    };
+  });
+}
+
 function workersToNodes(workers: WorkerRecord[], now: number = Date.now()): GraphNode[] {
   return workers.map((w) => {
     // BOM v0.6.6: halo color comes from lifecycle_state (status = node
@@ -255,6 +306,10 @@ function layoutGraph(nodes: GraphNode[]): GraphNode[] {
     'webhook':    { startDeg: 80,  endDeg: 110, radius: 240 },
     'worker':     { startDeg: 40,  endDeg: 80,  radius: 200 },
     'peer':       { startDeg: 110, endDeg: 140, radius: 260 },
+    // v0.6.10 Task 4a — actors orbit on the outermost ring so they
+    // visually frame the daemon's tool surfaces (operator + CC at the
+    // top, cowork on the side, peers wrap around the bottom).
+    'actor':      { startDeg: 200, endDeg: 340, radius: 310 },
   };
 
   const grouped = new Map<GraphType, GraphNode[]>();
@@ -296,14 +351,26 @@ function buildEdges(nodes: GraphNode[]): GraphEdge[] {
 // ============================== rendering ==============================
 
 function renderNode(n: GraphNode, isCore: boolean, port: number): string {
-  const shapeCls = `shape ${n.shape} t-${n.type}`;
+  // v0.6.10 Task 4a — actors share the .gnode chassis but use the
+  // --actor-* token rather than --t-*. We still emit a t-* class so the
+  // legend chip count + filter chip pressing keeps working (the chip
+  // strip queries by data-type).
+  const isActor = n.type === 'actor';
+  const shapeCls = isActor
+    ? `shape ${n.shape} t-actor actor-shape`
+    : `shape ${n.shape} t-${n.type}`;
   const haloCls = `halo ${n.status}`;
-  const dataLayer = isCore ? 'steward' : (n.type === 'worker' ? 'worker' : 'brick');
+  const dataLayer = isCore
+    ? 'steward'
+    : n.type === 'worker' ? 'worker'
+    : isActor ? 'actor'
+    : 'brick';
   const extraData: string[] = [];
   if (n.startedAt) extraData.push(`data-started-at="${n.startedAt}"`);
   if (typeof n.endedAt === 'number') extraData.push(`data-ended-at="${n.endedAt}"`);
+  if (isActor && n.actorClass) extraData.push(`data-actor-class="${n.actorClass}"`);
   // Core stays unwrapped from the drag listener (it's the anchor).
-  const coreCls = isCore ? ' core' : '';
+  const coreCls = isCore ? ' core' : (isActor ? ' actor-node' : '');
   const stamp = isCore
     ? `<span class="topo-daemon-disc" aria-hidden="true"></span>`
     : '';
@@ -366,6 +433,7 @@ function renderFilterStrip(typeCounts: Record<GraphType, number>): string {
     cell('model', 'Model', 'model'),
     cell('worker', 'Worker', 'worker'),
     cell('peer', 'Peer', 'peer'),
+    cell('actor', 'Actor', 'actor'),
     `</div>`,
     `<span class="grow"></span>`,
     // v0.6 Task 4 Phase C #7 — Ctrl+K collides with the browser
@@ -497,6 +565,9 @@ const TOPOLOGY_CSS = `
 .topo-strip .chip.model      .sw { background: var(--t-model); }
 .topo-strip .chip.worker     .sw { background: var(--t-worker); }
 .topo-strip .chip.peer       .sw { background: var(--t-peer); }
+.topo-strip .chip.actor      .sw {
+  background: linear-gradient(135deg, var(--actor-operator), var(--actor-cc) 60%, var(--actor-cowork));
+}
 .topo-strip .chip .ct { color: var(--ink-3); font-size: 9.5px; margin-left: 3px; }
 .topo-strip .grow { flex: 1; }
 .topo-strip .live-toggle {
@@ -683,6 +754,7 @@ const TOPOLOGY_CSS = `
 .t-model      { color: var(--t-model); }
 .t-worker     { color: var(--t-worker); }
 .t-peer       { color: var(--t-peer); }
+.t-actor      { color: var(--actor-default); } /* overridden per data-actor-class below */
 
 .node-label {
   font-family: var(--mono); font-size: 10.5px;
@@ -1269,6 +1341,9 @@ export function renderTopologyPage(data?: TopologyData): string {
   const mcpNodes = mcpCategoryNodesToGraph(snapshot.mcpCategoryNodes ?? []);
   const peerNodes = peersToNodes(snapshot.peers ?? []);
   const workerNodes = workersToNodes(canvasWorkers, canvasNow);
+  // v0.6.10 Task 4a — actor-nodes from the fetcher (event-derived +
+  // peers.yaml overlay).
+  const actorGraphNodes = actorsToNodes(snapshot.actorNodes ?? []);
 
   const seen = new Set<string>();
   const dedup = (n: GraphNode): boolean => {
@@ -1283,11 +1358,12 @@ export function renderTopologyPage(data?: TopologyData): string {
     ...mcpNodes.filter(dedup),
     ...peerNodes.filter(dedup),
     ...workerNodes.filter(dedup),
+    ...actorGraphNodes.filter(dedup),
   ];
   layoutGraph(allNodes);
 
   const typeCounts: Record<GraphType, number> = {
-    core: 0, 'mcp-remote': 0, 'mcp-local': 0, webhook: 0, db: 0, model: 0, worker: 0, peer: 0,
+    core: 0, 'mcp-remote': 0, 'mcp-local': 0, webhook: 0, db: 0, model: 0, worker: 0, peer: 0, actor: 0,
   };
   for (const n of allNodes) typeCounts[n.type] = (typeCounts[n.type] || 0) + 1;
 
@@ -1378,7 +1454,7 @@ export function renderTopologyPage(data?: TopologyData): string {
     title: 'Stavr — Topology',
     activePage: 'topology',
     body,
-    head: `<style>${TOPOLOGY_CSS}\n${TOPOLOGY_TIMELINE_CSS}</style>`,
+    head: `<style>${TOPOLOGY_CSS}\n${TOPOLOGY_TIMELINE_CSS}\n${TOPOLOGY_ACTOR_NODES_CSS}</style>`,
     script: `${TOPOLOGY_JS}\n${TOPOLOGY_TIMELINE_JS}`,
   });
 }
