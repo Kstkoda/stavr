@@ -1432,7 +1432,20 @@ export function mountDashboardRoutes(
     });
   }
 
-  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, toolkitData, mcpsData, toolsData, permissionsData, capabilitiesData, settingsData, diagnosticsData });
+  function familyModeData(): import('./dashboard/pages/family-mode.js').FamilyModeData {
+    // v0.7 Phase 5 — snapshot the federation subsystem state for the
+    // family-mode page's server-side initial paint.
+    const fed = getOrCreateFederation(broker);
+    return {
+      self_id: fed.selfId(),
+      peers_yaml_path: process.env['STAVR_HOME']
+        ? `${process.env['STAVR_HOME']}/peers.yaml`
+        : '~/.stavr/peers.yaml',
+      peers: fed.registry.list(),
+    };
+  }
+
+  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, toolkitData, mcpsData, toolsData, permissionsData, capabilitiesData, settingsData, diagnosticsData, familyModeData });
 
   // v0.6.9 PR #2 — Permissions API endpoints. Operator-only path; the
   // dashboard session is implicitly trusted via the existing

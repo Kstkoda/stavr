@@ -54,7 +54,9 @@ export type DashboardPageId =
   | 'permissions'
   | 'capabilities'
   | 'diagnostics'
-  | 'settings';
+  | 'settings'
+  | 'family-mode'
+  | 'about';
 
 export interface NavEntry {
   id: DashboardPageId;
@@ -74,6 +76,7 @@ export const NAV_ENTRIES: NavEntry[] = [
   { id: 'permissions',  label: 'Permissions',  href: '/dashboard/permissions' },
   { id: 'capabilities', label: 'Capabilities', href: '/dashboard/capabilities' },
   { id: 'diagnostics',  label: 'Diagnostics',  href: '/dashboard/diagnostics' },
+  { id: 'family-mode',  label: 'Family mode',  href: '/dashboard/family-mode' },
   { id: 'settings',     label: 'Settings',     href: '/dashboard/settings' },
 ];
 
@@ -84,6 +87,9 @@ export const NAV_ENTRIES: NavEntry[] = [
  */
 export const LEGACY_NAV_ENTRIES: NavEntry[] = [
   { id: 'home', label: 'Home (legacy)', href: '/dashboard/home' },
+  // v0.7 Phase 6 — about page is reachable but not in the primary nav.
+  // It's linked from family-mode and from the settings page's intro.
+  { id: 'about', label: 'About stavR', href: '/dashboard/about' },
 ];
 
 export interface RenderShellInput {
