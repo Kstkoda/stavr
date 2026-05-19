@@ -74,8 +74,32 @@ export class NtfyChannel implements NotificationChannel {
   }
 }
 
+/**
+ * Sanitize an arbitrary string for use as an HTTP header value.
+ *
+ * Node's `http.ClientRequest` rejects any character outside latin-1 with
+ * `ERR_INVALID_CHAR` — emoji or other multibyte UTF-8 in a Title field will
+ * tear down the entire notification dispatch (operator observed
+ * `Invalid character in header content ["Title"]` on 2026-05-16). Beyond that,
+ * CR/LF must be stripped to prevent header injection.
+ *
+ * We keep it conservative: only printable ASCII (0x20–0x7E) is preserved.
+ * Non-ASCII codepoints are replaced with '?'. This loses emoji content but
+ * preserves delivery — much better than the dispatch silently failing.
+ */
 function stripHeaderUnsafe(s: string): string {
-  return s.replace(/[\r\n]+/g, ' ').slice(0, 250);
+  let out = '';
+  for (const ch of s) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code >= 0x20 && code <= 0x7e) {
+      out += ch;
+    } else if (code === 0x09) {
+      out += ' ';
+    } else {
+      out += '?';
+    }
+  }
+  return out.slice(0, 250);
 }
 
 function defaultHttpsTransport(
