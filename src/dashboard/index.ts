@@ -29,6 +29,8 @@ import type { PermissionsData } from './data/permissions-data.js';
 import { renderCapabilitiesPage, type CapabilitiesData } from './pages/capabilities.js';
 import { renderDiagnosticsPage, type DiagnosticsData } from './pages/diagnostics.js';
 import { renderSettingsPage, type SettingsData } from './pages/settings.js';
+import { renderFamilyModePage, type FamilyModeData } from './pages/family-mode.js';
+import { renderAboutPage } from './pages/about.js';
 
 export interface DashboardPageDeps {
   /** Snapshot used for Helm server-side initial paint (v0.4 primary). */
@@ -57,6 +59,8 @@ export interface DashboardPageDeps {
   diagnosticsData?: () => DiagnosticsData;
   /** Snapshot used for Settings server-side initial paint (C9). */
   settingsData?: () => SettingsData;
+  /** Snapshot used for Family-mode server-side initial paint (v0.7 Phase 5). */
+  familyModeData?: () => FamilyModeData;
 }
 
 function sendHtml(res: express.Response, body: string): void {
@@ -92,6 +96,8 @@ export function mountDashboardPages(
     capabilities: () => renderCapabilitiesPage(deps.capabilitiesData?.()),
     diagnostics:  () => renderDiagnosticsPage(deps.diagnosticsData?.()),
     settings:     () => renderSettingsPage(deps.settingsData?.()),
+    'family-mode': () => renderFamilyModePage(deps.familyModeData?.()),
+    about:        () => renderAboutPage(),
   };
 
   for (const entry of [...NAV_ENTRIES, ...LEGACY_NAV_ENTRIES]) {
