@@ -147,7 +147,7 @@ function renderResolvedCard(d: DecisionRecord): string {
     `<summary class="resolved-summary">`,
     `<div class="resolved-head">`,
     renderPill({ text: d.status, variant: RESOLVED_PILL[d.status] }),
-    `<span class="resolved-q">${escapeHtml(d.question)}</span>`,
+    `<span class="resolved-q" title="${escapeHtml(d.question)}">${escapeHtml(d.question)}</span>`,
     `</div>`,
     `<div class="resolved-body">`,
     `<span class="resolved-chosen">→ ${escapeHtml(chosen)}</span>`,
