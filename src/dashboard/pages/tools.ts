@@ -188,6 +188,34 @@ const TOOLS_CSS = `
 .tools-tier-CONFIRM  { background: rgba(78, 162, 216, 0.18); color: #4ea2d8; }
 .tools-tier-EXPLICIT { background: rgba(250, 156, 76, 0.18); color: #fa9c4c; }
 .tools-tier-NO_GO    { background: rgba(216, 78, 78, 0.18); color: #d84e4e; }
+/* v0.6.11 Phase 6a (UX audit TL3) — border-left accent per tier so the
+   four levels read at a glance even when cards are dense. */
+.tools-card[data-tier="AUTO"]     { border-left: 3px solid rgba(126, 211, 102, 0.55); }
+.tools-card[data-tier="CONFIRM"]  { border-left: 3px solid rgba(78, 162, 216, 0.55); }
+.tools-card[data-tier="EXPLICIT"] { border-left: 3px solid rgba(250, 156, 76, 0.70); }
+.tools-card[data-tier="NO_GO"]    { border-left: 3px solid rgba(216, 78, 78, 0.75); }
+/* Tier legend in the toolbar — small helper that maps colour → tier name. */
+.tools-tier-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  margin-left: auto;
+  padding: 4px 8px;
+}
+.tools-tier-legend .tl {
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.tools-tier-legend .tl::before {
+  content: ""; display: inline-block;
+  width: 8px; height: 8px; border-radius: 2px;
+}
+.tools-tier-legend .tl-AUTO::before     { background: #7ed366; }
+.tools-tier-legend .tl-CONFIRM::before  { background: #4ea2d8; }
+.tools-tier-legend .tl-EXPLICIT::before { background: #fa9c4c; }
+.tools-tier-legend .tl-NO_GO::before    { background: #d84e4e; }
 .tools-rev {
   padding: 2px 6px;
   border-radius: 4px;
@@ -347,6 +375,19 @@ const DEFAULT_COLLAPSED: ReadonlyArray<ToolCategory> = ['github'];
 // Tier values considered "critical" — pinned to the top of the page.
 const CRITICAL_TIERS: ReadonlyArray<Tier> = ['EXPLICIT', 'NO_GO'];
 
+// v0.6.11 Phase 6a — Within a category group, sort by tier (riskiest first)
+// so EXPLICIT/NO_GO surface visually above CONFIRM/AUTO. Operators can
+// scan a group and see the high-friction tools without scrolling.
+const TIER_RANK: Record<Tier, number> = { NO_GO: 0, EXPLICIT: 1, CONFIRM: 2, AUTO: 3 };
+function sortByTier(rows: ToolRow[]): ToolRow[] {
+  return [...rows].sort((a, b) => {
+    const ta = TIER_RANK[a.defaultTier] ?? 9;
+    const tb = TIER_RANK[b.defaultTier] ?? 9;
+    if (ta !== tb) return ta - tb;
+    return a.id.localeCompare(b.id);
+  });
+}
+
 export function renderToolsPage(data?: ToolsData): string {
   const d = data ?? emptyToolsData();
   const catOptions = (Object.keys(CATEGORY_LABELS) as ToolCategory[])
@@ -392,7 +433,7 @@ export function renderToolsPage(data?: ToolsData): string {
   }
   const groupedSections = orderedCats
     .map((c) => {
-      const tools = byCat.get(c)!;
+      const tools = sortByTier(byCat.get(c)!);
       const open = !DEFAULT_COLLAPSED.includes(c);
       const cards = tools.map(renderToolCard).join('');
       return [
@@ -420,6 +461,12 @@ export function renderToolsPage(data?: ToolsData): string {
     `<input type="search" placeholder="Search tools…" data-role="tools-search" />`,
     `<select data-role="tools-cat"><option value="">All categories</option>${catOptions}</select>`,
     `<select data-role="tools-tier"><option value="">All tiers</option>${tierOptions}</select>`,
+    `<span class="tools-tier-legend" aria-hidden="true">`,
+    `<span class="tl tl-AUTO">AUTO</span>`,
+    `<span class="tl tl-CONFIRM">CONFIRM</span>`,
+    `<span class="tl tl-EXPLICIT">EXPLICIT</span>`,
+    `<span class="tl tl-NO_GO">NO-GO</span>`,
+    `</span>`,
     `</div>`,
     d.tools.length === 0
       ? `<div class="placeholder">No tools registered yet. (Daemon may be in stdio-only mode or the registry wrap missed first-session timing.)</div>`
