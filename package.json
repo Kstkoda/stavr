@@ -1,6 +1,6 @@
 {
   "name": "stavr",
-  "version": "0.1.0",
+  "version": "0.6.11",
   "description": "stavR — local-first agent broker. BOM-driven planning, MCP-native connectors, cost-routed worker dispatch. Your machine.",
   "type": "module",
   "bin": {

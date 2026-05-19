@@ -47,7 +47,10 @@ describe('Spec 40 Phase 3 — dashboard HTTP', () => {
     expect(r.headers.get('content-type')).toMatch(/text\/html/);
     expect(r.url.endsWith('/dashboard/helm')).toBe(true);
     const body = await r.text();
-    expect(body).toContain('STAVR');
+    // v0.6.11 Phase 5 — wordmark is `stav` + Raido rune (UX audit T1 dropped
+    // the SR-only STAVR duplicate). Both `brand-mark` and the `.stav` span
+    // are stable shell-mount markers.
+    expect(body).toContain('class="stav"');
     // Nav links to every primary page surface live in the shell.
     expect(body).toContain('href="/dashboard/topology"');
     expect(body).toContain('href="/dashboard/plans"');
