@@ -112,6 +112,10 @@ export const EventKind = z.enum([
   'worker_dispatch_failed',
   // v0.6.7 P3 — worker spawn was blocked by an antivirus / EDR product
   'worker_blocked_by_av',
+  // v0.6.7 P4 — worker spawn was rejected because the script sidecar
+  //             signature did not verify (tampered script, missing sidecar,
+  //             wrong key, etc.).
+  'worker_blocked_by_signature',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -807,6 +811,31 @@ export const WorkerBlockedByAvPayload = z.object({
   spawned_command_signature: z.string().optional(),
 });
 
+/** Worker spawn was rejected because the script's Ed25519 sidecar
+ *  signature failed to verify. Each `reason` corresponds to a specific
+ *  failure mode in `src/security/script-signing.ts` so the operator can
+ *  distinguish a missing sidecar from a tampered script body. */
+export const WorkerBlockedBySignaturePayload = z.object({
+  worker_id: z.string(),
+  name: z.string().optional(),
+  script_path: z.string(),
+  reason: z.enum([
+    'sidecar_missing',
+    'sidecar_unreadable',
+    'sidecar_malformed',
+    'script_unreadable',
+    'script_hash_mismatch',
+    'worker_id_mismatch',
+    'path_mismatch',
+    'unsupported_alg',
+    'signature_invalid',
+    'pubkey_mismatch',
+  ]),
+  /** Short diagnostic detail — truncated so the event log doesn't bloat
+   *  on long paths or stack messages. */
+  detail: z.string().max(240).optional(),
+});
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -901,6 +930,7 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     cc_quota_warning: CcQuotaWarningPayload,
     worker_dispatch_failed: WorkerDispatchFailedPayload,
     worker_blocked_by_av: WorkerBlockedByAvPayload,
+    worker_blocked_by_signature: WorkerBlockedBySignaturePayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);

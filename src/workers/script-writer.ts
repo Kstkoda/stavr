@@ -25,6 +25,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { stavrHome } from '../config.js';
+import { signWorkerScript, sidecarPathFor } from '../security/script-signing.js';
 
 /** Shells the worker subsystem can spawn. Must stay in sync with the
  *  ShellSpawnParams enum in `src/workers/shell.ts`. */
@@ -41,6 +42,10 @@ export interface ScriptWriteInput {
   sleepAfter?: number;
   /** Override the worker-scripts dir for tests. */
   baseDir?: string;
+  /** Override the STAVR_HOME used to locate the spawn-signing key (tests
+   *  pass a tmp dir to avoid touching `~/.stavr/keys/`). When unset, the
+   *  signing module uses `stavrHome()`. */
+  signingHome?: string;
   /** Override the now-source for deterministic header timestamps in tests. */
   now?: () => Date;
 }
@@ -52,6 +57,12 @@ export interface ScriptWriteResult {
   ext: string;
   /** Invocation argv for child_process.spawn — argv0 + remaining args. */
   invocation: { argv0: string; argv: string[] };
+  /** ISO timestamp embedded in the script's audit header — also the
+   *  `created_at` field on the sidecar signature. Returned so the caller
+   *  can pass it through when verifying. */
+  createdAt: string;
+  /** Path to the `<script>.sig` sidecar produced by [[signWorkerScript]]. */
+  sidecarPath: string;
 }
 
 const SCRIPT_EXT: Record<WorkerShell, string> = {
@@ -78,7 +89,9 @@ export function writeWorkerScript(input: ScriptWriteInput): ScriptWriteResult {
   const dir = input.baseDir ?? defaultScriptDir();
   ensureDir(dir);
   const path = join(dir, `${input.workerId}.${ext}`);
-  const body = composeScript(input);
+  const now = input.now ? input.now() : new Date();
+  const createdAt = now.toISOString();
+  const body = composeScript({ ...input, now: () => now });
   // 0o700 — owner read/write/exec only. On Windows chmod is a no-op,
   // but NTFS default ACLs already restrict to the owning user.
   writeFileSync(path, body, { encoding: 'utf8', mode: 0o700 });
@@ -87,10 +100,21 @@ export function writeWorkerScript(input: ScriptWriteInput): ScriptWriteResult {
   } catch {
     /* Windows: chmod isn't supported on FAT/exFAT; user-only ACLs cover us. */
   }
+  // v0.6.7 P4 — sign the script + write the sidecar so the spawner can
+  // verify integrity before invoking. Always-on; old unsigned scripts age
+  // out via the retention sweep and new spawns always sign.
+  signWorkerScript({
+    scriptPath: path,
+    workerId: input.workerId,
+    createdAt,
+    home: input.signingHome,
+  });
   return {
     path,
     ext,
     invocation: buildInvocation(input.shell, path),
+    createdAt,
+    sidecarPath: sidecarPathFor(path),
   };
 }
 
