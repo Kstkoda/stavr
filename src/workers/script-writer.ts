@@ -71,9 +71,15 @@ const SCRIPT_EXT: Record<WorkerShell, string> = {
   bash: 'sh',
 };
 
-/** Default worker-scripts directory under STAVR_HOME. Test-overridable via
+/** Default worker-scripts directory. Honours `STAVR_WORKER_SCRIPT_DIR`
+ *  when set so operators can point the script-write target at an AV-
+ *  whitelisted location (e.g. an EDR-excluded folder like
+ *  `C:\stavr\trusted-scripts\`) without relocating the whole STAVR_HOME.
+ *  Falls back to `${STAVR_HOME}/worker-scripts/`. Test-overridable via
  *  the `baseDir` field on [[ScriptWriteInput]]. */
 export function defaultScriptDir(): string {
+  const override = process.env.STAVR_WORKER_SCRIPT_DIR?.trim();
+  if (override) return override;
   return join(stavrHome(), 'worker-scripts');
 }
 

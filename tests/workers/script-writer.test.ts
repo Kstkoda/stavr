@@ -6,6 +6,7 @@ import {
   buildInvocation,
   cleanupOldScripts,
   composeScript,
+  defaultScriptDir,
   renderSleep,
   retentionDays,
   writeWorkerScript,
@@ -266,5 +267,39 @@ describe('v0.6.7 P1 — retention cleanup', () => {
 
   it('cleanupOldScripts returns 0 for non-existent dir', () => {
     expect(cleanupOldScripts({ baseDir: join(baseDir, 'nope') })).toBe(0);
+  });
+});
+
+describe('v0.6.7 P5 — STAVR_WORKER_SCRIPT_DIR override', () => {
+  it('defaultScriptDir falls back to <STAVR_HOME>/worker-scripts when env unset', () => {
+    const before = process.env.STAVR_WORKER_SCRIPT_DIR;
+    delete process.env.STAVR_WORKER_SCRIPT_DIR;
+    try {
+      expect(defaultScriptDir().endsWith('worker-scripts')).toBe(true);
+    } finally {
+      if (before !== undefined) process.env.STAVR_WORKER_SCRIPT_DIR = before;
+    }
+  });
+
+  it('honours STAVR_WORKER_SCRIPT_DIR when set (AV-whitelisted folder)', () => {
+    const before = process.env.STAVR_WORKER_SCRIPT_DIR;
+    try {
+      process.env.STAVR_WORKER_SCRIPT_DIR = 'C:\\stavr\\trusted-scripts';
+      expect(defaultScriptDir()).toBe('C:\\stavr\\trusted-scripts');
+    } finally {
+      if (before === undefined) delete process.env.STAVR_WORKER_SCRIPT_DIR;
+      else process.env.STAVR_WORKER_SCRIPT_DIR = before;
+    }
+  });
+
+  it('whitespace-only override falls back to default', () => {
+    const before = process.env.STAVR_WORKER_SCRIPT_DIR;
+    try {
+      process.env.STAVR_WORKER_SCRIPT_DIR = '   ';
+      expect(defaultScriptDir().endsWith('worker-scripts')).toBe(true);
+    } finally {
+      if (before === undefined) delete process.env.STAVR_WORKER_SCRIPT_DIR;
+      else process.env.STAVR_WORKER_SCRIPT_DIR = before;
+    }
   });
 });
