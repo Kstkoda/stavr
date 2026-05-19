@@ -17,7 +17,12 @@ import { fetchToolsData } from './dashboard/data/tools-data.js';
 import { fetchWorkerCounters } from './dashboard/data/worker-counters.js';
 import { deriveLifecycleState } from './workers/lifecycle.js';
 import { fetchPermissionsData } from './dashboard/data/permissions-data.js';
-import { TIERS, type Tier } from './tools/categories.js';
+import { TIERS, defaultTierFor, type Tier } from './tools/categories.js';
+import {
+  applyPolicyToActor,
+  getPolicyPreset,
+  listPolicyPresets,
+} from './security/policies.js';
 import type { Broker } from './broker.js';
 import type { StoredEvent } from './persistence.js';
 import { startupDecisionSweep } from './tools/decisions.js';
@@ -1185,10 +1190,13 @@ export function mountDashboardRoutes(
   // dashboard session is implicitly trusted via the existing
   // /dashboard/* auth posture. MCP-tool writes to these tables are
   // hard-NO per BOM hard rule #8 (never allow an MCP client to change
-  // permissions). All mutations record set_by and set_at; audit-event
-  // emission is deferred to PR #3 alongside the YAML mirror.
+  // permissions). All mutations record set_by and set_at.
+  //
+  // v0.6.9 P9 — every mutation also emits a `capability_override_changed`
+  // or `actor_permission_changed` event so the operator can answer "who
+  // set Steward's host_exec to EXPLICIT, when, why?" from the event log.
 
-  app.post('/dashboard/permissions/capability', (req, res) => {
+  app.post('/dashboard/permissions/capability', async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const toolId = typeof body.tool_id === 'string' ? body.tool_id : '';
     const mode = typeof body.mode === 'string' ? body.mode : '';
@@ -1199,8 +1207,13 @@ export function mountDashboardRoutes(
       return;
     }
     const caps = getOrCreateCapabilityOverrideStore(broker);
+    const prior = caps.get(toolId);
+    const fromState = prior ? prior.state : null;
+    let toState: 'enabled' | 'disabled-temporary' | 'disabled-permanent';
+    let disabledUntil: number | null = null;
     if (mode === 'permanent') {
       caps.disablePermanent(toolId, { reason, setBy });
+      toState = 'disabled-permanent';
     } else if (mode === 'temporary') {
       const untilMs = typeof body.until_ms === 'number' ? body.until_ms : NaN;
       if (!Number.isFinite(untilMs)) {
@@ -1208,22 +1221,55 @@ export function mountDashboardRoutes(
         return;
       }
       caps.disableTemporary(toolId, { untilMs, reason, setBy });
+      toState = 'disabled-temporary';
+      disabledUntil = untilMs;
     } else if (mode === 'enable') {
       caps.enable(toolId, setBy);
+      toState = 'enabled';
     } else {
       res.status(400).json({ error: 'mode must be one of: permanent | temporary | enable' });
       return;
     }
+    if (fromState !== toState) {
+      await broker.publish({
+        kind: 'capability_override_changed',
+        at: new Date().toISOString(),
+        source_agent: 'dashboard',
+        payload: {
+          tool_id: toolId,
+          set_by: setBy,
+          from_state: fromState,
+          to_state: toState,
+          reason,
+          disabled_until: disabledUntil,
+        },
+      });
+    }
     res.json({ ok: true, tool_id: toolId, state: caps.get(toolId) ?? null });
   });
 
-  app.delete('/dashboard/permissions/capability/:toolId', (req, res) => {
+  app.delete('/dashboard/permissions/capability/:toolId', async (req, res) => {
     const caps = getOrCreateCapabilityOverrideStore(broker);
+    const prior = caps.get(req.params.toolId);
+    const fromState = prior ? prior.state : null;
     caps.enable(req.params.toolId, 'operator');
+    if (fromState !== null && fromState !== 'enabled') {
+      await broker.publish({
+        kind: 'capability_override_changed',
+        at: new Date().toISOString(),
+        source_agent: 'dashboard',
+        payload: {
+          tool_id: req.params.toolId,
+          set_by: 'operator',
+          from_state: fromState,
+          to_state: 'enabled',
+        },
+      });
+    }
     res.json({ ok: true, tool_id: req.params.toolId });
   });
 
-  app.post('/dashboard/permissions/actor', (req, res) => {
+  app.post('/dashboard/permissions/actor', async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const actorId = typeof body.actor_id === 'string' ? body.actor_id : '';
     const toolId = typeof body.tool_id === 'string' ? body.tool_id : '';
@@ -1238,14 +1284,98 @@ export function mountDashboardRoutes(
       return;
     }
     const perms = getOrCreateActorPermissionStore(broker);
+    const prior = perms.get(actorId, toolId);
+    const fromTier = prior ? prior.tier : null;
     perms.set(actorId, toolId, tier, setBy);
+    if (fromTier !== tier) {
+      await broker.publish({
+        kind: 'actor_permission_changed',
+        at: new Date().toISOString(),
+        source_agent: 'dashboard',
+        payload: {
+          actor_id: actorId,
+          tool_id: toolId,
+          set_by: setBy,
+          from_tier: fromTier,
+          to_tier: tier,
+          source: 'matrix-cell',
+        },
+      });
+    }
     res.json({ ok: true, actor_id: actorId, tool_id: toolId, tier });
   });
 
-  app.delete('/dashboard/permissions/actor/:actorId/:toolId', (req, res) => {
+  app.delete('/dashboard/permissions/actor/:actorId/:toolId', async (req, res) => {
     const perms = getOrCreateActorPermissionStore(broker);
+    const prior = perms.get(req.params.actorId, req.params.toolId);
     perms.reset(req.params.actorId, req.params.toolId);
+    if (prior) {
+      await broker.publish({
+        kind: 'actor_permission_changed',
+        at: new Date().toISOString(),
+        source_agent: 'dashboard',
+        payload: {
+          actor_id: req.params.actorId,
+          tool_id: req.params.toolId,
+          set_by: 'operator',
+          from_tier: prior.tier,
+          to_tier: defaultTierFor(req.params.toolId),
+          source: 'reset',
+        },
+      });
+    }
     res.json({ ok: true, actor_id: req.params.actorId, tool_id: req.params.toolId });
+  });
+
+  // v0.6.9 P6 — Apply a built-in named policy preset to one actor in
+  // a single click. Equivalent to the operator setting every dropdown
+  // manually but atomic + audited (one `actor_permission_changed` event
+  // per affected tool with `source: 'policy-apply'`).
+  app.post('/dashboard/permissions/policy/apply', async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const actorId = typeof body.actor_id === 'string' ? body.actor_id : '';
+    const policyId = typeof body.policy_id === 'string' ? body.policy_id : '';
+    const setBy = typeof body.set_by === 'string' ? body.set_by : 'operator';
+    if (!actorId || !policyId) {
+      res.status(400).json({ error: 'actor_id + policy_id required' });
+      return;
+    }
+    let preset;
+    try {
+      preset = getPolicyPreset(policyId);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    const perms = getOrCreateActorPermissionStore(broker);
+    const result = applyPolicyToActor(preset, actorId, perms, setBy);
+    const at = new Date().toISOString();
+    for (const change of result.changes) {
+      await broker.publish({
+        kind: 'actor_permission_changed',
+        at,
+        source_agent: 'dashboard',
+        payload: {
+          actor_id: actorId,
+          tool_id: change.tool_id,
+          set_by: setBy,
+          from_tier: change.from_tier,
+          to_tier: change.to_tier,
+          source: 'policy-apply',
+          policy_id: preset.id,
+        },
+      });
+    }
+    res.json({
+      ok: true,
+      actor_id: actorId,
+      policy_id: preset.id,
+      cells_written: result.cellsWritten,
+    });
+  });
+
+  app.get('/dashboard/permissions/policies', (_req, res) => {
+    res.json({ policies: listPolicyPresets() });
   });
 
   // ---- C9 Settings endpoints ----

@@ -32,6 +32,7 @@ import type {
 } from '../data/permissions-data.js';
 import { emptyPermissionsData } from '../data/permissions-data.js';
 import type { Tier } from '../../tools/categories.js';
+import { listPolicyPresets } from '../../security/policies.js';
 
 const TIER_OPTIONS: Tier[] = ['AUTO', 'CONFIRM', 'EXPLICIT', 'NO_GO'];
 
@@ -183,6 +184,38 @@ const PERMISSIONS_CSS = `
   font-size: 12px;
   margin-top: 12px;
 }
+/* v0.6.9 P6 — named-policy apply affordance. */
+.perm-policy-bar {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 10px;
+}
+.perm-policy-bar label { color: var(--ink-dim); font-size: 11px; }
+.perm-policy-bar select {
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+.perm-policy-bar input[type=text] {
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+  width: 140px;
+}
+.perm-policy-bar .perm-policy-desc {
+  color: var(--ink-dim);
+  font-size: 11px;
+  font-style: italic;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 `;
 
 const PERMISSIONS_JS = `
@@ -240,6 +273,43 @@ const PERMISSIONS_JS = `
       }
     });
   });
+  // v0.6.9 P6 — named-policy apply.
+  const policySel = document.querySelector('[data-role="perm-policy-select"]');
+  const actorSel  = document.querySelector('[data-role="perm-policy-actor"]');
+  const applyBtn  = document.querySelector('[data-role="perm-policy-apply"]');
+  const descEl    = document.querySelector('[data-role="perm-policy-desc"]');
+  function updatePolicyDesc() {
+    if (!policySel || !descEl) return;
+    const opt = policySel.options[policySel.selectedIndex];
+    descEl.textContent = opt ? (opt.getAttribute('data-desc') || '') : '';
+  }
+  if (policySel) {
+    policySel.addEventListener('change', updatePolicyDesc);
+    updatePolicyDesc();
+  }
+  if (applyBtn) {
+    applyBtn.addEventListener('click', async function () {
+      const policyId = policySel ? policySel.value : '';
+      const actorId  = actorSel ? actorSel.value : '';
+      if (!policyId || !actorId) { alert('Pick a policy and an actor first.'); return; }
+      const opt = policySel.options[policySel.selectedIndex];
+      const label = opt ? opt.textContent : policyId;
+      if (!confirm('Apply policy "' + label + '" to actor "' + actorId + '"? This overwrites every per-tool tier the policy names.')) return;
+      try {
+        const r = await fetch('/dashboard/permissions/policy/apply', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ policy_id: policyId, actor_id: actorId }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const body = await r.json();
+        alert('Applied "' + policyId + '" to ' + actorId + ' · ' + body.cells_written + ' cells written. Reloading…');
+        window.location.reload();
+      } catch (e) {
+        alert('Apply failed: ' + e.message);
+      }
+    });
+  }
 })();
 `;
 
@@ -267,7 +337,28 @@ export function renderPermissionsPage(data?: PermissionsData): string {
         return renderMatrixRow(actor, cells);
       })
       .join('');
+    // v0.6.9 P6 — Apply-policy affordance.
+    const policyOptions = listPolicyPresets()
+      .map(
+        (p) =>
+          `<option value="${escapeHtml(p.id)}" data-desc="${escapeHtml(p.description)}">${escapeHtml(p.label)}</option>`,
+      )
+      .join('');
+    const actorOptions = d.actors
+      .map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`)
+      .join('');
+    const policyBar = [
+      `<div class="perm-policy-bar">`,
+      `<label>Apply policy</label>`,
+      `<select data-role="perm-policy-select">${policyOptions}</select>`,
+      `<label>to actor</label>`,
+      `<select data-role="perm-policy-actor">${actorOptions}</select>`,
+      `<button type="button" class="perm-btn" data-role="perm-policy-apply">Apply</button>`,
+      `<span class="perm-policy-desc" data-role="perm-policy-desc"></span>`,
+      `</div>`,
+    ].join('');
     matrixSection = [
+      policyBar,
       `<div class="perm-matrix-wrap">`,
       `<table class="perm-table">`,
       `<thead>${headerRow}</thead>`,
@@ -294,7 +385,7 @@ export function renderPermissionsPage(data?: PermissionsData): string {
     `<div class="perm-sub">Tier per (actor, tool). Defaults shown in dim text — click any cell to override. Save is per-cell + immediate.</div>`,
     matrixSection,
     `</section>`,
-    `<div class="perm-deferred">📋 PR #3 adds: named policies (save/apply/preview-diff), YAML export/import (operator scripting), audit-event emission, Topology side-drawer integration.</div>`,
+    `<div class="perm-deferred">📋 Pending follow-up: Topology side-drawer integration (the standalone page above is the authoritative surface today). Save-as-custom-policy + YAML scripting land alongside.</div>`,
   ].join('');
 
   return renderShell({
