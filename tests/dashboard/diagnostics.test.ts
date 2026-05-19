@@ -89,6 +89,22 @@ describe('Diagnostics page — operator-trust empty states (F65)', () => {
   // (a) never cleared the "Waiting for events…" placeholder when the
   // first event arrived, and (b) read worker_id/duration_ms off the
   // top-level event object instead of payload, so every cell rendered "·".
+  it('v0.6.11 — exposes Memory + Perf section deep-linkable as #perf', () => {
+    const html = renderDiagnosticsPage();
+    expect(html).toContain('id="perf"');
+    expect(html).toContain('Memory + Perf');
+    expect(html).toContain('data-role="mem-heap"');
+    expect(html).toContain('data-role="mem-rss"');
+    expect(html).toContain('data-role="perf-table"');
+    expect(html).toContain('data-role="evt-bars"');
+    expect(html).toContain('/dashboard/api/perf');
+    expect(html).toContain('/dashboard/api/diagnostics/memory');
+    // EXPLICIT-tier handoff: clipboard copy of the load harness command,
+    // not a server-side trigger.
+    expect(html).toContain('Copy load-runner command');
+    expect(html).toContain('tmp/perf/load-runner.mjs');
+  });
+
   it('LIVE TRACE TAIL JS reads worker_id + bom_id from event payload, not top level', () => {
     const html = renderDiagnosticsPage({ bricks: [], workers: [] });
     expect(html).toContain('payload.worker_id');
