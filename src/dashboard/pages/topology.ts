@@ -376,18 +376,25 @@ function renderFilterStrip(typeCounts: Record<GraphType, number>): string {
     cell('peer', 'Peer', 'peer'),
     `</div>`,
     `<span class="grow"></span>`,
-    `<span class="search-stub">⌘K · search nodes<span class="kbd">⌘K</span></span>`,
+    // v0.6 Task 4 Phase C #7 — Ctrl+K collides with the browser
+    // omnibox on Chrome/Edge/Firefox Win/Linux. Use `/` as the primary
+    // shortcut (GitHub style), with platform-specific label rendering
+    // via the `kbd-mac` / `kbd-other` spans that the page JS unhides
+    // based on navigator.platform.
+    `<span class="search-stub" data-role="topo-search-shortcut" data-shortcut-key="/">search nodes<span class="kbd kbd-other">/</span><span class="kbd kbd-mac" hidden>⌘K</span></span>`,
     `<button type="button" class="live-toggle" data-role="topo-live" aria-pressed="true"><span class="blip"></span>LIVE</button>`,
     `</div>`,
   ].join('');
 }
 
 function renderPaletteDoor(): string {
+  // v0.6 Task 4 Phase C #4 — Add (+) and Edit (✎) buttons were parked
+  // with a "v0.7" badge but never delivered functionality; hiding them
+  // until v0.7 actually ships those affordances. Reset stays — it's
+  // operator-facing and works.
   return [
     `<div class="palette-door">`,
     `<button type="button" data-role="topo-reset" title="Reset layout">↺<span class="tip">reset layout</span></button>`,
-    `<button type="button" class="parked" title="Add node (v0.7)">+<span class="tip">add (v0.7)</span></button>`,
-    `<button type="button" class="parked" title="Edit mode (v0.7)">✎<span class="tip">edit (v0.7)</span></button>`,
     `</div>`,
   ].join('');
 }
@@ -407,7 +414,7 @@ function renderLegend(): string {
     `<div class="lr"><span class="dot warn"></span>warn</div>`,
     `<div class="lr"><span class="dot crit"></span>crit</div>`,
     `<div class="lh" style="margin-top:8px;">keys</div>`,
-    `<div class="lr">drag · ⌘K · L</div>`,
+    `<div class="lr" data-role="topo-keys-legend">drag · <span class="kbd-other">/</span><span class="kbd-mac" hidden>⌘K</span> · L</div>`,
     `</div>`,
   ].join('');
 }
@@ -925,6 +932,23 @@ const TOPOLOGY_CSS = `
 // =================================== JS ===================================
 const TOPOLOGY_JS = `
 (function() {
+  // v0.6 Task 4 Phase C #7 — platform-aware keyboard-hint rendering.
+  // Mac users see ⌘K; Windows/Linux users see /. Detection uses
+  // navigator.platform which is a stable signal for OS-family on the
+  // browser side. Done before the canvas check so the legend updates
+  // even when topology data hasn't rendered yet.
+  (function paintKbdHints() {
+    try {
+      const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || '');
+      document.querySelectorAll('.kbd-mac').forEach(function(el) {
+        if (isMac) el.removeAttribute('hidden'); else el.setAttribute('hidden', '');
+      });
+      document.querySelectorAll('.kbd-other').forEach(function(el) {
+        if (isMac) el.setAttribute('hidden', ''); else el.removeAttribute('hidden');
+      });
+    } catch (_) {}
+  })();
+
   const canvas = document.querySelector('[data-role="topo-canvas"]');
   if (!canvas) return;
   const stage = canvas.querySelector('.topo-stage');

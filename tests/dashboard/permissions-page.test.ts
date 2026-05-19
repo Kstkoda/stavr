@@ -144,9 +144,21 @@ describe('renderPermissionsPage', () => {
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
   });
 
-  it('mentions PR #3 deferral so the operator knows policies + YAML come next', () => {
+  it('surfaces the named-policy apply affordance (v0.6.9 P6)', () => {
     const html = renderPermissionsPage(fetchPermissionsData({ registry, caps, perms }));
-    expect(html).toContain('PR #3');
+    expect(html).toContain('Apply policy');
+    expect(html).toContain('data-role="perm-policy-select"');
+    expect(html).toContain('data-role="perm-policy-actor"');
+    expect(html).toContain('data-role="perm-policy-apply"');
+    // The three built-in presets are rendered as options.
+    expect(html).toContain('>Tight<');
+    expect(html).toContain('>Developer<');
+    expect(html).toContain('>Review-only<');
+  });
+
+  it('still notes the remaining v0.6.9 follow-up scope (Topology drawer)', () => {
+    const html = renderPermissionsPage(fetchPermissionsData({ registry, caps, perms }));
+    expect(html).toContain('Topology side-drawer');
   });
 });
 

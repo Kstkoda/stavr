@@ -3,6 +3,7 @@ import { createInterface, type Interface } from 'node:readline';
 import { z } from 'zod';
 import { WorkerEventBus } from './emitter.js';
 import { writeWorkerScript } from './script-writer.js';
+import { verifyWorkerScript } from '../security/script-signing.js';
 import type { WorkerInstance, WorkerSpawner, WorkerSpawnerContext } from './types.js';
 
 const ShellSpawnParams = z.object({
@@ -30,11 +31,34 @@ export interface ShellSpawnerOptions {
   /** Override the directory the worker-script files are written to. Used
    *  by tests to keep the real `~/.stavr/worker-scripts/` clean. */
   scriptBaseDir?: string;
+  /** Override the STAVR_HOME used to locate the spawn-signing key. Tests
+   *  pass a tmp dir so the real `~/.stavr/keys/spawn-signing.key` stays
+   *  untouched. */
+  signingHome?: string;
+}
+
+/**
+ * Thrown internally when the script's sidecar signature fails to verify.
+ * Surfaces the `worker_blocked_by_signature` payload to the caller —
+ * `createShellSpawner` catches this and emits the audit event before
+ * re-throwing, so the orchestrator sees a generic spawn error while the
+ * audit log carries the precise reason.
+ */
+export class ScriptSignatureError extends Error {
+  readonly code = 'script_signature_failed' as const;
+  constructor(
+    public readonly reason: string,
+    public readonly scriptPath: string,
+    public readonly detail?: string,
+  ) {
+    super(`script signature verification failed: ${reason}${detail ? ` (${detail})` : ''}`);
+  }
 }
 
 export function createShellSpawner(opts: ShellSpawnerOptions = {}): WorkerSpawner<ShellSpawnParamsT> {
   const spawnFn: Spawner = opts.spawn ?? nodeSpawn;
   const scriptBaseDir = opts.scriptBaseDir;
+  const signingHome = opts.signingHome;
 
   return {
     type: 'shell',
@@ -60,7 +84,27 @@ export function createShellSpawner(opts: ShellSpawnerOptions = {}): WorkerSpawne
         return wrap(child, metadata, bus);
       }
 
-      const { child, scriptPath } = startNonInteractive(spawnFn, params, ctx, scriptBaseDir);
+      let scriptPath: string;
+      let child: ChildProcess;
+      try {
+        const started = startNonInteractive(spawnFn, params, ctx, scriptBaseDir, signingHome);
+        scriptPath = started.scriptPath;
+        child = started.child;
+      } catch (err) {
+        if (err instanceof ScriptSignatureError) {
+          // v0.6.7 P4 — emit the rich audit event BEFORE re-throwing so
+          // the orchestrator's `spawn_failed` wrapper doesn't swallow the
+          // attribution. The notify wire-up subscribes to this kind.
+          await ctx.emit('worker_blocked_by_signature', {
+            worker_id: ctx.workerId,
+            name: ctx.workerName,
+            script_path: err.scriptPath,
+            reason: err.reason,
+            detail: err.detail,
+          });
+        }
+        throw err;
+      }
       // Surface the script path on the worker metadata so the dashboard
       // can link to it ("View script") and the operator can audit what
       // was actually executed in their name (v0.6.7 P1).
@@ -77,6 +121,7 @@ function startNonInteractive(
   params: ShellSpawnParamsT,
   ctx: WorkerSpawnerContext,
   scriptBaseDir: string | undefined,
+  signingHome: string | undefined,
 ): { child: ChildProcess; scriptPath: string } {
   // v0.6.7 P1 — write the command to a script file and invoke via -File
   // / /c <path> / bash <path>. Replaces the prior `-Command "..."`
@@ -92,7 +137,22 @@ function startNonInteractive(
     sleepBefore: params.sleepBefore,
     sleepAfter: params.sleepAfter,
     baseDir: scriptBaseDir,
+    signingHome,
   });
+  // v0.6.7 P4 — verify the just-written script against its sidecar. The
+  // signature is normally tautological at this point (we just signed it),
+  // but the verifier ALSO defends against races where another process
+  // modified the file between write and spawn, and against future code
+  // paths that load + execute previously-written scripts. If verification
+  // fails, throw — caller emits `worker_blocked_by_signature` and aborts.
+  const verifyResult = verifyWorkerScript({
+    scriptPath: path,
+    expectedWorkerId: ctx.workerId,
+    home: signingHome,
+  });
+  if (!verifyResult.ok) {
+    throw new ScriptSignatureError(verifyResult.reason, path, verifyResult.detail);
+  }
   const opts: SpawnOptions = { cwd: params.cwd, stdio: ['ignore', 'pipe', 'pipe'] };
   return {
     child: spawnFn(invocation.argv0, invocation.argv, opts),

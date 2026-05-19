@@ -96,8 +96,55 @@ function renderResolvedCard(d: DecisionRecord): string {
   const chosen = d.chosen_option_id
     ? d.options.find((o) => o.id === d.chosen_option_id)?.label ?? d.chosen_option_id
     : '—';
+  // v0.6 Task 4 Phase D — expand row to surface the full decision
+  // record so the operator can audit a past decision in-place rather
+  // than digging through the event log.
+  const requestedMs = d.requested_at ? Date.parse(d.requested_at) : NaN;
+  const respondedMs = d.responded_at ? Date.parse(d.responded_at) : NaN;
+  const elapsedStr =
+    Number.isFinite(requestedMs) && Number.isFinite(respondedMs)
+      ? formatElapsed(respondedMs - requestedMs)
+      : null;
+  const defaultLabel = d.default_option_id
+    ? d.options.find((o) => o.id === d.default_option_id)?.label ?? d.default_option_id
+    : null;
+  // Best-effort cross-link surfaces:
+  //   - PR-shaped decisions get a "View PR" affordance when the
+  //     question text contains a github.com/<owner>/<repo>/pull/<n> URL
+  //   - Trust-scope-shaped decisions get a "View scope" affordance when
+  //     the question references a `ts-*` scope id
+  const prMatch = /https?:\/\/github\.com\/[^\s)\]]+\/pull\/\d+/i.exec(d.question);
+  const scopeMatch = /\bts-[a-zA-Z0-9._-]+\b/.exec(d.question);
+  const crossLinks: string[] = [];
+  if (prMatch) {
+    crossLinks.push(
+      `<a class="resolved-link" href="${escapeHtml(prMatch[0])}" target="_blank" rel="noopener">View PR ↗</a>`,
+    );
+  }
+  if (scopeMatch) {
+    crossLinks.push(
+      `<a class="resolved-link" href="/dashboard/capabilities?scope=${encodeURIComponent(scopeMatch[0])}">View scope</a>`,
+    );
+  }
+  const optionsList = d.options
+    .map((o) => {
+      const isChosen = d.chosen_option_id === o.id;
+      const isDefault = d.default_option_id === o.id;
+      const flags: string[] = [];
+      if (isChosen) flags.push('chosen');
+      if (isDefault) flags.push('default');
+      return [
+        `<li class="resolved-opt${flags.length ? ' resolved-opt-' + flags.join('-') : ''}">`,
+        `<code>${escapeHtml(o.id)}</code>`,
+        ` — ${escapeHtml(o.label)}`,
+        flags.length ? ` <span class="resolved-opt-flag">(${flags.join(' · ')})</span>` : '',
+        `</li>`,
+      ].join('');
+    })
+    .join('');
   return [
-    `<article class="resolved-card" data-corr="${escapeHtml(d.correlation_id)}">`,
+    `<details class="resolved-card" data-corr="${escapeHtml(d.correlation_id)}" data-role="resolved-card">`,
+    `<summary class="resolved-summary">`,
     `<div class="resolved-head">`,
     renderPill({ text: d.status, variant: RESOLVED_PILL[d.status] }),
     `<span class="resolved-q">${escapeHtml(d.question)}</span>`,
@@ -105,10 +152,39 @@ function renderResolvedCard(d: DecisionRecord): string {
     `<div class="resolved-body">`,
     `<span class="resolved-chosen">→ ${escapeHtml(chosen)}</span>`,
     d.responded_by ? `<span class="resolved-by">by ${escapeHtml(d.responded_by)}</span>` : '',
-    d.response_reason ? `<span class="resolved-reason">${escapeHtml(d.response_reason)}</span>` : '',
+    elapsedStr ? `<span class="resolved-elapsed">in ${escapeHtml(elapsedStr)}</span>` : '',
     `</div>`,
-    `</article>`,
+    `</summary>`,
+    `<div class="resolved-detail">`,
+    `<dl class="resolved-meta">`,
+    `<dt>Correlation id</dt><dd><code>${escapeHtml(d.correlation_id)}</code></dd>`,
+    `<dt>Requested at</dt><dd>${escapeHtml(d.requested_at || '—')}</dd>`,
+    `<dt>Deadline</dt><dd>${d.timeout_sec}s · expires ${escapeHtml(d.expires_at || '—')}</dd>`,
+    d.responded_at
+      ? `<dt>Responded at</dt><dd>${escapeHtml(d.responded_at)}${elapsedStr ? ` <span class="resolved-elapsed">(${escapeHtml(elapsedStr)})</span>` : ''}</dd>`
+      : '',
+    d.responded_by ? `<dt>Responder</dt><dd>${escapeHtml(d.responded_by)}</dd>` : '',
+    d.chosen_option_id ? `<dt>Chosen option</dt><dd><code>${escapeHtml(d.chosen_option_id)}</code> — ${escapeHtml(chosen)}</dd>` : '',
+    defaultLabel ? `<dt>Default option</dt><dd><code>${escapeHtml(d.default_option_id!)}</code> — ${escapeHtml(defaultLabel)}</dd>` : '',
+    d.response_reason ? `<dt>Reason</dt><dd>${escapeHtml(d.response_reason)}</dd>` : '',
+    `</dl>`,
+    `<div class="resolved-options"><div class="resolved-options-head">Options offered</div><ul class="resolved-options-list">${optionsList}</ul></div>`,
+    crossLinks.length > 0
+      ? `<div class="resolved-links">${crossLinks.join('')}</div>`
+      : '',
+    `</div>`,
+    `</details>`,
   ].join('');
+}
+
+function formatElapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '?';
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const remS = s % 60;
+  return remS === 0 ? `${m}m` : `${m}m ${remS}s`;
 }
 
 const DECIDE_CSS = `
@@ -263,16 +339,32 @@ const DECIDE_CSS = `
   gap: 6px;
   opacity: 0.75;
 }
+/* v0.6 Task 4 Phase D — resolved decisions are now <details> with the
+ * collapsed summary keeping the original single-line layout. */
 .resolved-card {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 7px;
+  font-size: 12px;
+  overflow: hidden;
+}
+.resolved-summary {
+  list-style: none;
+  cursor: pointer;
   padding: 8px 12px;
   display: flex;
   align-items: center;
   gap: 14px;
-  font-size: 12px;
 }
+.resolved-summary::-webkit-details-marker { display: none; }
+.resolved-summary::before {
+  content: '▸';
+  color: var(--text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.resolved-card[open] > .resolved-summary::before { transform: rotate(90deg); }
 .resolved-head { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
 .resolved-q { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .resolved-body {
@@ -283,6 +375,50 @@ const DECIDE_CSS = `
   font-size: 11px;
 }
 .resolved-chosen { color: var(--text-primary); font-weight: 600; }
+.resolved-elapsed { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.resolved-detail {
+  padding: 0 12px 12px 28px;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.resolved-meta {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  row-gap: 4px;
+  column-gap: 12px;
+  margin: 10px 0 0 0;
+  font-size: 11px;
+}
+.resolved-meta dt { color: var(--text-dim); }
+.resolved-meta dd { color: var(--text-primary); margin: 0; }
+.resolved-meta code { font-family: var(--font-mono); font-size: 10.5px; }
+.resolved-options-head {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.resolved-options-list {
+  margin: 4px 0 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.resolved-opt-chosen { color: var(--text-primary); font-weight: 600; }
+.resolved-opt-flag { color: var(--text-dim); font-size: 10px; }
+.resolved-links { display: flex; gap: 10px; }
+.resolved-link {
+  color: #4ea2d8;
+  text-decoration: none;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(78, 162, 216, 0.08);
+}
+.resolved-link:hover { background: rgba(78, 162, 216, 0.18); }
 .empty-decide {
   padding: 50px 16px;
   text-align: center;

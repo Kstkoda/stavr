@@ -20,6 +20,11 @@ import { renderShell } from '../shell.js';
 import { renderIcon, resolveIconId } from '../components/icon-sprite.js';
 import { deriveLifecycleState } from '../../workers/lifecycle.js';
 import { fetchWorkerCounters } from '../data/worker-counters.js';
+import {
+  snapshotBuildVersions,
+  formatUptime,
+  type BuildVersions,
+} from '../data/build-versions.js';
 
 export interface DiagnosticsData {
   bricks?: InstalledBrickLite[];
@@ -40,6 +45,14 @@ export interface DiagnosticsData {
     lessons_count: number;
     memory_working_keys: number;
   };
+  /**
+   * v0.6.8 Section 0 — Build & Versions snapshot for the engine-room
+   * top-of-page widget. When omitted the renderer calls
+   * snapshotBuildVersions() with no arguments and reads the live process
+   * state. Test callers inject a static snapshot to make assertions
+   * deterministic.
+   */
+  versions?: BuildVersions;
 }
 
 function escapeHtml(s: string): string {
@@ -463,6 +476,75 @@ function renderSection(opts: {
 // =================================== JS ===================================
 const DIAGNOSTICS_JS = `
 (function() {
+  // ---- v0.6.8 Section 0 — Build & Versions actions ----
+  // [Copy version] writes the canonical one-line bug-report string to the
+  // clipboard (or falls back to a transient <textarea> + execCommand on
+  // older browsers that don't grant clipboard-write permission).
+  document.querySelectorAll('[data-role="bv-copy"]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      const txt = btn.getAttribute('data-copy') || '';
+      const reset = function() { setTimeout(function() { btn.textContent = 'Copy version'; }, 1500); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(function() {
+          btn.textContent = 'Copied ✓';
+          reset();
+        }).catch(function() {
+          btn.textContent = 'Copy failed';
+          reset();
+        });
+      } else {
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = txt;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          btn.textContent = 'Copied ✓';
+          reset();
+        } catch (_) {
+          btn.textContent = 'Copy failed';
+          reset();
+        }
+      }
+    });
+  });
+  // [Check for updates] hits the public GitHub releases endpoint and
+  // compares versus the currently-displayed daemon version. No-op when
+  // the operator has set STAVR_DISABLE_UPDATE_CHECK=1 (the button isn't
+  // rendered in that case so this handler simply never fires).
+  document.querySelectorAll('[data-role="bv-update-check"]').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+      const original = btn.textContent;
+      btn.textContent = 'Checking…';
+      btn.disabled = true;
+      try {
+        const r = await fetch('https://api.github.com/repos/Kstkoda/stavr/releases/latest', {
+          headers: { accept: 'application/vnd.github+json' },
+        });
+        if (!r.ok) throw new Error('http ' + r.status);
+        const body = await r.json();
+        const latest = (body && body.tag_name) ? String(body.tag_name).replace(/^v/, '') : null;
+        const currentEl = document.querySelector('[data-role="build-versions"] .bv-tile .v');
+        const currentText = currentEl ? currentEl.textContent || '' : '';
+        const currentMatch = currentText.match(/v([0-9][0-9.\\-]*)/);
+        const current = currentMatch ? currentMatch[1] : '';
+        if (!latest) {
+          btn.textContent = 'No release info';
+        } else if (current && latest === current) {
+          btn.textContent = 'Up to date ✓';
+        } else if (latest) {
+          btn.textContent = 'v' + latest + ' available ↗';
+        } else {
+          btn.textContent = original;
+        }
+      } catch (_) {
+        btn.textContent = 'Check failed';
+      }
+      setTimeout(function() { btn.textContent = original; btn.disabled = false; }, 4000);
+    });
+  });
+
   // ---- F69 window selector — drives windowed fetches across all trend
   // charts. The currently-selected window persists across reloads via
   // localStorage; default 5m. Clicking a button re-pressed the chip and
@@ -649,6 +731,11 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
   const bricks = data?.bricks ?? [];
   const workers = data?.workers ?? [];
   const peers = data?.peerCount ?? 0;
+  // v0.6.8 Section 0 — fall back to a live snapshot when the caller didn't
+  // pre-fetch (e.g. dashboard router without explicit deps wiring). Tests
+  // pass `data.versions` for determinism.
+  const versions = data?.versions ?? snapshotBuildVersions();
+  const buildVersionsSection = renderBuildVersionsSection(versions);
 
   // ----- Jobs banner -----
   const jobs = [
@@ -839,6 +926,7 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     windowBar,
     `</div>`,
     `<div class="diag-top">${jobsBanner}</div>`,
+    buildVersionsSection,
     mcpSection,
     fleetSection,
     workerSection,
@@ -851,9 +939,136 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     title: 'Stavr — Diagnostics',
     activePage: 'diagnostics',
     body,
-    head: `<style>${DIAGNOSTICS_CSS}${STEWARD_PANEL_CSS}</style>`,
+    head: `<style>${DIAGNOSTICS_CSS}${STEWARD_PANEL_CSS}${BUILD_VERSIONS_CSS}</style>`,
     script: DIAGNOSTICS_JS,
   });
+}
+
+// =================== v0.6.8 Section 0 — Build & Versions ===================
+
+const BUILD_VERSIONS_CSS = `
+.bv-panel {
+  display: grid;
+  grid-template-columns: 220px 1fr auto;
+  gap: 14px;
+  padding: 12px 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.bv-head { display:flex; align-items:center; gap:10px; }
+.bv-title { color: var(--ink-1); font-size: 12px; letter-spacing: 0.3px; }
+.bv-meta { color: var(--ink-3); font-size: 10px; }
+.bv-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+.bv-tile {
+  background: var(--bg-glass);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.bv-tile .l { color: var(--ink-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+.bv-tile .v { color: var(--ink-1); font-size: 12px; margin-top: 2px; }
+.bv-tile .v.muted { color: var(--ink-3); }
+.bv-actions { display:flex; flex-direction:column; gap:6px; justify-content:center; }
+.bv-actions button, .bv-actions a {
+  background: var(--bg-glass);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink-2);
+  padding: 4px 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-decoration: none;
+  cursor: pointer;
+  text-align: left;
+}
+.bv-actions button:hover, .bv-actions a:hover { color: var(--ink-1); border-color: var(--ink-3); }
+.bv-status-pill {
+  display:inline-block; padding:0 6px; border-radius:8px;
+  font-size: 10px; letter-spacing: 0.3px; text-transform: uppercase;
+  border: 1px solid var(--line);
+}
+.bv-status-pill.ok   { color: var(--ok);   border-color: var(--ok); }
+.bv-status-pill.warn { color: var(--warn); border-color: var(--warn); }
+.bv-status-pill.crit { color: var(--crit); border-color: var(--crit); }
+.bv-status-pill.idle { color: var(--ink-3); }
+`;
+
+function escapeAttr(s: string): string {
+  return s.replace(/"/g, '&quot;');
+}
+
+function renderBuildVersionsSection(versions: BuildVersions): string {
+  const v = versions;
+  const stewardPill =
+    v.stewardStatus === 'up' ? 'ok'
+    : v.stewardStatus === 'unhealthy' ? 'warn'
+    : v.stewardStatus === 'down' ? 'crit'
+    : 'idle';
+  const govPill =
+    v.governorStatus === 'cosign-signed' ? 'ok'
+    : v.governorStatus === 'dev-signed' || v.governorStatus === 'unsigned' ? 'warn'
+    : 'idle';
+  const updateCheckDisabled = process.env.STAVR_DISABLE_UPDATE_CHECK === '1';
+  const gitShaUrl = v.daemonGitSha
+    ? `https://github.com/Kstkoda/stavr/commit/${encodeURIComponent(v.daemonGitSha)}`
+    : null;
+  const tiles: string[] = [];
+  tiles.push(tile('stavR daemon', `v${escapeHtml(v.daemonVersion)}${v.daemonGitSha ? ` · ${escapeHtml(v.daemonGitSha)}` : ''}`));
+  tiles.push(tile('Uptime', escapeHtml(formatUptime(v.daemonUptimeSeconds))));
+  tiles.push(tile('Node.js', escapeHtml(v.nodeVersion)));
+  tiles.push(tile(
+    'Steward',
+    `<span class="bv-status-pill ${stewardPill}">${escapeHtml(v.stewardStatus)}</span>${v.stewardModelRuntime ? ` · ${escapeHtml(v.stewardModelRuntime)}` : ''}`,
+  ));
+  tiles.push(tile(
+    'Governor',
+    v.governorVersion
+      ? `v${escapeHtml(v.governorVersion)} · <span class="bv-status-pill ${govPill}">${escapeHtml(v.governorStatus)}</span>`
+      : '<span class="muted">not-built</span>',
+    !v.governorVersion,
+  ));
+  tiles.push(tile('MCP SDK', v.mcpSdkVersion ? escapeHtml(v.mcpSdkVersion) : '<span class="muted">unknown</span>', !v.mcpSdkVersion));
+  if (v.buildTimestamp) {
+    tiles.push(tile(
+      'Build',
+      `${escapeHtml(v.buildTimestamp)}${v.buildRunNumber ? ` · run #${escapeHtml(v.buildRunNumber)}` : ''}`,
+    ));
+  }
+
+  const actions: string[] = [];
+  actions.push(
+    `<button type="button" data-role="bv-copy" data-copy="${escapeAttr(v.copyString)}" title="Copy version string for bug reports">Copy version</button>`,
+  );
+  if (gitShaUrl) {
+    actions.push(`<a href="${escapeAttr(gitShaUrl)}" target="_blank" rel="noopener">View on GitHub</a>`);
+  }
+  if (!updateCheckDisabled) {
+    actions.push(
+      `<button type="button" data-role="bv-update-check" title="Check GitHub for newer releases">Check for updates</button>`,
+    );
+  }
+
+  return [
+    `<section class="bv-panel glass" data-role="build-versions">`,
+    `<div class="bv-head">`,
+    `<div>`,
+    `<div class="bv-title">Build & Versions</div>`,
+    `<div class="bv-meta">section 0 · the engine room</div>`,
+    `</div>`,
+    `</div>`,
+    `<div class="bv-grid">${tiles.join('')}</div>`,
+    `<div class="bv-actions">${actions.join('')}</div>`,
+    `</section>`,
+  ].join('');
+
+  function tile(label: string, valueHtml: string, mutedValue = false): string {
+    return [
+      `<div class="bv-tile">`,
+      `<div class="l">${escapeHtml(label)}</div>`,
+      `<div class="v${mutedValue ? ' muted' : ''}">${valueHtml}</div>`,
+      `</div>`,
+    ].join('');
+  }
 }
 
 // =================================== v0.5 P6 ===================================

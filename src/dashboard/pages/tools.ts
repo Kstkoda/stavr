@@ -207,6 +207,69 @@ const TOOLS_CSS = `
   color: var(--ink-dim);
   font-style: italic;
 }
+/* v0.6 Task 4 Phase B — category groups + visual hierarchy. */
+.tools-group {
+  margin-top: 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(20, 22, 31, 0.4);
+  overflow: hidden;
+}
+.tools-group > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--ink);
+  user-select: none;
+}
+.tools-group > summary::-webkit-details-marker { display: none; }
+.tools-group > summary::before {
+  content: '▸';
+  color: var(--ink-dim);
+  transition: transform 0.15s ease;
+}
+.tools-group[open] > summary::before { transform: rotate(90deg); }
+.tools-group > summary .tools-group-count {
+  color: var(--ink-dim);
+  font-size: 12px;
+  margin-left: auto;
+}
+.tools-group .tools-grid { padding: 10px 14px 14px 14px; }
+.tools-pinned {
+  border: 1px solid rgba(250, 156, 76, 0.40);
+  background: rgba(250, 156, 76, 0.04);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.tools-pinned > .tools-pinned-head {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--warn, #fa9c4c);
+  margin-bottom: 8px;
+}
+/* EXPLICIT + NO_GO cards: darker glass, larger title, status halo. */
+.tools-card[data-tier="EXPLICIT"],
+.tools-card[data-tier="NO_GO"] {
+  background: rgba(10, 11, 16, 0.78);
+  border-color: rgba(250, 156, 76, 0.45);
+  box-shadow: 0 0 0 1px rgba(250, 156, 76, 0.15) inset;
+}
+.tools-card[data-tier="NO_GO"] {
+  border-color: rgba(216, 78, 78, 0.50);
+  box-shadow: 0 0 0 1px rgba(216, 78, 78, 0.20) inset;
+}
+.tools-card[data-tier="EXPLICIT"] .tools-id,
+.tools-card[data-tier="NO_GO"]    .tools-id {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-0, #fff);
+}
 `;
 
 const TOOLS_JS = `
@@ -214,14 +277,15 @@ const TOOLS_JS = `
   const search = document.querySelector('[data-role="tools-search"]');
   const catSel = document.querySelector('[data-role="tools-cat"]');
   const tierSel = document.querySelector('[data-role="tools-tier"]');
-  const grid = document.querySelector('[data-role="tools-grid"]');
 
   function applyFilter() {
-    if (!grid) return;
     const q = (search && search.value || '').trim().toLowerCase();
     const c = catSel && catSel.value || '';
     const t = tierSel && tierSel.value || '';
-    const cards = Array.from(grid.querySelectorAll('.tools-card'));
+    // v0.6 Task 4 Phase B — cards live in multiple grids (pinned +
+    // per-category groups). Query globally; per-group visibility is
+    // recomputed below from the per-card visibility.
+    const cards = Array.from(document.querySelectorAll('.tools-card'));
     cards.forEach(function (card) {
       if (c && card.getAttribute('data-category') !== c) {
         card.style.display = 'none';
@@ -240,6 +304,17 @@ const TOOLS_JS = `
       }
       card.style.display = '';
     });
+    // Hide category groups whose every card is filtered out. Helps the
+    // operator scan results without empty-section noise.
+    document.querySelectorAll('[data-role="tools-group"]').forEach(function (grp) {
+      const anyVisible = Array.from(grp.querySelectorAll('.tools-card'))
+        .some(function (card) { return card.style.display !== 'none'; });
+      grp.style.display = anyVisible ? '' : 'none';
+      // Auto-expand collapsed groups when an active filter matches them
+      // so the operator can see the matches without manually opening.
+      const hasFilter = !!(q || c || t);
+      if (anyVisible && hasFilter) grp.setAttribute('open', '');
+    });
   }
 
   if (search) search.addEventListener('input', applyFilter);
@@ -248,9 +323,32 @@ const TOOLS_JS = `
 })();
 `;
 
+// v0.6 Task 4 Phase B — category sort order for the grouped layout.
+// GitHub goes last + default-collapsed since it's the largest family
+// and tends to drown out the smaller, more-frequently-touched groups.
+const CATEGORY_ORDER: ToolCategory[] = [
+  'decision',
+  'credentials',
+  'scope',
+  'worker',
+  'shell',
+  'steward',
+  'subscription',
+  'event',
+  'plan',
+  'other',
+  'github',
+];
+
+// Categories that default-collapse so the page opens compact even when
+// stavR has registered the full GitHub family.
+const DEFAULT_COLLAPSED: ReadonlyArray<ToolCategory> = ['github'];
+
+// Tier values considered "critical" — pinned to the top of the page.
+const CRITICAL_TIERS: ReadonlyArray<Tier> = ['EXPLICIT', 'NO_GO'];
+
 export function renderToolsPage(data?: ToolsData): string {
   const d = data ?? emptyToolsData();
-  const cards = d.tools.map(renderToolCard).join('');
   const catOptions = (Object.keys(CATEGORY_LABELS) as ToolCategory[])
     .filter((c) => d.byCategory.some((b) => b.category === c))
     .map((c) => {
@@ -266,13 +364,56 @@ export function renderToolsPage(data?: ToolsData): string {
     ? ''
     : `<div class="tools-pending-banner">📊 Per-tool invocation tracking + top callers land in <strong>v0.6.9 PR #2</strong>. This page lists the registered catalog; usage cells show "—" for now.</div>`;
 
+  // v0.6 Task 4 Phase B — pinned "critical tools" section at the top
+  // (EXPLICIT + NO_GO default-tier), then the rest grouped by category.
+  const criticalTools = d.tools.filter((t) => CRITICAL_TIERS.includes(t.defaultTier));
+  const pinnedSection = criticalTools.length === 0
+    ? ''
+    : [
+        `<section class="tools-pinned">`,
+        `<div class="tools-pinned-head">Critical · ${criticalTools.length} tools at EXPLICIT or NO-GO by default</div>`,
+        `<div class="tools-grid" data-role="tools-grid">${criticalTools.map(renderToolCard).join('')}</div>`,
+        `</section>`,
+      ].join('');
+
+  // Group every tool by category for the second pass; critical tools
+  // intentionally appear in BOTH the pinned section and their category
+  // group so search/filter find them in either location.
+  const byCat = new Map<ToolCategory, ToolRow[]>();
+  for (const t of d.tools) {
+    if (!byCat.has(t.category)) byCat.set(t.category, []);
+    byCat.get(t.category)!.push(t);
+  }
+  const orderedCats = CATEGORY_ORDER.filter((c) => byCat.has(c));
+  // Append any leftover categories not in CATEGORY_ORDER (defensive —
+  // new categories shouldn't silently vanish).
+  for (const c of byCat.keys()) {
+    if (!orderedCats.includes(c)) orderedCats.push(c);
+  }
+  const groupedSections = orderedCats
+    .map((c) => {
+      const tools = byCat.get(c)!;
+      const open = !DEFAULT_COLLAPSED.includes(c);
+      const cards = tools.map(renderToolCard).join('');
+      return [
+        `<details class="tools-group" data-role="tools-group" data-category="${escapeHtml(c)}"${open ? ' open' : ''}>`,
+        `<summary>`,
+        `<span>${escapeHtml(CATEGORY_LABELS[c])}</span>`,
+        `<span class="tools-group-count">${tools.length}</span>`,
+        `</summary>`,
+        `<div class="tools-grid" data-role="tools-grid">${cards}</div>`,
+        `</details>`,
+      ].join('');
+    })
+    .join('');
+
   const body = [
     `<div class="page-head">`,
     `<h1 class="page-title">Tools</h1>`,
     `<span class="page-sub">MCP tools stavR exposes — category, default tier, risk</span>`,
     `</div>`,
     `<div class="tools-head">`,
-    `<div class="tools-counts">${d.registeredCount} registered · ${d.categoriesPresent.length} categories</div>`,
+    `<div class="tools-counts">${d.registeredCount} registered · ${d.categoriesPresent.length} categories${criticalTools.length > 0 ? ` · ${criticalTools.length} critical` : ''}</div>`,
     `</div>`,
     banner,
     `<div class="tools-toolbar">`,
@@ -282,7 +423,7 @@ export function renderToolsPage(data?: ToolsData): string {
     `</div>`,
     d.tools.length === 0
       ? `<div class="placeholder">No tools registered yet. (Daemon may be in stdio-only mode or the registry wrap missed first-session timing.)</div>`
-      : `<div class="tools-grid" data-role="tools-grid">${cards}</div>`,
+      : `${pinnedSection}${groupedSections}`,
   ].join('');
 
   return renderShell({

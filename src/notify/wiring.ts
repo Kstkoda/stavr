@@ -69,6 +69,9 @@ async function handleEvent(ev: StoredEvent, notifier: Notifier, opts: WiringOpts
     case 'worker_blocked_by_av':
       await emitWorkerBlockedByAv(ev, notifier, opts);
       break;
+    case 'worker_blocked_by_signature':
+      await emitWorkerBlockedBySignature(ev, notifier, opts);
+      break;
     default:
       break;
   }
@@ -298,6 +301,44 @@ async function emitWorkerBlockedByAv(ev: StoredEvent, notifier: Notifier, opts: 
     severity: 'warn',
     title: 'stavR worker blocked by AV',
     body: `Worker ${workerLabel} was killed by ${p.av_product_name}.${scriptHint}${reason} Inspect or whitelist via your AV console.`,
+    actions,
+    sourceEventId: ev.id,
+  });
+}
+
+async function emitWorkerBlockedBySignature(
+  ev: StoredEvent,
+  notifier: Notifier,
+  opts: WiringOpts,
+): Promise<void> {
+  const p = ev.payload as {
+    worker_id?: string;
+    name?: string;
+    script_path?: string;
+    reason?: string;
+    detail?: string;
+  };
+  if (!p?.worker_id || !p?.reason) return;
+  const actions: NotificationAction[] = [];
+  if (opts.dashboardBaseUrl && p.worker_id) {
+    actions.push({
+      label: 'View worker',
+      action_id: 'open:worker',
+      kind: 'link',
+      url: `${opts.dashboardBaseUrl}/dashboard/workers/${encodeURIComponent(p.worker_id)}`,
+    });
+  }
+  const workerLabel = p.name ? `${p.name} (${p.worker_id})` : p.worker_id;
+  const scriptHint = p.script_path ? ` Script: ${p.script_path}.` : '';
+  const detailHint = p.detail ? ` Detail: ${p.detail.slice(0, 120)}.` : '';
+  await notifier.notify({
+    // Reuse the worker_dispatch_failed outbound kind so existing channel
+    // routing rules apply — the title makes the signature-failure
+    // attribution explicit.
+    kind: 'worker_dispatch_failed',
+    severity: 'crit',
+    title: 'stavR worker blocked — signature failed',
+    body: `Worker ${workerLabel} rejected by integrity check (${p.reason}).${scriptHint}${detailHint}`,
     actions,
     sourceEventId: ev.id,
   });

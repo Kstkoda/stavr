@@ -112,6 +112,16 @@ export const EventKind = z.enum([
   'worker_dispatch_failed',
   // v0.6.7 P3 — worker spawn was blocked by an antivirus / EDR product
   'worker_blocked_by_av',
+  // v0.6.7 P4 — worker spawn was rejected because the script sidecar
+  //             signature did not verify (tampered script, missing sidecar,
+  //             wrong key, etc.).
+  'worker_blocked_by_signature',
+  // v0.6.9 P9 — Layer 0 capability state changed (operator toggled a
+  //             tool between enabled / disabled-temporary / disabled-permanent).
+  'capability_override_changed',
+  // v0.6.9 P9 — per-actor permission tier changed (matrix row written,
+  //             reset, or filled by a named-policy apply).
+  'actor_permission_changed',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -807,6 +817,69 @@ export const WorkerBlockedByAvPayload = z.object({
   spawned_command_signature: z.string().optional(),
 });
 
+/** v0.6.9 P9 — operator toggled a tool's Layer 0 master switch. Every
+ *  state change emits one event so the audit log answers "who disabled
+ *  github_merge_pr, when, why, for how long". */
+export const CapabilityOverrideChangedPayload = z.object({
+  tool_id: z.string(),
+  set_by: z.string(),
+  /** Prior state, `null` when no override row existed (= effectively enabled). */
+  from_state: z.enum(['enabled', 'disabled-temporary', 'disabled-permanent']).nullable(),
+  to_state: z.enum(['enabled', 'disabled-temporary', 'disabled-permanent']),
+  /** Operator-provided rationale — truncated for log hygiene. */
+  reason: z.string().max(240).optional(),
+  /** Unix-ms expiry when to_state is `disabled-temporary`; absent otherwise. */
+  disabled_until: z.number().int().nullable().optional(),
+  /** Optional correlation with the named-policy apply that produced this. */
+  policy_id: z.string().optional(),
+});
+
+/** v0.6.9 P9 — per-actor permission tier changed. Distinguishes between
+ *  a single matrix-cell edit and a bulk policy-apply via the `source`
+ *  field. */
+export const ActorPermissionChangedPayload = z.object({
+  actor_id: z.string(),
+  tool_id: z.string(),
+  set_by: z.string(),
+  /** Prior tier, `null` when no matrix row existed (the registered
+   *  default was in force). */
+  from_tier: z.enum(['AUTO', 'CONFIRM', 'EXPLICIT', 'NO_GO']).nullable(),
+  to_tier: z.enum(['AUTO', 'CONFIRM', 'EXPLICIT', 'NO_GO']),
+  /** How the change was triggered. `matrix-cell` = single dropdown
+   *  change in the UI; `policy-apply` = bulk preset application; `reset`
+   *  = operator returned the cell to default. */
+  source: z.enum(['matrix-cell', 'policy-apply', 'reset', 'import']),
+  /** Correlated policy preset id when `source === 'policy-apply'`. */
+  policy_id: z.string().optional(),
+  /** Optional operator note for non-trivial changes. */
+  reason: z.string().max(240).optional(),
+});
+
+/** Worker spawn was rejected because the script's Ed25519 sidecar
+ *  signature failed to verify. Each `reason` corresponds to a specific
+ *  failure mode in `src/security/script-signing.ts` so the operator can
+ *  distinguish a missing sidecar from a tampered script body. */
+export const WorkerBlockedBySignaturePayload = z.object({
+  worker_id: z.string(),
+  name: z.string().optional(),
+  script_path: z.string(),
+  reason: z.enum([
+    'sidecar_missing',
+    'sidecar_unreadable',
+    'sidecar_malformed',
+    'script_unreadable',
+    'script_hash_mismatch',
+    'worker_id_mismatch',
+    'path_mismatch',
+    'unsupported_alg',
+    'signature_invalid',
+    'pubkey_mismatch',
+  ]),
+  /** Short diagnostic detail — truncated so the event log doesn't bloat
+   *  on long paths or stack messages. */
+  detail: z.string().max(240).optional(),
+});
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -901,6 +974,9 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     cc_quota_warning: CcQuotaWarningPayload,
     worker_dispatch_failed: WorkerDispatchFailedPayload,
     worker_blocked_by_av: WorkerBlockedByAvPayload,
+    worker_blocked_by_signature: WorkerBlockedBySignaturePayload,
+    capability_override_changed: CapabilityOverrideChangedPayload,
+    actor_permission_changed: ActorPermissionChangedPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);

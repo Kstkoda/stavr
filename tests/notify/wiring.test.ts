@@ -271,6 +271,34 @@ describe('v0.6 notify wiring', () => {
     expect(link?.url).toContain('/dashboard/workers/w-blocked');
   });
 
+  it('worker_blocked_by_signature emits a crit notification with the reason + script path', async () => {
+    wireNotifications(broker, notifier, { dashboardBaseUrl: 'http://127.0.0.1:7777' });
+    await broker.publish({
+      kind: 'worker_blocked_by_signature',
+      at: new Date().toISOString(),
+      source_agent: 'worker-spawner',
+      payload: {
+        worker_id: 'w-sigfail',
+        name: 'cc-runner',
+        script_path: 'C:\\Users\\op\\.stavr\\worker-scripts\\w-sigfail.ps1',
+        reason: 'script_hash_mismatch',
+        detail: 'actual=abc123… signed=def456…',
+      },
+    });
+    await tick();
+    expect(channel.sent.length).toBe(1);
+    const sent = channel.sent[0];
+    expect(sent.severity).toBe('crit');
+    expect(sent.title).toContain('signature failed');
+    expect(sent.body).toContain('cc-runner');
+    expect(sent.body).toContain('script_hash_mismatch');
+    expect(sent.body).toContain('w-sigfail.ps1');
+    expect(sent.body).toContain('actual=abc123');
+    const link = sent.actions.find((a) => a.action_id === 'open:worker');
+    expect(link?.kind).toBe('link');
+    expect(link?.url).toContain('/dashboard/workers/w-sigfail');
+  });
+
   it('cc_quota_warning emits warn at 90% and crit at 95%+', async () => {
     wireNotifications(broker, notifier, { dashboardBaseUrl: 'http://127.0.0.1:7777' });
     await broker.publish({

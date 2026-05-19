@@ -31,6 +31,17 @@ import {
   type StavrConfig,
 } from './config.js';
 import { registerStewardBugFixCli } from './steward-bug-fix-cli.js';
+import { ActorPermissionStore } from './security/actor-permissions.js';
+import { CapabilityOverrideStore } from './security/capability-overrides.js';
+import {
+  buildPermissionsYaml,
+  defaultPermissionsYamlPath,
+  importPermissionsYaml,
+  permissionsYamlString,
+  writePermissionsYaml,
+} from './security/policies-yaml.js';
+import { TIERS as PERMISSION_TIERS, type Tier } from './tools/categories.js';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 interface ResolvedCliBind {
   bindHost: string;
@@ -685,6 +696,129 @@ devices
       store.close();
     }
   });
+
+// ---- permissions subcommands (v0.6.9 P7) ----
+//
+// CLI surface for the permissions matrix + Layer 0 overrides. Reads /
+// writes the DB directly — operators should stop the daemon first when
+// running `import` / `set` to avoid racing with the dashboard mutator.
+// `export` and `show` are safe to run live (read-only).
+
+const permissions = program
+  .command('permissions')
+  .description('Inspect + manage the per-actor permissions matrix and Layer 0 capability overrides.');
+
+interface PermissionsStores {
+  store: EventStore;
+  caps: CapabilityOverrideStore;
+  perms: ActorPermissionStore;
+}
+
+function openPermissionsStores(dbPath: string): PermissionsStores {
+  const store = new EventStore();
+  store.init(dbPath);
+  const db = (store as unknown as { db: import('better-sqlite3').Database }).db;
+  if (!db) {
+    store.close();
+    throw new Error('permissions CLI requires direct DB access — EventStore did not expose .db');
+  }
+  return {
+    store,
+    caps: new CapabilityOverrideStore(db),
+    perms: new ActorPermissionStore(db),
+  };
+}
+
+permissions
+  .command('export')
+  .description('Write the current matrix + Layer 0 overrides to a YAML file.')
+  .option('--db <path>', 'SQLite path', defaultDbPath())
+  .option('--out <path>', 'Output path (default ~/.stavr/permissions.yaml).')
+  .option('--stdout', 'Write YAML to stdout instead of a file.', false)
+  .action((opts: { db: string; out?: string; stdout?: boolean }) => {
+    const { store, caps, perms } = openPermissionsStores(opts.db);
+    try {
+      const doc = buildPermissionsYaml({ caps, perms });
+      const text = permissionsYamlString(doc);
+      if (opts.stdout) {
+        process.stdout.write(text);
+      } else {
+        const path = opts.out ?? defaultPermissionsYamlPath();
+        writeFileSync(path, text, { encoding: 'utf8', mode: 0o600 });
+        console.log(`[stavr] wrote ${path}`);
+      }
+    } finally {
+      store.close();
+    }
+  });
+
+permissions
+  .command('import')
+  .description('Apply a YAML permissions document onto the local DB. Additive — does not delete unmentioned rows.')
+  .argument('<path>', 'Path to permissions YAML file.')
+  .option('--db <path>', 'SQLite path', defaultDbPath())
+  .option('--set-by <name>', 'Operator identifier recorded on every write.', 'cli')
+  .action((path: string, opts: { db: string; setBy: string }) => {
+    const yaml = readFileSync(path, 'utf8');
+    const { store, caps, perms } = openPermissionsStores(opts.db);
+    try {
+      const result = importPermissionsYaml({ caps, perms, setBy: opts.setBy, yaml });
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            path,
+            capability_rows_written: result.capabilityRowsWritten,
+            actor_rows_written: result.actorRowsWritten,
+            warnings: result.warnings,
+          },
+          null,
+          2,
+        ),
+      );
+    } finally {
+      store.close();
+    }
+  });
+
+permissions
+  .command('show')
+  .description('Print the current matrix as YAML (no file written).')
+  .option('--db <path>', 'SQLite path', defaultDbPath())
+  .action((opts: { db: string }) => {
+    const { store, caps, perms } = openPermissionsStores(opts.db);
+    try {
+      process.stdout.write(permissionsYamlString(buildPermissionsYaml({ caps, perms })));
+    } finally {
+      store.close();
+    }
+  });
+
+permissions
+  .command('set')
+  .description('Set a single (actor, tool) tier in the matrix.')
+  .argument('<actor>', 'Actor id (e.g. cowork-claude, steward, operator).')
+  .argument('<tool>', 'Tool id (e.g. worker_spawn, host_exec).')
+  .argument('<tier>', `Tier — one of: ${PERMISSION_TIERS.join(', ')}`)
+  .option('--db <path>', 'SQLite path', defaultDbPath())
+  .option('--set-by <name>', 'Operator identifier recorded on the row.', 'cli')
+  .action((actor: string, tool: string, tier: string, opts: { db: string; setBy: string }) => {
+    if (!(PERMISSION_TIERS as readonly string[]).includes(tier)) {
+      console.error(`[stavr] unknown tier "${tier}" — expected one of ${PERMISSION_TIERS.join(', ')}`);
+      process.exit(2);
+    }
+    const { store, perms } = openPermissionsStores(opts.db);
+    try {
+      perms.set(actor, tool, tier as Tier, opts.setBy);
+      console.log(JSON.stringify({ ok: true, actor_id: actor, tool_id: tool, tier }, null, 2));
+    } finally {
+      store.close();
+    }
+  });
+
+// Suppress unused-import warning if writePermissionsYaml is otherwise
+// only re-exported but not yet used in this file.
+void writePermissionsYaml;
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(err);

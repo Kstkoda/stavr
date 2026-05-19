@@ -23,6 +23,19 @@ describe('tool categories', () => {
     expect(categorize('trust_scope_grant')).toBe('scope');
   });
 
+  // v0.6 Task 4 Phase B — github.create_pr, worker.spawn etc. use the
+  // MCP-namespace dot separator. They MUST categorize identically to
+  // the underscore form (legacy + scopeCheck payloads use the latter).
+  it('matches the MCP-namespace dot-prefix form for all adapter families', () => {
+    expect(categorize('github.create_pr')).toBe('github');
+    expect(categorize('github.read_pr')).toBe('github');
+    expect(categorize('github.list_issues')).toBe('github');
+    expect(categorize('worker.spawn')).toBe('worker');
+    expect(categorize('steward.ask_async')).toBe('steward');
+    expect(categorize('credential.add')).toBe('credentials');
+    expect(categorize('trust_scope.propose')).toBe('scope');
+  });
+
   it('puts the trust_scope_* prefix above worker_/steward_ in priority', () => {
     // longest-prefix wins so `trust_scope_grant` resolves to `scope`,
     // not "tr_*" or anything broader.

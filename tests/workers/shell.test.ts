@@ -111,7 +111,7 @@ describe('shell spawner', () => {
       recordedArgv = { argv0, argv };
       return child;
     }) as never;
-    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir });
+    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir, signingHome: scriptBaseDir });
     const inst = await spawner.spawn(
       { cwd: process.cwd(), shell: 'powershell', command: 'Write-Host hi', args: [], interactive: false },
       ctx,
@@ -140,7 +140,7 @@ describe('shell spawner', () => {
       recordedArgv = { argv0, argv };
       return child;
     }) as never;
-    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir });
+    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir, signingHome: scriptBaseDir });
     await spawner.spawn(
       {
         cwd: process.cwd(),
@@ -170,7 +170,7 @@ describe('shell spawner', () => {
       recordedArgv = { argv0, argv };
       return child;
     }) as never;
-    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir });
+    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir, signingHome: scriptBaseDir });
     await spawner.spawn(
       {
         cwd: process.cwd(),
@@ -190,6 +190,84 @@ describe('shell spawner', () => {
     expect(sleepIdx).toBeGreaterThan(cmdIdx);
   });
 
+  // v0.6.7 P4 — every written script gets an Ed25519 sidecar and the
+  // spawner verifies it before invoking the child process.
+
+  it('writes a sibling <script>.sig sidecar next to the script', async () => {
+    let recordedArgv: { argv0: string; argv: string[] } | undefined;
+    const child = makeFakeChild();
+    const fakeSpawn = ((argv0: string, argv: string[]) => {
+      recordedArgv = { argv0, argv };
+      return child;
+    }) as never;
+    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir, signingHome: scriptBaseDir });
+    await spawner.spawn(
+      { cwd: process.cwd(), shell: 'powershell', command: 'Write-Host hi', args: [], interactive: false },
+      ctx,
+    );
+    const scriptPath = recordedArgv!.argv[recordedArgv!.argv.length - 1];
+    const sidecarRaw = readFileSync(`${scriptPath}.sig`, 'utf8');
+    const sidecar = JSON.parse(sidecarRaw);
+    expect(sidecar.alg).toBe('ed25519');
+    expect(sidecar.worker_id).toBe('wid');
+    expect(sidecar.script_path).toBe(scriptPath);
+  });
+
+  it('rejects spawn + emits worker_blocked_by_signature when the sidecar verification fails', async () => {
+    // Force the failure path by tampering with the script *between*
+    // writeWorkerScript and verifyWorkerScript. We do that by intercepting
+    // the spawn function — but spawn is called AFTER verify, so it can't
+    // help. Instead: stub the spawnFn unreachable + use a fresh signingHome
+    // that already contains a valid key, then nuke the sidecar right after
+    // spawn() returns from writeWorkerScript via a vi.spyOn.
+    //
+    // Simpler in practice: mock verifyWorkerScript at module level to
+    // return failure. The end-to-end shape (emit event + throw) is what
+    // we're asserting; the unit tests in tests/security/script-signing.test.ts
+    // cover the actual verification logic.
+    const { vi } = await import('vitest');
+    const signing = await import('../../src/security/script-signing.js');
+    const verifySpy = vi
+      .spyOn(signing, 'verifyWorkerScript')
+      .mockReturnValue({ ok: false, reason: 'script_hash_mismatch', detail: 'forced' });
+
+    try {
+      const fakeSpawn = (() => {
+        throw new Error('spawnFn should not be reached when signature fails');
+      }) as never;
+      const emitted: Array<{ kind: string; payload: unknown }> = [];
+      const localCtx = {
+        ...ctx,
+        emit: async (kind: string, payload: unknown) => {
+          emitted.push({ kind, payload });
+        },
+      };
+      const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir, signingHome: scriptBaseDir });
+      await expect(
+        spawner.spawn(
+          { cwd: process.cwd(), shell: 'bash', command: 'echo hi', args: [], interactive: false },
+          localCtx as never,
+        ),
+      ).rejects.toThrow(/script signature/);
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0].kind).toBe('worker_blocked_by_signature');
+      const payload = emitted[0].payload as {
+        worker_id: string;
+        name: string;
+        script_path: string;
+        reason: string;
+        detail?: string;
+      };
+      expect(payload.worker_id).toBe('wid');
+      expect(payload.name).toBe('wname');
+      expect(payload.reason).toBe('script_hash_mismatch');
+      expect(payload.detail).toBe('forced');
+      expect(payload.script_path).toContain('wid.sh');
+    } finally {
+      verifySpy.mockRestore();
+    }
+  });
+
   it('cmd shell invokes via /c <path>, never inline /c "<cmd>"', async () => {
     let recordedArgv: { argv0: string; argv: string[] } | undefined;
     const child = makeFakeChild();
@@ -197,7 +275,7 @@ describe('shell spawner', () => {
       recordedArgv = { argv0, argv };
       return child;
     }) as never;
-    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir });
+    const spawner = createShellSpawner({ spawn: fakeSpawn, scriptBaseDir, signingHome: scriptBaseDir });
     await spawner.spawn(
       { cwd: process.cwd(), shell: 'cmd', command: 'echo hi', args: [], interactive: false },
       ctx,
