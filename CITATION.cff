@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: "If you use this software or build on it, please cite it as below."
+title: "stavR"
+abstract: >
+  Local-first MCP gateway for AI agents. Personal — or small-team,
+  or household — gateway between your AI assistants and your tools.
+  BOM-driven planning, worker dispatch via git worktrees, federation
+  across the operator's own machines, MCP-native connector surface,
+  5-layer permission model with operator-runtime trust scopes.
+authors:
+  - family-names: Stenlund
+    given-names: Kenneth
+    email: stenlund@gmail.com
+    website: "https://www.linkedin.com/in/kenneth-stenlund/"
+    affiliation: "Independent personal project"
+type: software
+license: Apache-2.0
+repository-code: "https://github.com/Kstkoda/stavr"
+url: "https://github.com/Kstkoda/stavr"
+keywords:
+  - mcp
+  - model-context-protocol
+  - ai-agents
+  - local-first
+  - personal-gateway
+  - federation
+  - trust-scopes
+  - bom-driven-planning
+  - audit-log
+  - sigstore
+preferred-citation:
+  type: software
+  title: "stavR — local-first MCP gateway for AI agents"
+  authors:
+    - family-names: Stenlund
+      given-names: Kenneth
+      email: stenlund@gmail.com
+      website: "https://www.linkedin.com/in/kenneth-stenlund/"
+  url: "https://github.com/Kstkoda/stavr"
+  license: Apache-2.0
+  year: 2026
