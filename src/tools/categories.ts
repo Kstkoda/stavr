@@ -68,13 +68,19 @@ const EXPLICIT_CATEGORY: Record<string, ToolCategory> = {
 /**
  * Pure prefix-based fallback. Order matters — longest-match wins (so
  * `trust_scope_*` resolves to `scope` not `steward`).
+ *
+ * Each entry lists ALL separator variants the adapter might have used.
+ * GitHub tools in particular are registered as `github.create_pr`
+ * (MCP namespace convention) but historical code and trust-scope
+ * `scopeCheck` payloads use `github_create_pr` — both must categorize
+ * to `github`. The variants array is iterated, first match wins.
  */
-const PREFIX_CATEGORY: Array<[string, ToolCategory]> = [
-  ['trust_scope_', 'scope'],
-  ['worker_', 'worker'],
-  ['github_', 'github'],
-  ['steward_', 'steward'],
-  ['credential_', 'credentials'],
+const PREFIX_CATEGORY: Array<[ReadonlyArray<string>, ToolCategory]> = [
+  [['trust_scope_', 'trust_scope.'], 'scope'],
+  [['worker_', 'worker.'], 'worker'],
+  [['github_', 'github.'], 'github'],
+  [['steward_', 'steward.'], 'steward'],
+  [['credential_', 'credential.'], 'credentials'],
 ];
 
 /**
@@ -86,8 +92,10 @@ export function categorize(toolId: string): ToolCategory {
   const direct = EXPLICIT_CATEGORY[toolId];
   if (direct) return direct;
   // longest-prefix wins; PREFIX_CATEGORY is already ordered most-specific-first
-  for (const [prefix, cat] of PREFIX_CATEGORY) {
-    if (toolId.startsWith(prefix)) return cat;
+  for (const [prefixes, cat] of PREFIX_CATEGORY) {
+    for (const prefix of prefixes) {
+      if (toolId.startsWith(prefix)) return cat;
+    }
   }
   return 'other';
 }

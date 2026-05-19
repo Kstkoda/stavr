@@ -127,11 +127,28 @@ describe('Topology page — unit', () => {
     expect(html).toContain('ns-tabs');
     expect(html).toContain('type-chips');
     expect(html).toContain('palette-door');
-    expect(html).toContain('class="parked"');
+    // v0.6 Task 4 Phase C #4 — Add + Edit FAB buttons were parked with
+    // a v0.7 badge but never delivered functionality; hidden until v0.7
+    // actually ships those affordances. Reset stays as the operator-
+    // facing primary action.
+    expect(html).toContain('data-role="topo-reset"');
+    expect(html).not.toContain('class="parked"');
     expect(html).toContain('topo-legend');
     expect(html).toContain('data-role="topo-drawer"');
     expect(html).not.toContain('topo-mode-chips');
     expect(html).not.toContain('data-mode="radial"');
+  });
+
+  // v0.6 Task 4 Phase C #7 — Ctrl+K collides with browser omnibox.
+  // The label now renders `/` for non-Mac platforms (visible by default)
+  // and ⌘K hidden behind `kbd-mac` (the page JS unhides it on macOS).
+  it('renders platform-aware keyboard hints (/ visible on non-Mac, ⌘K behind kbd-mac)', () => {
+    const html = renderTopologyPage(snapshot());
+    expect(html).toContain('data-role="topo-search-shortcut"');
+    expect(html).toContain('class="kbd kbd-other">/');
+    expect(html).toContain('class="kbd kbd-mac" hidden>⌘K');
+    // Legend row also reflects the same dual-rendering.
+    expect(html).toContain('data-role="topo-keys-legend"');
   });
 
   it('renders a node per worker tagged with started/ended-at for the scrubber', () => {

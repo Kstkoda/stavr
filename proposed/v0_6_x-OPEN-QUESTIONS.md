@@ -40,6 +40,52 @@ dependency.
 baseline once PR B lands, taking P1 + P2 as the next chunk per the
 BOM's original phase-group structure.
 
+### Task 4 dashboard UX — partial delivery
+
+PR B shipped the smaller, lower-risk fixes:
+
+- **Phase A (Helm tier-band alignment)** — investigated; the existing
+  `.band-head` already uses a uniform `grid-template-columns: 280px 1fr auto`
+  across all 5 bands, so the X-axis IS shared. The dispatch-spec'd 200px
+  would break level-name readability ("User intent · talk to Steward"
+  doesn't fit). Marked as already-aligned; the broader body-grid
+  normalization (12-col per-tier body row) is deferred.
+- **Phase B (Tools page)** ✅ shipped — GitHub category now matches both
+  `github_*` and `github.*` prefixes (the registered tools use dot
+  separator); cards grouped into collapsible `<details>` sections by
+  category; GitHub default-collapsed; EXPLICIT + NO_GO cards visually
+  emphasized; "Critical tools" section pinned to the top.
+- **Phase C (Topology cleanup)** ✅ partial — #4 palette-door FAB
+  cleanup (Add/Edit v0.7-parked buttons hidden) and #7 keyboard
+  shortcut rebind (`/` primary, `⌘K` on Mac via `navigator.platform`
+  detection) shipped. **Deferred to a follow-up topology PR**:
+  - #1 Galactic map empty (wire MCP/worker/peer nodes into topology data)
+  - #2 Move worker roster → Streams page
+  - #3 Move in-flight BOMs panel → Plans page
+  - #6 YouTube-style heatmap timeline (replace flat blue scrubber polyline)
+- **Phase D (Decide expandable rows)** ✅ shipped — resolved decision
+  rows now use `<details>` with the full record on expand
+  (correlation_id, requested_at, deadline, response timestamp, elapsed,
+  responder, chosen + default options, all offered options, reason).
+  PR-URL + scope-id cross-links added as best-effort regex extraction
+  from the question text.
+
+### v0.6.9 P8 — Topology side-drawer for permissions
+
+The standalone `/dashboard/permissions` page is the authoritative
+surface today and delivers the full Layer 0 + matrix + named-policy
+apply experience. Wiring a side-drawer onto `/dashboard/topology` that
+mirrors the same matrix shape is a real UI integration (the Topology
+page is dense; the drawer needs careful CSS work to coexist with the
+existing graph view). PR B already ships:
+
+- P6 named policies (built-in presets) + Apply affordance
+- P7 YAML import/export + `stavr permissions {export,import,show,set}`
+- P9 audit events on every Layer 0 + matrix mutation
+
+P8 is the single deferred slice. Track for a follow-up
+`feat/v0.6.9-topology-drawer` PR.
+
 ## Open questions (no decision needed yet)
 
 ### v0.6.8 BOM §1 — auto-refresh vs manual refresh

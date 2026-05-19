@@ -125,6 +125,50 @@ describe('renderToolsPage', () => {
     const html = renderToolsPage(fetchToolsData(populated()));
     expect(html).toContain('data-search=');
   });
+
+  // v0.6 Task 4 Phase B — grouped layout + critical-tools pinning.
+  it('pins EXPLICIT + NO_GO tools into a "Critical" section at the top', () => {
+    const html = renderToolsPage(fetchToolsData(populated()));
+    expect(html).toContain('tools-pinned');
+    expect(html).toContain('Critical');
+    // host_exec (EXPLICIT) lands in the pinned section before any
+    // <details> category group.
+    const pinnedAt = html.indexOf('tools-pinned');
+    const firstDetails = html.indexOf('<details class="tools-group"');
+    expect(pinnedAt).toBeGreaterThan(0);
+    expect(firstDetails).toBeGreaterThan(pinnedAt);
+  });
+
+  it('groups remaining cards by category in collapsible <details> sections', () => {
+    const html = renderToolsPage(fetchToolsData(populated()));
+    expect(html).toContain('<details class="tools-group" data-role="tools-group"');
+    expect(html).toContain('data-category="worker"');
+    expect(html).toContain('data-category="event"');
+    expect(html).toContain('data-category="shell"');
+    expect(html).toContain('data-category="scope"');
+  });
+
+  it('default-collapses the github category when present', () => {
+    const r = new ToolRegistry();
+    r.record(buildMetadata('emit_event', { description: 'evt' }, 'server'));
+    r.record(buildMetadata('github.create_pr', { description: 'create PR' }, 'adapters/github-writes'));
+    r.record(buildMetadata('github.read_pr', { description: 'read PR' }, 'adapters/github'));
+    const html = renderToolsPage(fetchToolsData(r));
+    expect(html).toContain('data-category="github"');
+    // github group is rendered WITHOUT `open` attribute on the <details>
+    expect(html).toMatch(/<details class="tools-group" data-role="tools-group" data-category="github"(?!\s*open)/);
+    // other categories open by default
+    expect(html).toMatch(/<details class="tools-group" data-role="tools-group" data-category="event" open/);
+  });
+
+  it('categorizes MCP-namespace dot-prefix tools to the same family as the underscore form', () => {
+    const r = new ToolRegistry();
+    r.record(buildMetadata('github.list_issues', { description: 'list issues' }, 'adapters/github'));
+    const html = renderToolsPage(fetchToolsData(r));
+    expect(html).toContain('data-category="github"');
+    // No `data-category="other"` for the github.* tool.
+    expect(html).not.toMatch(/data-id="github\.list_issues"[\s\S]*?data-category="other"/);
+  });
 });
 
 describe('Tools nav entry', () => {
