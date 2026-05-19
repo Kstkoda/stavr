@@ -149,6 +149,13 @@ node dist/cli.js devices list
 
 The full command surface lives in [`src/cli.ts`](src/cli.ts). Once `stavr` is published to npm, the prefix `node dist/cli.js` collapses to `stavr`.
 
+## Maintainer
+
+**Kenneth Stenlund** — original author and maintainer.
+[LinkedIn](https://www.linkedin.com/in/kenneth-stenlund/) · stenlund@gmail.com
+
+If you fork or build on stavR, please preserve the [`NOTICE`](NOTICE) file and consider crediting in your README. See [`CITATION.cff`](CITATION.cff) for citation format.
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for repo layout, development setup, testing philosophy, and the patterns for adding new event kinds, tool adapters, and worker spawners. Contributions require [DCO sign-off](https://developercertificate.org/) — commit with `git commit -s`. PRs welcome.
