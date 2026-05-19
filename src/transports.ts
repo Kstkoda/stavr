@@ -1342,6 +1342,25 @@ export function mountDashboardRoutes(
   // v0.4 MCPs page — installed bricks come straight from the brick registry;
   // the static github.com/mcp snapshot lives in the page module itself so
   // it's bundled with the daemon and doesn't require a registry lookup.
+  // v0.6.11 Phase 6e (UX audit B3) — Diagnostics Section 3 was reading
+  // its workers from `data.workers ?? []` but mountDashboardPages had no
+  // diagnosticsData getter wired, so the page always saw an empty list
+  // and reported "0 active · 0 lifetime" while Streams + Topology saw
+  // the live 16. This getter feeds the same single source of truth
+  // (broker.store.listWorkers + listInstalledBricks) all three pages
+  // consume so the counts agree.
+  function diagnosticsData(): import('./dashboard/pages/diagnostics.js').DiagnosticsData {
+    return {
+      workers: broker.store.listWorkers(),
+      bricks: broker.store.listInstalledBricks().map((b) => ({
+        id: b.id,
+        display_name: b.display_name,
+        kind: b.kind,
+        enabled: b.enabled,
+      })),
+    };
+  }
+
   function mcpsData(): import('./dashboard/pages/mcps.js').McpsData {
     return {
       installed: broker.store.listInstalledBricks().map((b) => ({
@@ -1373,7 +1392,7 @@ export function mountDashboardRoutes(
     });
   }
 
-  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, toolkitData, mcpsData, toolsData, permissionsData, capabilitiesData, settingsData });
+  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, toolkitData, mcpsData, toolsData, permissionsData, capabilitiesData, settingsData, diagnosticsData });
 
   // v0.6.9 PR #2 — Permissions API endpoints. Operator-only path; the
   // dashboard session is implicitly trusted via the existing

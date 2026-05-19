@@ -192,7 +192,12 @@ function renderTopBar(totals: Record<BomStatus, number>): string {
     .filter((s) => (totals[s] ?? 0) > 0 || s === 'proposed' || s === 'running')
     .map((s) => {
       const count = totals[s] ?? 0;
-      return `<button type="button" class="filter-chip" data-status="${s}" data-active="${s === 'proposed'}">`
+      // v0.6.11 Phase 6e (UX audit PL1) — pill renders the visible text
+      // but the button itself had no accessible name; screen readers
+      // announced "button" with no context. aria-label provides the
+      // explicit context. PL3 — drop uppercase styling, the dashboard
+      // leans lowercase elsewhere (Topology chips, live status row).
+      return `<button type="button" class="filter-chip" data-status="${s}" data-active="${s === 'proposed'}" aria-label="Filter: ${s}, ${count} BOM${count === 1 ? '' : 's'}" role="tab" aria-selected="${s === 'proposed'}">`
         + `${renderPill({ text: `${s} · ${count}`, variant: STATUS_PILL[s] })}`
         + `</button>`;
     });
@@ -215,6 +220,11 @@ const PLANS_CSS = `
   flex-wrap: wrap;
   gap: 8px;
 }
+/* v0.6.11 Phase 6e (UX audit PL3) — the .pill component is uppercased
+ * globally for status badges. The Plans filter tabs read alongside the
+ * lowercase "live · listening" status row; override locally so the chip
+ * text matches its neighbour. */
+.filter-chip .pill { text-transform: none; letter-spacing: 0.04em; }
 .filter-row {
   display: flex;
   gap: 6px;
@@ -709,7 +719,7 @@ export function renderPlansPage(data?: PlansData): PlansPageRender {
   const sidebar = renderInFlightSidebar(inFlightBoms, inFlightScopes);
   const body = [
     `<div class="page-head">`,
-    `<h1 class="page-title">Stavr — Plans</h1>`,
+    `<h1 class="page-title">Plans</h1>`,
     `<span class="page-sub">${snapshot.boms.length} BOM${snapshot.boms.length === 1 ? '' : 's'}${inFlightBoms.length > 0 ? ` · ${inFlightBoms.length} in-flight` : ''}</span>`,
     `</div>`,
     renderTopBar(snapshot.totals),
