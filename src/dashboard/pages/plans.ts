@@ -379,6 +379,36 @@ const PLANS_CSS = `
   border: 1px dashed var(--border-strong);
 }
 
+/* v0.6.11 Phase 1 — "N new BOMs" banner replaces the freeze-causing
+ * window.location.reload() on bom-set diff. Operator opts in by clicking. */
+.new-bom-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 8px 14px;
+  background: var(--bg-popover, rgba(28,30,40,0.85));
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--info, #6ea8fe);
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--ink-0);
+  backdrop-filter: blur(14px);
+}
+.new-bom-msg { font-family: var(--mono); color: var(--ink-1); }
+.new-bom-refresh {
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 4px 10px;
+  color: var(--ink-0);
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.new-bom-refresh:hover { background: rgba(255,255,255,0.04); }
+
 /* v0.6.10 Task 2 — in-flight sidebar lifted from Topology. */
 .plans-frame {
   display: grid;
@@ -427,7 +457,6 @@ const PLANS_CSS = `
 const PLANS_JS = `
 (function() {
   const PLANS_LIST_URL = '/dashboard/plans/list';
-  const STREAM_URL = '/dashboard/stream';
 
   const list = document.querySelector('[data-role="plans-list"]');
   const liveStatus = document.querySelector('[data-role="live-status"]');
@@ -601,15 +630,19 @@ const PLANS_JS = `
         seen.add(r.getAttribute('data-bom-id'));
       });
       const incoming = new Set(rows.map(function(b) { return b.id; }));
-      let differs = seen.size !== incoming.size;
-      if (!differs) {
-        for (const id of seen) { if (!incoming.has(id)) { differs = true; break; } }
-      }
-      if (differs) {
-        window.location.reload();
-        return;
-      }
-      // Same set — just update status data-attrs so filters still work.
+      // v0.6.11 Phase 1 — drop the previous window.location.reload() on diff.
+      // Under a busy bom_* stream that re-entered itself; surface a click-to-
+      // refresh banner instead so the user controls the document teardown.
+      // Removed rows: prune in place (cheap, no flicker).
+      list.querySelectorAll('.bom-row').forEach(function(r) {
+        const id = r.getAttribute('data-bom-id');
+        if (!incoming.has(id)) r.remove();
+      });
+      // Added rows: surface a non-modal banner with count; user clicks to reload.
+      const added = [];
+      incoming.forEach(function(id) { if (!seen.has(id)) added.push(id); });
+      if (added.length > 0) showNewBomBanner(added.length);
+      // Same set — update status data-attrs so filters still work.
       rows.forEach(function(b) {
         const row = list.querySelector('[data-bom-id="' + b.id + '"]');
         if (row) row.setAttribute('data-status', b.status);
@@ -621,14 +654,30 @@ const PLANS_JS = `
       inflight = false;
     }
   }
+  function showNewBomBanner(count) {
+    let banner = document.querySelector('[data-role="new-bom-banner"]');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.setAttribute('data-role', 'new-bom-banner');
+      banner.className = 'new-bom-banner';
+      banner.innerHTML = '<span class="new-bom-msg"></span> <button type="button" class="new-bom-refresh">Refresh</button>';
+      banner.querySelector('.new-bom-refresh').addEventListener('click', function() {
+        window.location.reload();
+      });
+      list.parentElement.insertBefore(banner, list);
+    }
+    banner.querySelector('.new-bom-msg').textContent = count + ' new BOM' + (count === 1 ? '' : 's') + ' since last refresh.';
+  }
   function schedule() {
     if (timer) return;
-    timer = setTimeout(function() { timer = null; refresh(); }, 300);
+    timer = (window.__stavrCleanup ? window.__stavrCleanup.setTimeout : setTimeout)(function() {
+      timer = null;
+      refresh();
+    }, 300);
   }
-  setInterval(refresh, 6000);
-  try {
-    const es = new EventSource(STREAM_URL);
-    es.addEventListener('event', function(ev) {
+  (window.__stavrCleanup ? window.__stavrCleanup.setInterval : setInterval)(refresh, 6000);
+  if (window.__stavrStream) {
+    window.__stavrStream.on('event', function(ev) {
       try {
         const data = JSON.parse(ev.data || '{}');
         if (data && typeof data.kind === 'string' && data.kind.indexOf('bom_') === 0) {
@@ -636,13 +685,13 @@ const PLANS_JS = `
         }
       } catch (_) { schedule(); }
     });
-    es.addEventListener('open', function() {
+    window.__stavrStream.on('open', function() {
       if (liveStatus) liveStatus.textContent = 'live · listening';
     });
-    es.addEventListener('error', function() {
+    window.__stavrStream.on('error', function() {
       if (liveStatus) liveStatus.textContent = 'live · reconnecting';
     });
-  } catch (err) { /* fall back to interval */ }
+  }
 })();
 `;
 

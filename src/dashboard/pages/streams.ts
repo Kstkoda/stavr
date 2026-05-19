@@ -395,9 +395,8 @@ const STREAMS_JS = `
   }
   function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-  try {
-    const es = new EventSource('/dashboard/stream');
-    es.addEventListener('event', function(ev) {
+  if (window.__stavrStream) {
+    window.__stavrStream.on('event', function(ev) {
       try {
         const data = JSON.parse(ev.data || '{}');
         const workerId = (data && (data.correlation_id || (data.payload && data.payload.id))) || null;
@@ -406,7 +405,7 @@ const STREAMS_JS = `
         if (pane) appendLine(pane, data);
       } catch (_) { /* ignore */ }
     });
-  } catch (_) { /* no live */ }
+  }
 })();
 `;
 

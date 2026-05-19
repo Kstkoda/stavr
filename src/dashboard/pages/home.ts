@@ -264,23 +264,18 @@ const HOME_JS = `
 
   function scheduleRefresh() {
     if (refreshTimer) return;
-    refreshTimer = setTimeout(function() {
+    refreshTimer = (window.__stavrCleanup ? window.__stavrCleanup.setTimeout : setTimeout)(function() {
       refreshTimer = null;
       refresh();
     }, 200);
   }
 
   // Auto-refresh every 5s as a fallback if SSE drops.
-  setInterval(refresh, 5000);
+  (window.__stavrCleanup ? window.__stavrCleanup.setInterval : setInterval)(refresh, 5000);
 
   // Live update channel: any event nudges a debounced refresh.
-  try {
-    const es = new EventSource(STREAM_URL);
-    es.addEventListener('event', scheduleRefresh);
-    es.addEventListener('open', function() { /* connected */ });
-    es.addEventListener('error', function() { /* C10 banner */ });
-  } catch (err) {
-    // No SSE — the 5s poll covers it.
+  if (window.__stavrStream) {
+    window.__stavrStream.on('event', scheduleRefresh);
   }
 })();
 `;

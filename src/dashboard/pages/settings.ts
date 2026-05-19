@@ -488,17 +488,16 @@ const SETTINGS_JS = `
   });
 
   // ---------- live refresh on trust scope events (Storm F2) ----------
-  try {
-    var es = new EventSource('/dashboard/stream');
-    var refreshTimer = null;
-    function scheduleScopeRefresh() {
-      if (refreshTimer) return;
-      refreshTimer = setTimeout(function() {
-        refreshTimer = null;
-        window.location.reload();
-      }, 400);
-    }
-    es.addEventListener('event', function(msg) {
+  var refreshTimer = null;
+  function scheduleScopeRefresh() {
+    if (refreshTimer) return;
+    refreshTimer = (window.__stavrCleanup ? window.__stavrCleanup.setTimeout : setTimeout)(function() {
+      refreshTimer = null;
+      window.location.reload();
+    }, 400);
+  }
+  if (window.__stavrStream) {
+    window.__stavrStream.on('event', function(msg) {
       try {
         var data = JSON.parse(msg.data || '{}');
         if (data && typeof data.kind === 'string'
@@ -509,7 +508,7 @@ const SETTINGS_JS = `
         }
       } catch (_) { /* ignore */ }
     });
-  } catch (_) { /* no live updates if SSE unavailable */ }
+  }
 
   // ---------- trust scopes ----------
   document.addEventListener('click', async function(ev) {

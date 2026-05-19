@@ -283,15 +283,14 @@ export const TOPOLOGY_FLOW_PARTICLES_JS = `
   }
 
   // ---------- SSE hookup ----------
-  try {
-    const es = new EventSource('/dashboard/stream');
-    es.addEventListener('event', function(ev) {
+  if (window.__stavrStream) {
+    window.__stavrStream.on('event', function(ev) {
       try {
         const data = JSON.parse(ev.data || '{}');
         emit(data);
       } catch (_) { /* ignore */ }
     });
-  } catch (_) { /* SSE unavailable — graceful no-op */ }
+  }
 
   // Expose to the click-inspector (Task 4c).
   window.__stavrFlowParticles = { emit: emit, live: live };

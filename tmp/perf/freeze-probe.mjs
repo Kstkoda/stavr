@@ -55,7 +55,38 @@ function summarize(samples) {
   };
 }
 
-const result = { config: { port, base, iterations, pages, sse_seconds: sseSeconds }, pages: {}, sse: null };
+const stressPage = args.stress ?? null;
+const stressIters = Number.parseInt(args['stress-iters'] ?? '30', 10);
+
+const result = { config: { port, base, iterations, pages, sse_seconds: sseSeconds, stress: stressPage, stress_iters: stressIters }, pages: {}, sse: null, stress: null };
+
+// Nav-stress: hammer one page repeatedly to simulate "operator nav-mash" and
+// verify the server stays responsive + the broker's SSE-session count
+// returns to baseline (proxy for client cleanup hygiene, since we can't
+// inspect the browser from here).
+async function navStress() {
+  if (!stressPage) return null;
+  const url = `${base}/dashboard/${stressPage}`;
+  const samples = [];
+  const t0 = performance.now();
+  for (let i = 0; i < stressIters; i++) {
+    samples.push(await timeFetch(url));
+  }
+  const totalMs = Math.round(performance.now() - t0);
+  let baseline = null;
+  try {
+    const r = await fetch(`${base}/dashboard/api/diagnostics/memory`);
+    if (r.ok) {
+      const body = await r.json();
+      baseline = {
+        rss_mb: Math.round(body.process.rss / 1024 / 1024),
+        heap_used_mb: Math.round(body.process.heap_used / 1024 / 1024),
+        sse_sessions: body.broker?.sse_sessions ?? null,
+      };
+    }
+  } catch { /* memory endpoint not present in some test daemons */ }
+  return { iters: stressIters, total_ms: totalMs, throughput_rps: Math.round((stressIters / totalMs) * 1000), summary: summarize(samples), after: baseline };
+}
 
 for (const page of pages) {
   const samples = [];
@@ -104,6 +135,11 @@ events.durationMs = Math.round(performance.now() - t0);
 events.eventsPerSec = events.total / Math.max(1, events.durationMs / 1000);
 result.sse = events;
 process.stdout.write(`[sse] ${JSON.stringify(events)}\n`);
+
+if (stressPage) {
+  result.stress = await navStress();
+  process.stdout.write(`[stress ${stressPage}] ${JSON.stringify(result.stress)}\n`);
+}
 
 const out = 'tmp/perf/freeze-probe-summary.json';
 writeFileSync(out, JSON.stringify(result, null, 2));
