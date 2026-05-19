@@ -12,7 +12,8 @@ import { registerDecisionTools } from './tools/decisions.js';
 import { registerGithubTools } from './adapters/github.js';
 import { registerGithubWriteTools } from './adapters/github-writes.js';
 import { WorkerOrchestrator } from './workers/orchestrator.js';
-import { allSpawners } from './workers/spawners-registry.js';
+import { builtInSpawners, resolveAllSpawners } from './workers/spawners-registry.js';
+import { ManifestError } from './workers/mcp-workers-config.js';
 import { registerWorkerTools } from './workers/tools.js';
 import { TrustStore } from './trust/store.js';
 import { registerTrustScopeTools } from './trust/tools.js';
@@ -106,7 +107,26 @@ function getOrCreateOrchestrator(broker: Broker, trustStore: TrustStore): Worker
   const existing = orchestratorsByBroker.get(broker);
   if (existing) return existing;
   const orch = new WorkerOrchestrator({ broker, store: broker.store, trustStore });
-  for (const s of allSpawners) orch.register(s);
+  // ADR-042 Decision 5 — register built-in in-process spawners + any
+  // MCP-backed worker types from `~/.stavr/worker-mcp-servers.yaml`. A
+  // manifest parse error is operator-visible: log + fall back to built-ins
+  // so the daemon still boots with a usable worker set.
+  let spawners;
+  try {
+    spawners = resolveAllSpawners();
+  } catch (err) {
+    if (err instanceof ManifestError) {
+      // Use console.warn rather than the logger — at this construction
+      // point the broker exists but the daemon's logger context isn't
+      // guaranteed wired yet (legacy `getOrCreateOrchestrator` call sites
+      // in tests). Operator sees the parse error on the daemon stderr.
+      console.warn(`[stavr] ${err.message} — booting with built-in workers only`);
+      spawners = builtInSpawners;
+    } else {
+      throw err;
+    }
+  }
+  for (const s of spawners) orch.register(s);
   orchestratorsByBroker.set(broker, orch);
   return orch;
 }
