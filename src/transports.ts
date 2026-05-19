@@ -40,7 +40,8 @@ import {
 import { logContext } from './observability/logger.js';
 import { mountDebugEndpoints } from './observability/debug-endpoints.js';
 import { mountWebAuthnRoutes } from './security/webauthn-routes.js';
-import { getOrCreateIdentityStore, getOrCreateWebAuthnCoordinator } from './server.js';
+import { mountFederationRoutes } from './federation/index.js';
+import { getOrCreateIdentityStore, getOrCreateWebAuthnCoordinator, getOrCreateFederation } from './server.js';
 import { attachMcpAttributes } from './observability/spans.js';
 import { recordPerf, perfSnapshot } from './observability/perf-metrics.js';
 import { getV02Subsystem } from './steward/v02-wiring.js';
@@ -835,6 +836,17 @@ export async function mountTransports(
       getIdentityStore: () => getOrCreateIdentityStore(broker),
     });
 
+    // v0.7 Phase 2-trimmed — federation HTTP surface under /api/federation/*.
+    // The subsystem itself (mDNS + ping loop) is started after the HTTP
+    // listener binds — see the .listen() block below.
+    const federation = getOrCreateFederation(broker);
+    mountFederationRoutes(app, {
+      getRegistry: () => federation.registry,
+      selfId: () => federation.selfId(),
+      daemonVersion: version,
+      startedAt: daemonStartedAt,
+    });
+
     // bom-oom-leak-hunt C2.4 — periodic SSE session janitor. Every 5 min,
     // walk sseSessions and remove any entry whose underlying transport
     // reports closed. Prevents long-tail leaks where onclose never fired
@@ -882,6 +894,15 @@ export async function mountTransports(
     httpServer = await new Promise<HttpServer | undefined>((resolve, reject) => {
       const s = app.listen(opts.port!, bindHost, () => {
         log(`HTTP/SSE listening on ${bindHost}:${opts.port}`);
+        // v0.7 Phase 2-trimmed — start federation subsystem now that the HTTP
+        // surface other peers will dial is actually up. mDNS errors are
+        // non-fatal; federation degrades to peers.yaml-only when multicast
+        // is blocked or unavailable (Docker, Hyper-V container, etc.).
+        federation
+          .start({ port: opts.port!, startedAt: daemonStartedAt })
+          .catch((err) => {
+            log(`federation start failed: ${(err as Error).message}; continuing without it`);
+          });
         resolve(s);
       });
       s.on('error', (err: NodeJS.ErrnoException) => {
@@ -907,6 +928,14 @@ export async function mountTransports(
 
   const shutdown = async () => {
     if (sessionJanitorHandle) clearInterval(sessionJanitorHandle);
+    try {
+      // Federation subsystem is broker-scoped via WeakMap; re-resolving
+      // here is cheap and avoids needing to lift the local binding from
+      // the HTTP-mount block.
+      getOrCreateFederation(broker).stop();
+    } catch {
+      /* federation teardown best-effort; mDNS sockets close on process exit anyway */
+    }
     if (httpServer) await new Promise<void>((r) => httpServer!.close(() => r()));
     for (const s of sseSessions.values()) await s.transport.close().catch(() => {});
     broker.store.close();
