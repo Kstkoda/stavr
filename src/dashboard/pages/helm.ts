@@ -193,7 +193,11 @@ function systemHaloStatus(s: HelmSystem['health']): 'ok' | 'warn' | 'crit' {
 function renderIntentBand(d: HelmData): string {
   const profile = PROFILE_PILL[d.health.profile_mode];
   const intent = d.intent.summary || 'Steward is idle.';
-  const sub = d.intent.sub ?? `${profile.label} · ${d.boms.open} active BOM${d.boms.open === 1 ? '' : 's'}`;
+  // v0.6.11 Phase 6d (UX audit H3) — the L4 secondary row already renders
+  // the profile name inline AND the .profile-X pill below; rendering the
+  // label both places duplicates "balanced ... BALANCED". Default `sub`
+  // now omits the profile and only carries the BOM count.
+  const sub = d.intent.sub ?? `${d.boms.open} active BOM${d.boms.open === 1 ? '' : 's'}`;
   const recent = d.decisions.recent.slice(0, 4);
   const timeline = recent.length === 0
     ? `<div class="l4-intent-row"><span class="ts">—</span><span class="what" style="color:var(--ink-3);font-style:italic;">no recent intents</span><span class="stat"></span></div>`
@@ -545,7 +549,10 @@ body[data-active-page="helm"] > main.page { padding: 14px 18px 16px; overflow: h
 }
 .helm-stack {
   display: grid;
-  grid-template-rows: 150px 1fr 160px 160px 140px;
+  /* v0.6.11 Phase 6d (UX audit H1) — rebalance L0-L4 tier bands to equal
+   * visual weight (previous explicit row sizes made L3 dominate). The
+   * .band-head big-numbers column is also locked to 200px (was 280px). */
+  grid-template-rows: repeat(5, minmax(120px, 1fr));
   gap: 10px;
   overflow: hidden;
   min-height: 0;
@@ -580,7 +587,7 @@ body[data-active-page="helm"] > main.page { padding: 14px 18px 16px; overflow: h
 .band[data-level="L0"] { color: var(--ink-1); }
 
 .band-head {
-  display: grid; grid-template-columns: 280px 1fr auto;
+  display: grid; grid-template-columns: 200px 1fr auto;
   align-items: center; gap: 18px;
   flex-shrink: 0;
 }
