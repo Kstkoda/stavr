@@ -30,6 +30,7 @@ import { ActorPermissionStore } from './security/actor-permissions.js';
 import { CapabilityOverrideStore } from './security/capability-overrides.js';
 import { IdentityStore } from './security/identity-store.js';
 import { WebAuthnCoordinator } from './security/webauthn.js';
+import { createFederation, type FederationSubsystem } from './federation/index.js';
 import { ToolRegistry, wrapServerForRegistry } from './tools/registry.js';
 import { Notifier } from './notify/notifier.js';
 import { NtfyChannel } from './notify/channels/ntfy.js';
@@ -82,6 +83,7 @@ const capabilityOverrideStoresByBroker = new WeakMap<Broker, CapabilityOverrideS
 const actorPermissionStoresByBroker = new WeakMap<Broker, ActorPermissionStore>();
 const identityStoresByBroker = new WeakMap<Broker, IdentityStore>();
 const webauthnCoordsByBroker = new WeakMap<Broker, WebAuthnCoordinator>();
+const federationByBroker = new WeakMap<Broker, FederationSubsystem>();
 
 /**
  * Layer 0 capability override store — operator-runtime hard gate
@@ -127,6 +129,19 @@ export function getOrCreateWebAuthnCoordinator(broker: Broker): WebAuthnCoordina
   const coord = new WebAuthnCoordinator(getOrCreateIdentityStore(broker));
   webauthnCoordsByBroker.set(broker, coord);
   return coord;
+}
+
+/**
+ * Federation subsystem (v0.7 Phase 2-trimmed). Lazy — only constructed
+ * when first asked for, so tests that don't exercise federation pay
+ * nothing. The daemon foreground path calls `.start()` after the HTTP
+ * listener binds; tests use this getter as a singleton handle. */
+export function getOrCreateFederation(broker: Broker): FederationSubsystem {
+  const existing = federationByBroker.get(broker);
+  if (existing) return existing;
+  const fed = createFederation();
+  federationByBroker.set(broker, fed);
+  return fed;
 }
 
 function getOrCreateOrchestrator(broker: Broker, trustStore: TrustStore): WorkerOrchestrator {
