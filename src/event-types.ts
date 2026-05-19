@@ -101,6 +101,17 @@ export const EventKind = z.enum([
   'host_exec_started',
   'host_exec_completed',
   'host_exec_denied',
+  // v0.6.X — Telegram operator directives (BOM: v0_6_X-telegram-operator-directives-bom.md)
+  'operator_directive',
+  'operator_scope_request',
+  'operator_ask',
+  'telegram_directive_rejected',
+  'trust_scope_rejected',
+  // v0.6.X bonus — outbound notification coverage expansion
+  'cc_quota_warning',
+  'worker_dispatch_failed',
+  // v0.6.7 P3 — worker spawn was blocked by an antivirus / EDR product
+  'worker_blocked_by_av',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -707,6 +718,95 @@ export const ProfileModeSwitchedPayload = z.object({
   reason: z.string().optional(),
 });
 
+// v0.6.X — Telegram operator directives (BOM:
+// proposed/v0_6_X-telegram-operator-directives-bom.md)
+
+/** Operator-originated free-text directive routed via Telegram. */
+export const OperatorDirectivePayload = z.object({
+  text: z.string().min(1).max(4000),
+  source: z.enum(['telegram', 'dashboard', 'cli']),
+  chat_id: z.string().optional(),
+});
+
+/** Operator asks Steward to propose a scope shape; Steward proposes via the
+ *  normal trust_scope_proposed event, which the operator then grants on the
+ *  dashboard. */
+export const OperatorScopeRequestPayload = z.object({
+  text: z.string().min(1).max(4000),
+  source: z.enum(['telegram', 'dashboard', 'cli']),
+  chat_id: z.string().optional(),
+});
+
+/** One-shot synchronous question for Steward. The Steward's reply finds its
+ *  way back via the existing notifier path, using this event's id as the
+ *  correlation_id so the response lands in the right Telegram thread. */
+export const OperatorAskPayload = z.object({
+  text: z.string().min(1).max(4000),
+  source: z.enum(['telegram', 'dashboard', 'cli']),
+  chat_id: z.string().optional(),
+});
+
+/** Audit trail for a non-operator Telegram chat trying to issue a directive.
+ *  The bot never replies to such messages (defense in depth — the bot's
+ *  existence shouldn't be confirmable to non-operators). */
+export const TelegramDirectiveRejectedPayload = z.object({
+  chat_id: z.string(),
+  reason: z.enum(['wrong_chat_id', 'rate_limit', 'malformed']),
+  text_preview: z.string().max(120).optional(),
+});
+
+/** Operator (or Steward, with operator approval) declined a proposed scope.
+ *  Audit-equivalent to revoke but happens before a grant ever lands. */
+export const TrustScopeRejectedPayload = z.object({
+  scope_id: z.string(),
+  rejected_by: z.string(),
+  reason: z.string().optional(),
+});
+
+/** Claude Code quota approaching limit. Emitted by the CC observer; the
+ *  notify wiring forwards to operator channels (toast / Telegram) so the
+ *  operator can pause or batch before exhausting the quota. */
+export const CcQuotaWarningPayload = z.object({
+  percent: z.number().int().min(0).max(100),
+  remaining: z.number().int().nonnegative().optional(),
+  resets_at: z.string().optional(),
+  detail: z.string().optional(),
+});
+
+/** Worker spawn failed before the worker process became reachable. Port
+ *  collision, AV block, missing executable, etc. */
+export const WorkerDispatchFailedPayload = z.object({
+  /** Intended worker id (assigned before the spawn attempt). */
+  target_worker_id: z.string(),
+  name: z.string().optional(),
+  reason: z.enum(['port_collision', 'av_block', 'missing_binary', 'spawn_error', 'other']),
+  detail: z.string().optional(),
+});
+
+/** Worker spawn was killed by an antivirus / EDR product. Distinct from
+ *  worker_dispatch_failed: this event has rich AV-product attribution
+ *  pulled from the Windows Event Log or vendor-specific logs, and is the
+ *  signal the operator needs to add a whitelist rule. */
+export const WorkerBlockedByAvPayload = z.object({
+  /** Intended worker id (assigned before the spawn attempt). */
+  worker_id: z.string(),
+  /** Worker display name if set. */
+  name: z.string().optional(),
+  /** Vendor display name (e.g. "Windows Defender", "CrowdStrike Falcon"). */
+  av_product_name: z.string(),
+  /** Vendor-specific event id (Defender 1116/1117/5007, etc.). */
+  av_event_id: z.number().int().nonnegative().optional(),
+  /** First ~240 chars of the AV's event message — enough for the operator
+   *  to recognise the signature name without ballooning the event log. */
+  av_event_message: z.string().max(240).optional(),
+  /** Path to the script the AV blocked (when known). */
+  script_path: z.string().optional(),
+  /** SHA-256 of the script contents — useful for vendor-side rule
+   *  authoring and for correlating across multiple AV blocks of the
+   *  same generated body. */
+  spawned_command_signature: z.string().optional(),
+});
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -793,6 +893,14 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     host_exec_started: HostExecStartedPayload,
     host_exec_completed: HostExecCompletedPayload,
     host_exec_denied: HostExecDeniedPayload,
+    operator_directive: OperatorDirectivePayload,
+    operator_scope_request: OperatorScopeRequestPayload,
+    operator_ask: OperatorAskPayload,
+    telegram_directive_rejected: TelegramDirectiveRejectedPayload,
+    trust_scope_rejected: TrustScopeRejectedPayload,
+    cc_quota_warning: CcQuotaWarningPayload,
+    worker_dispatch_failed: WorkerDispatchFailedPayload,
+    worker_blocked_by_av: WorkerBlockedByAvPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);

@@ -68,6 +68,27 @@ Closes 4 bugs surfaced during the 2026-05-17 21:00 GST smoke test:
 
 - 69 governor cargo tests pass (28 → 39 after P1, 39 → 55 after P2, 55 → 69 after P3). Cross-platform parsers (`netstat -ano`, `ss -tlnp`, `lsof -t`) validated via fixture strings so a Linux CI run still exercises the Windows parser. Orphan-kill flow covered with mocked PortChecker + ProcessKiller for the clean-restart, orphan-killed-and-retried, clean-port-original-error, kill-failed, and exhaustion paths.
 
+### PR #2 — SSE events + OS toast + tray menu + autostart (in progress)
+
+Operator-awareness surface: the Governor pulls events out of the daemon's `/dashboard/stream` and renders them as native OS toasts, with a debounced + filtered route so only operator-relevant events make it to the OS notification center. Plus the full tray-menu action set and per-platform autostart installers.
+
+#### Added
+
+- **SSE event bridge** (`governor/src/event_bridge.rs`) — one long-lived TCP connection to `/dashboard/stream`; reconnect with 1s → 60s exponential backoff that resets only after ≥30 s of stable streaming. Footgun #6 — never spam parallel SSE sessions. Comment lines, ping events, multi-data lines, and truncated-at-EOF events all handled per the SSE spec.
+- **Operator-awareness event router** (`governor/src/event_router.rs`) — 14 subscribed kinds (decision_request, host_exec_denied, trust_scope_*, worker_failed/blocked_by_av, daemon_health_changed, notification_requested, cc_quota_warning, worker_dispatch_failed, scope_expired) → toast title/body/severity templates. Per-kind 10s debounce (BOM hard rule #7) — burst of N events in 1s renders ≤1 toast. Routine kinds (`progress`, `worker_progress`, `phase_started`, `file_written`, `command_run`, `tool_called`) silently dropped — dashboard-only.
+- **Native toast renderer** (`governor/src/notification.rs`) — thin wrapper over `tauri-plugin-notification` v2. Severity::Crit attaches the OS default sound; failures log at `warn` instead of crashing.
+- **Tray menu — full operator-action surface** (`governor/src/tray.rs` + `actions.rs`) — Open Dashboard / View Logs / View Decide Queue / Restart Daemon / Pause supervision / Mute notifications · 1 h / 1 d / Unmute / Quit Governor. URL targets honour `STAVR_DASHBOARD_BASE` env. Mute window extension rule: double-clicking "1 h" then "1 d" gives 1 day (later end-time wins).
+- **Per-platform autostart installers** (`governor/installers/stavr-governor-install.{ps1,sh}`) — Windows `HKCU\…\Run` registry entry; macOS LaunchAgent (`~/Library/LaunchAgents/tech.stavr.governor.plist`); Linux systemd-user unit (`~/.config/systemd/user/stavr-governor.service`). Idempotent; `--uninstall` flag reverses cleanly.
+- **Operator docs** — `docs/governor.md` (setup + autostart + first-launch checklist + troubleshooting + 5 most-common failure modes); `docs/governor-icon-design.md` (why the Raido rune, state→halo color mapping, asset pipeline notes).
+
+#### Tests
+
+- 85 governor cargo tests pass (69 → 85): +16 new tests across event_bridge (SSE parser — single event, ping drop, comment skip, multi-data concat, truncated-event drop, malformed-JSON skip, run_once-single-open invariant, backoff ladder, source_agent round-trip), event_router (kind-template coverage of all 14 subscribed kinds, debounce per-kind, debounce window expiry, mute suppress + post-mute resume + mute extension, body truncation at 120 chars, source_agent prefix, host_exec_denied crit severity, worker `completed` filter), actions (env-var overrides for dashboard base + log path, MuteWindow duration mapping), and tray (P5 menu-id contract expanded 3 → 9, uniqueness check).
+
+#### Dependencies
+
+- Adds `tauri-plugin-notification 2` and `tauri-plugin-opener 2`. Both are official Tauri 2 plugins.
+
 ---
 
 ## v0.6 — Notifications fabric (in progress)

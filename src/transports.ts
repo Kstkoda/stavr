@@ -3,11 +3,21 @@ import type { Server as HttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createSwitchServer, getOrCreateTrustStore, getNotifier, getDigestScheduler, getOrCreateToolRegistry } from './server.js';
+import {
+  createSwitchServer,
+  getOrCreateTrustStore,
+  getNotifier,
+  getDigestScheduler,
+  getOrCreateToolRegistry,
+  getOrCreateCapabilityOverrideStore,
+  getOrCreateActorPermissionStore,
+} from './server.js';
 import { loadChannelStatuses } from './dashboard/data/channels.js';
 import { fetchToolsData } from './dashboard/data/tools-data.js';
 import { fetchWorkerCounters } from './dashboard/data/worker-counters.js';
 import { deriveLifecycleState } from './workers/lifecycle.js';
+import { fetchPermissionsData } from './dashboard/data/permissions-data.js';
+import { TIERS, type Tier } from './tools/categories.js';
 import type { Broker } from './broker.js';
 import type { StoredEvent } from './persistence.js';
 import { startupDecisionSweep } from './tools/decisions.js';
@@ -1158,7 +1168,85 @@ export function mountDashboardRoutes(
     return fetchToolsData(registry);
   }
 
-  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, toolkitData, mcpsData, toolsData, capabilitiesData, settingsData });
+  function permissionsData(): import('./dashboard/data/permissions-data.js').PermissionsData {
+    // v0.6.9 PR #2 — join the registry catalog with Layer 0 disables
+    // (`CapabilityOverrideStore`) and per-actor matrix
+    // (`ActorPermissionStore`) for the `/dashboard/permissions` page.
+    return fetchPermissionsData({
+      registry: getOrCreateToolRegistry(broker),
+      caps: getOrCreateCapabilityOverrideStore(broker),
+      perms: getOrCreateActorPermissionStore(broker),
+    });
+  }
+
+  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, toolkitData, mcpsData, toolsData, permissionsData, capabilitiesData, settingsData });
+
+  // v0.6.9 PR #2 — Permissions API endpoints. Operator-only path; the
+  // dashboard session is implicitly trusted via the existing
+  // /dashboard/* auth posture. MCP-tool writes to these tables are
+  // hard-NO per BOM hard rule #8 (never allow an MCP client to change
+  // permissions). All mutations record set_by and set_at; audit-event
+  // emission is deferred to PR #3 alongside the YAML mirror.
+
+  app.post('/dashboard/permissions/capability', (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const toolId = typeof body.tool_id === 'string' ? body.tool_id : '';
+    const mode = typeof body.mode === 'string' ? body.mode : '';
+    const reason = typeof body.reason === 'string' ? body.reason : undefined;
+    const setBy = typeof body.set_by === 'string' ? body.set_by : 'operator';
+    if (!toolId) {
+      res.status(400).json({ error: 'tool_id required' });
+      return;
+    }
+    const caps = getOrCreateCapabilityOverrideStore(broker);
+    if (mode === 'permanent') {
+      caps.disablePermanent(toolId, { reason, setBy });
+    } else if (mode === 'temporary') {
+      const untilMs = typeof body.until_ms === 'number' ? body.until_ms : NaN;
+      if (!Number.isFinite(untilMs)) {
+        res.status(400).json({ error: 'until_ms required when mode=temporary' });
+        return;
+      }
+      caps.disableTemporary(toolId, { untilMs, reason, setBy });
+    } else if (mode === 'enable') {
+      caps.enable(toolId, setBy);
+    } else {
+      res.status(400).json({ error: 'mode must be one of: permanent | temporary | enable' });
+      return;
+    }
+    res.json({ ok: true, tool_id: toolId, state: caps.get(toolId) ?? null });
+  });
+
+  app.delete('/dashboard/permissions/capability/:toolId', (req, res) => {
+    const caps = getOrCreateCapabilityOverrideStore(broker);
+    caps.enable(req.params.toolId, 'operator');
+    res.json({ ok: true, tool_id: req.params.toolId });
+  });
+
+  app.post('/dashboard/permissions/actor', (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const actorId = typeof body.actor_id === 'string' ? body.actor_id : '';
+    const toolId = typeof body.tool_id === 'string' ? body.tool_id : '';
+    const tier = typeof body.tier === 'string' ? (body.tier as Tier) : '' as Tier;
+    const setBy = typeof body.set_by === 'string' ? body.set_by : 'operator';
+    if (!actorId || !toolId) {
+      res.status(400).json({ error: 'actor_id + tool_id required' });
+      return;
+    }
+    if (!TIERS.includes(tier)) {
+      res.status(400).json({ error: 'tier must be one of: AUTO | CONFIRM | EXPLICIT | NO_GO' });
+      return;
+    }
+    const perms = getOrCreateActorPermissionStore(broker);
+    perms.set(actorId, toolId, tier, setBy);
+    res.json({ ok: true, actor_id: actorId, tool_id: toolId, tier });
+  });
+
+  app.delete('/dashboard/permissions/actor/:actorId/:toolId', (req, res) => {
+    const perms = getOrCreateActorPermissionStore(broker);
+    perms.reset(req.params.actorId, req.params.toolId);
+    res.json({ ok: true, actor_id: req.params.actorId, tool_id: req.params.toolId });
+  });
 
   // ---- C9 Settings endpoints ----
 

@@ -42,6 +42,12 @@ async function handleEvent(ev: StoredEvent, notifier: Notifier, opts: WiringOpts
     case 'decision_request':
       await emitDecisionRequired(ev, notifier, opts);
       break;
+    case 'trust_scope_proposed':
+      // v0.6.X bonus — operator sees scope proposals on the same channels
+      // as decisions. Without this, every cowork-claude / steward scope
+      // proposal forced the operator to open the dashboard.
+      await emitScopeProposed(ev, notifier, opts);
+      break;
     case 'trust_scope_revoked':
       await emitScopeEnded(ev, notifier, 'warn', 'Trust scope revoked');
       break;
@@ -50,6 +56,18 @@ async function handleEvent(ev: StoredEvent, notifier: Notifier, opts: WiringOpts
       break;
     case 'worker_terminated':
       await emitWorkComplete(ev, notifier, opts);
+      break;
+    case 'worker_dispatch_failed':
+      await emitWorkerDispatchFailed(ev, notifier, opts);
+      break;
+    case 'host_exec_denied':
+      await emitHostExecDenied(ev, notifier, opts);
+      break;
+    case 'cc_quota_warning':
+      await emitCcQuotaWarning(ev, notifier, opts);
+      break;
+    case 'worker_blocked_by_av':
+      await emitWorkerBlockedByAv(ev, notifier, opts);
       break;
     default:
       break;
@@ -143,6 +161,143 @@ async function emitWorkComplete(ev: StoredEvent, notifier: Notifier, opts: Wirin
     severity,
     title: `Worker ${p.reason}`,
     body: `Worker ${p.id} ${p.reason}`,
+    actions,
+    sourceEventId: ev.id,
+  });
+}
+
+// v0.6.X bonus — extended outbound coverage emitters.
+
+async function emitScopeProposed(ev: StoredEvent, notifier: Notifier, opts: WiringOpts): Promise<void> {
+  const p = ev.payload as { scope_id?: string; title?: string; description?: string };
+  if (!p?.scope_id) return;
+  const actions: NotificationAction[] = [
+    { label: 'Grant', action_id: 'scope:grant', kind: 'grant_scope', target_id: p.scope_id },
+    { label: 'Reject', action_id: 'scope:reject', kind: 'reject_scope', target_id: p.scope_id },
+  ];
+  if (opts.dashboardBaseUrl) {
+    actions.push({
+      label: 'Open dashboard',
+      action_id: 'open:dashboard',
+      kind: 'link',
+      url: `${opts.dashboardBaseUrl}/dashboard/topology?scope=${encodeURIComponent(p.scope_id)}`,
+    });
+  }
+  const body = p.description?.trim()
+    ? `${p.title ?? 'Trust scope'}: ${p.description}`
+    : (p.title ?? `Trust scope ${p.scope_id}`);
+  await notifier.notify({
+    kind: 'scope_proposed',
+    severity: 'warn',
+    title: 'Trust scope proposed',
+    body,
+    actions,
+    sourceEventId: ev.id,
+  });
+}
+
+async function emitHostExecDenied(ev: StoredEvent, notifier: Notifier, opts: WiringOpts): Promise<void> {
+  const p = ev.payload as { command?: string; reason?: string; actor?: string };
+  // Per BOM: no remediation button — just a link to the audit. Operator
+  // investigates from the dashboard if needed.
+  const actions: NotificationAction[] = [];
+  if (opts.dashboardBaseUrl) {
+    actions.push({
+      label: 'View audit',
+      action_id: 'open:audit',
+      kind: 'link',
+      url: `${opts.dashboardBaseUrl}/dashboard/streams?kind=host_exec_denied`,
+    });
+  }
+  const actor = p?.actor ? `[${p.actor}] ` : '';
+  const cmd = p?.command ? p.command.slice(0, 80) : 'unknown command';
+  const reason = p?.reason ? ` — ${p.reason}` : '';
+  await notifier.notify({
+    kind: 'host_exec_denied',
+    severity: 'warn',
+    title: 'host_exec blocked by policy',
+    body: `${actor}${cmd}${reason}`,
+    actions,
+    sourceEventId: ev.id,
+  });
+}
+
+async function emitWorkerDispatchFailed(ev: StoredEvent, notifier: Notifier, opts: WiringOpts): Promise<void> {
+  const p = ev.payload as { target_worker_id?: string; name?: string; reason?: string; detail?: string };
+  if (!p?.target_worker_id) return;
+  const actions: NotificationAction[] = [];
+  if (opts.dashboardBaseUrl) {
+    actions.push({
+      label: 'View logs',
+      action_id: 'open:logs',
+      kind: 'link',
+      url: `${opts.dashboardBaseUrl}/dashboard/workers/${encodeURIComponent(p.target_worker_id)}`,
+    });
+  }
+  const namePart = p.name ? `${p.name} (${p.target_worker_id})` : p.target_worker_id;
+  const reasonPart = p.reason ? `: ${p.reason}` : '';
+  const detailPart = p.detail ? ` — ${p.detail.slice(0, 80)}` : '';
+  await notifier.notify({
+    kind: 'worker_dispatch_failed',
+    severity: 'crit',
+    title: 'Worker dispatch failed',
+    body: `${namePart}${reasonPart}${detailPart}`,
+    actions,
+    sourceEventId: ev.id,
+  });
+}
+
+async function emitCcQuotaWarning(ev: StoredEvent, notifier: Notifier, opts: WiringOpts): Promise<void> {
+  const p = ev.payload as { percent?: number; remaining?: number; resets_at?: string; detail?: string };
+  const pct = typeof p?.percent === 'number' ? p.percent : 0;
+  const actions: NotificationAction[] = [];
+  if (opts.dashboardBaseUrl) {
+    actions.push({
+      label: 'View status',
+      action_id: 'open:status',
+      kind: 'link',
+      url: `${opts.dashboardBaseUrl}/dashboard/helm`,
+    });
+  }
+  const resetsPart = p?.resets_at ? ` · resets ${p.resets_at}` : '';
+  const remainingPart = typeof p?.remaining === 'number' ? ` · ${p.remaining} calls left` : '';
+  await notifier.notify({
+    kind: 'cc_quota_warning',
+    severity: pct >= 95 ? 'crit' : 'warn',
+    title: `CC quota at ${pct}%`,
+    body: `${p?.detail ?? 'Claude Code quota threshold hit'}${remainingPart}${resetsPart}`,
+    actions,
+    sourceEventId: ev.id,
+  });
+}
+
+async function emitWorkerBlockedByAv(ev: StoredEvent, notifier: Notifier, opts: WiringOpts): Promise<void> {
+  const p = ev.payload as {
+    worker_id?: string;
+    name?: string;
+    av_product_name?: string;
+    av_event_id?: number;
+    av_event_message?: string;
+    script_path?: string;
+  };
+  if (!p?.worker_id || !p?.av_product_name) return;
+  const actions: NotificationAction[] = [];
+  if (opts.dashboardBaseUrl && p.worker_id) {
+    actions.push({
+      label: 'View worker',
+      action_id: 'open:worker',
+      kind: 'link',
+      url: `${opts.dashboardBaseUrl}/dashboard/workers/${encodeURIComponent(p.worker_id)}`,
+    });
+  }
+  const workerLabel = p.name ? `${p.name} (${p.worker_id})` : p.worker_id;
+  const scriptHint = p.script_path ? ` Script: ${p.script_path}.` : '';
+  const reason = p.av_event_message ? ` AV reason: ${p.av_event_message}.` : '';
+  await notifier.notify({
+    kind: 'worker_dispatch_failed', // reuse the existing outbound channel kind
+    severity: 'warn',
+    title: 'stavR worker blocked by AV',
+    body: `Worker ${workerLabel} was killed by ${p.av_product_name}.${scriptHint}${reason} Inspect or whitelist via your AV console.`,
     actions,
     sourceEventId: ev.id,
   });

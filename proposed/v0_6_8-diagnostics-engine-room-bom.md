@@ -473,10 +473,11 @@ For GPU: detect at boot (`nvidia-smi -L`, `rocm-smi`, Apple Silicon `system_prof
 
 ---
 
-## P6 · Engine room layout — 9 sections (PR #3, 2.5h)
+## P6 · Engine room layout — 10 sections (PR #3, 3h)
 
 **Files**:
 - `src/dashboard/pages/diagnostics.ts` — full redesign
+- `src/dashboard/widgets/build-versions-section.ts` (new — Section 0)
 - `src/dashboard/widgets/host-vitals-section.ts` (new)
 - `src/dashboard/widgets/daemon-internals-section.ts`
 - `src/dashboard/widgets/mcp-traffic-section.ts`
@@ -486,6 +487,7 @@ For GPU: detect at boot (`nvidia-smi -L`, `rocm-smi`, Apple Silicon `system_prof
 - `src/dashboard/widgets/event-store-section.ts`
 - `src/dashboard/widgets/notifications-selfheal-section.ts`
 - `src/dashboard/widgets/connectivity-section.ts` (new — 9a clients + 9b peers + constellation view)
+- `src/dashboard/data/build-versions-data.ts` (new — fetcher that reads package.json, Cargo.toml, git SHA, build time)
 
 ### Layout
 
@@ -495,6 +497,14 @@ Iron palette compliance throughout. Density target: each section visible without
 ┌─────────────────────────────────────────────────────────────────┐
 │ Diagnostics · Engine Room                  [5m] [1h] [24h] [7d] │
 │ Top status: Backup ✓ · CI ✓ · Deploy ✓ · Retention ✓ · etc.    │
+├─────────────────────────────────────────────────────────────────┤
+│ 0. BUILD & VERSIONS                                             │
+│   stavR daemon: v0.6.5 · 1022fee · 4h uptime · Node 20.18.1     │
+│   Steward agent: v0.6.5 · online · last cycle 3m ago · Anthropic│
+│   Governor:     v0.6.5-rc1 · cosign-signed (sigstore) · running │
+│   MCP SDK:      v1.0.4   Rust toolchain: 1.83.0                 │
+│   Build: 2026-05-18T14:32Z by GitHub Actions (run #126)         │
+│   [Copy version string] [View on github] [Check for updates ▾]  │
 ├─────────────────────────────────────────────────────────────────┤
 │ 1. HOST VITALS                                                  │
 │   CPU% (chart) · RAM (gauge) · Disk (gauge per device)          │
@@ -540,16 +550,40 @@ Iron palette compliance throughout. Density target: each section visible without
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### Section 0 — Build & Versions (data sources)
+
+Data fetcher reads at daemon-init time (cached for the daemon's lifetime, refreshed on `pm2 restart`):
+
+- **stavR daemon version** — `package.json#version` (read at compile time via `import.meta.url` or build-time injection).
+- **Daemon git SHA** — set via `GIT_SHA` env var at build time (CI), or read from `.git/HEAD` + reflog at runtime if env unset. Truncate to 7 chars for display.
+- **Daemon uptime** — `process.uptime()` rendered with the same `formatUptime` helper Helm uses.
+- **Steward agent version + status** — query the steward subprocess via its existing health endpoint; show `online` / `offline` / `last cycle N ago`.
+- **Steward Model Runtime** — read from Steward's response (`anthropic` / `ollama` / `claude-code`).
+- **Governor version + signing status** — read from `governor/Cargo.toml#package.version`. Signing status comes from the daemon's "last seen Governor heartbeat" payload, which the Governor binary sends as part of its `/governor/heartbeat` POST (introduced in v0.6.5 PR #2). Status enum: `cosign-signed` / `dev-signed` / `unsigned` / `not-running`.
+- **Node.js runtime** — `process.version`.
+- **Rust toolchain** — only displayed if Governor reports it (Governor heartbeat carries `rustc --version` output).
+- **MCP SDK** — read from `node_modules/@modelcontextprotocol/sdk/package.json#version` at daemon-init.
+- **Build timestamp + workflow run** — set by CI via `BUILD_TIMESTAMP` + `GITHUB_RUN_NUMBER` env vars at build time; null in dev builds.
+
+[Copy version string] copies a single line suitable for bug reports: `stavR v0.6.5/1022fee · steward v0.6.5/anthropic · governor v0.6.5-rc1/signed · node v20.18.1 · build 2026-05-18T14:32Z (run #126)`.
+
+[View on github] opens `https://github.com/Kstkoda/stavr/commit/<git_sha>` in a new tab.
+
+[Check for updates ▾] fetches `https://api.github.com/repos/Kstkoda/stavr/releases/latest` and diffs against current version. Surfaces a non-blocking pill if a newer release exists. Operator opt-out: `STAVR_DISABLE_UPDATE_CHECK=1`.
+
 ### Acceptance
 
-- Page renders all 8 sections + live tail
+- Page renders all 10 sections (Section 0 + 1-9) + live tail
+- Section 0 reads daemon version, git SHA, Steward status, Governor status (or `not-running` if Governor isn't up), Node version, MCP SDK version
+- [Copy version string] copies the canonical bug-report line to clipboard
+- [Check for updates ▾] respects `STAVR_DISABLE_UPDATE_CHECK=1`
 - Iron palette compliance (halos for status, .glass panels)
 - Each section drill-down link to related page (e.g., Workers section → /dashboard/streams)
 - Empty states meaningful per Hard rule #7
-- 8+ tests passing (one per section)
+- 9+ tests passing (one per section including Section 0)
 
 ### Commit
-`feat(diagnostics): 8-section engine-room layout + drill-down links`
+`feat(diagnostics): 10-section engine-room layout (Section 0 Build & Versions + Sections 1-9) + drill-down links`
 
 ---
 

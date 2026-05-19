@@ -141,6 +141,37 @@ The bot token is a secret. Treat it like an API key:
 
 Telegram callback_data is 64 bytes max. The poller handles this by storing the full signed cid in DB and using a prefix lookup; the prefix itself isn't trusted as auth, the full HMAC verify still runs.
 
+### Operator directives (v0.6.X)
+
+The Telegram bot accepts free-text directives in addition to inline-button replies. Authentication is by chat_id match against `STAVR_NOTIFY_TELEGRAM_CHAT_ID` — only the configured operator can issue directives. Messages from any other chat are silently dropped (the bot's existence stays unconfirmable) and an audit event (`telegram_directive_rejected`) is logged.
+
+| Command | Effect | Audit event |
+|---|---|---|
+| `/steward <text>` | Steward picks up the directive on its next planning cycle | `operator_directive` |
+| `/scope <text>` | Steward proposes a trust scope; operator confirms via Grant/Reject buttons | `operator_scope_request` |
+| `/status` | Inline reply with daemon health + active worker count | (no event — read-only) |
+| `/ask <text>` | One-shot synchronous Q→A; Steward replies via Telegram | `operator_ask` |
+| anything else | Help text reply listing the four commands | (no event) |
+
+Group-chat tagging works: `/steward@stavr_kst_bot ...` parses the same as `/steward ...`. Replies confirm receipt with a short event id (`Directive received (id ab12cd34)…`) so the operator can correlate against the audit log.
+
+Rate limit: 30 directives per minute per chat_id, shared with the `/notify/reply` budget. Bursts get a `Rate limit hit. Try again in a minute.` reply and a `telegram_directive_rejected` audit event with `reason: rate_limit`.
+
+The poller is not yet auto-started by the daemon for directive mode — operators who want it call `new TelegramPoller({...broker, authorisedChatId, directiveRateLimiter})` from their wiring code. A follow-up PR adds `STAVR_NOTIFY_TELEGRAM_POLL=1` opt-in to the default startup.
+
+### Extended outbound coverage (v0.6.X bonus)
+
+The notification fabric now taps four additional event kinds:
+
+| Event kind | Notification kind | Severity | Inline actions |
+|---|---|---|---|
+| `trust_scope_proposed` | `scope_proposed` | `warn` | [Grant] [Reject] [Open dashboard] |
+| `host_exec_denied` | `host_exec_denied` | `warn` | [View audit] |
+| `worker_dispatch_failed` | `worker_dispatch_failed` | `crit` | [View logs] |
+| `cc_quota_warning` | `cc_quota_warning` | `warn` (`crit` at ≥95 %) | [View status] |
+
+[Grant] routes to `TrustStore.grant(scopeId, "notify:telegram")` — same audit shape as a dashboard click; emits `trust_scope_granted`. [Reject] revokes the proposed scope and emits a dedicated `trust_scope_rejected` event. Both honour the same `wrong_state` short-circuit if the scope isn't in `proposed` state any more (e.g. operator granted from the dashboard in the meantime).
+
 ---
 
 ## Daily digest

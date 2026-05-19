@@ -13,11 +13,13 @@ use std::time::{Duration, Instant};
 
 use tauri::{
     image::Image,
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{TrayIcon, TrayIconBuilder},
     AppHandle, Manager, Runtime,
 };
 
+use stavr_governor::actions::{self, MuteWindow};
+use stavr_governor::event_router::EventRouter;
 use stavr_governor::icons::{decode_png_rgba, IconVariant};
 use stavr_governor::state::{DaemonState, StateMachine};
 use stavr_governor::supervisor::Supervisor;
@@ -37,6 +39,28 @@ pub const MENU_ID_RESET_RESTART: &str = "reset_restart";
 /// Menu item id for the "Pause" action (operator transitions daemon to
 /// `StoppedManually`). Future work (v0.6.5 PR #2) wires the click handler.
 pub const MENU_ID_PAUSE: &str = "pause";
+
+// --- P5 (v0.6.5 PR #2) — operator action menu items -------------------------
+
+/// Menu item id for "Open Dashboard" — opens the dashboard helm page in
+/// the OS-default browser.
+pub const MENU_ID_OPEN_DASHBOARD: &str = "open_dashboard";
+
+/// Menu item id for "View Logs" — opens the daemon's PM2 log in the
+/// OS-default text-file handler.
+pub const MENU_ID_VIEW_LOGS: &str = "view_logs";
+
+/// Menu item id for "View Decide Queue" — opens /dashboard/decide.
+pub const MENU_ID_VIEW_DECIDE: &str = "view_decide";
+
+/// Menu item id for "Mute notifications · 1 h".
+pub const MENU_ID_MUTE_1H: &str = "mute_1h";
+
+/// Menu item id for "Mute notifications · 1 d".
+pub const MENU_ID_MUTE_1D: &str = "mute_1d";
+
+/// Menu item id for "Unmute notifications".
+pub const MENU_ID_UNMUTE: &str = "unmute";
 
 /// Build the Governor tray icon and attach it to the running Tauri app.
 ///
@@ -60,11 +84,11 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<TrayIcon<R>> {
     Ok(tray)
 }
 
-/// Tauri menu-event dispatcher. The Supervisor handle is fetched from
-/// Tauri's managed state — main.rs `app.manage(supervisor.clone())` makes
-/// it available here. Decoupling like this is what lets `build()` stay
-/// generic over `Runtime`; the supervisor reference is recovered at click
-/// time.
+/// Tauri menu-event dispatcher. The Supervisor and EventRouter handles are
+/// fetched from Tauri's managed state — main.rs `app.manage()` makes them
+/// available here. Decoupling like this is what lets `build()` stay
+/// generic over `Runtime`; the supervisor/router references are recovered
+/// at click time.
 pub fn handle_menu_event<R: Runtime>(
     app: &AppHandle<R>,
     event: tauri::menu::MenuEvent,
@@ -84,7 +108,7 @@ pub fn handle_menu_event<R: Runtime>(
                 }
             } else {
                 log::warn!(
-                    "tray: Reset & Restart clicked but Supervisor not in Tauri state — was app.manage() called in main.rs?"
+                    "tray: Restart Daemon clicked but Supervisor not in Tauri state — was app.manage() called in main.rs?"
                 );
             }
         }
@@ -94,32 +118,138 @@ pub fn handle_menu_event<R: Runtime>(
                 log::info!("tray: pause invoked (operator)");
             }
         }
+        // ----- P5 (v0.6.5 PR #2) — operator actions -----
+        MENU_ID_OPEN_DASHBOARD => {
+            actions::open_dashboard(app, "/dashboard/helm");
+        }
+        MENU_ID_VIEW_LOGS => {
+            actions::open_logs(app);
+        }
+        MENU_ID_VIEW_DECIDE => {
+            actions::open_dashboard(app, "/dashboard/decide");
+        }
+        MENU_ID_MUTE_1H => {
+            apply_mute(app, MuteWindow::OneHour);
+        }
+        MENU_ID_MUTE_1D => {
+            apply_mute(app, MuteWindow::OneDay);
+        }
+        MENU_ID_UNMUTE => {
+            if let Some(router) = app.try_state::<Arc<EventRouter>>() {
+                router.unmute();
+                log::info!("tray: unmuted (operator)");
+            } else {
+                log::warn!(
+                    "tray: Unmute clicked but EventRouter not in Tauri state — was app.manage() called in main.rs?"
+                );
+            }
+        }
         _ => {}
     }
 }
 
-/// Build the standard Governor tray menu. The order is operator-facing
-/// (most-used first): Reset & Restart → Pause → Quit. The "Reset & Restart"
-/// item is always visible but its semantics are only meaningful from GiveUp
-/// (where it clears the 5-in-5min counter and retries with orphan-kill).
+/// Apply a mute window to the EventRouter (if registered). The router holds
+/// its own clock so the "later of two ends wins" extension rule works even
+/// across overlapping clicks.
+fn apply_mute<R: Runtime>(app: &AppHandle<R>, window: MuteWindow) {
+    if let Some(router) = app.try_state::<Arc<EventRouter>>() {
+        let until = Instant::now() + window.as_duration();
+        router.mute_until(until);
+        log::info!("tray: muted via window {:?} (operator)", window);
+    } else {
+        log::warn!(
+            "tray: {:?} clicked but EventRouter not in Tauri state — was app.manage() called in main.rs?",
+            window
+        );
+    }
+}
+
+/// Build the standard Governor tray menu. Operator-facing ordering (P5 BOM):
+///
+/// ```text
+/// Open Dashboard
+/// View Logs
+/// View Decide Queue
+/// ───────────────
+/// Restart Daemon            (force_restart — also clears GiveUp counter)
+/// Pause supervision         (StoppedManually until operator restarts)
+/// ───────────────
+/// Mute notifications · 1 h
+/// Mute notifications · 1 d
+/// Unmute
+/// ───────────────
+/// Quit Governor
+/// ```
+///
+/// `MENU_ID_RESET_RESTART` keeps its id (for backwards-compat with the P3
+/// menu-id contract tests) but is rendered as "Restart Daemon" — the P5 BOM
+/// label. Its force_restart semantics still clear GiveUp.
 pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let reset_restart = MenuItem::with_id(
+    let open_dashboard = MenuItem::with_id(
+        app,
+        MENU_ID_OPEN_DASHBOARD,
+        "Open Dashboard",
+        true,
+        None::<&str>,
+    )?;
+    let view_logs = MenuItem::with_id(app, MENU_ID_VIEW_LOGS, "View Logs", true, None::<&str>)?;
+    let view_decide = MenuItem::with_id(
+        app,
+        MENU_ID_VIEW_DECIDE,
+        "View Decide Queue",
+        true,
+        None::<&str>,
+    )?;
+    let sep1 = PredefinedMenuItem::separator(app)?;
+    let restart = MenuItem::with_id(
         app,
         MENU_ID_RESET_RESTART,
-        "Reset & Restart",
+        "Restart Daemon",
         true,
         None::<&str>,
     )?;
     let pause = MenuItem::with_id(app, MENU_ID_PAUSE, "Pause supervision", true, None::<&str>)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
+    let mute_1h = MenuItem::with_id(app, MENU_ID_MUTE_1H, MuteWindow::OneHour.label(), true, None::<&str>)?;
+    let mute_1d = MenuItem::with_id(app, MENU_ID_MUTE_1D, MuteWindow::OneDay.label(), true, None::<&str>)?;
+    let unmute = MenuItem::with_id(app, MENU_ID_UNMUTE, "Unmute", true, None::<&str>)?;
+    let sep3 = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, MENU_ID_QUIT, "Quit Governor", true, None::<&str>)?;
-    Menu::with_items(app, &[&reset_restart, &pause, &quit])
+    Menu::with_items(
+        app,
+        &[
+            &open_dashboard,
+            &view_logs,
+            &view_decide,
+            &sep1,
+            &restart,
+            &pause,
+            &sep2,
+            &mute_1h,
+            &mute_1d,
+            &unmute,
+            &sep3,
+            &quit,
+        ],
+    )
 }
 
 /// The canonical set of menu-item ids the tray exposes. Used by tests to
 /// pin down the menu contract so a future refactor cannot silently drop
-/// "Reset & Restart" (which is the operator's only path out of GiveUp).
+/// items — particularly "Restart Daemon" (the operator's only path out of
+/// GiveUp) and the mute submenu (P5 operator-control surface).
 pub fn menu_ids() -> &'static [&'static str] {
-    &[MENU_ID_RESET_RESTART, MENU_ID_PAUSE, MENU_ID_QUIT]
+    &[
+        MENU_ID_OPEN_DASHBOARD,
+        MENU_ID_VIEW_LOGS,
+        MENU_ID_VIEW_DECIDE,
+        MENU_ID_RESET_RESTART,
+        MENU_ID_PAUSE,
+        MENU_ID_MUTE_1H,
+        MENU_ID_MUTE_1D,
+        MENU_ID_UNMUTE,
+        MENU_ID_QUIT,
+    ]
 }
 
 /// Decode an `IconVariant`'s 32px PNG into a Tauri `Image`. 32px is the
@@ -477,20 +607,52 @@ mod tests {
         assert_eq!(snap.settle_seconds_in, Some(10));
     }
 
-    /// Menu contract: the tray must offer Reset & Restart (so the operator
-    /// can exit GiveUp), Pause, and Quit. These ids are referenced by P3's
-    /// click handler wiring + by the operator's tray-menu mental model.
+    /// Menu contract (P5 expansion): the tray must offer the full operator-
+    /// action surface — Open Dashboard / View Logs / View Decide Queue /
+    /// Restart Daemon (operator's path out of GiveUp) / Pause / Mute 1h /
+    /// Mute 1d / Unmute / Quit. These ids are wire-level strings hung off
+    /// by the click handler in `handle_menu_event`.
     #[test]
-    fn menu_ids_expose_reset_restart_pause_and_quit() {
+    fn menu_ids_expose_full_operator_action_set() {
         let ids = menu_ids();
-        assert_eq!(ids.len(), 3);
-        assert!(ids.contains(&MENU_ID_RESET_RESTART));
-        assert!(ids.contains(&MENU_ID_PAUSE));
-        assert!(ids.contains(&MENU_ID_QUIT));
-        // Ids stable as wire-level strings — main.rs / future scripting hangs
-        // event handlers off them.
+        // P3 → P5 expansion: 3 ids became 9. New tests pinning means a
+        // future refactor cannot silently drop an action without breaking
+        // this assertion.
+        assert_eq!(ids.len(), 9, "expected 9 menu ids in P5, got {ids:?}");
+        for required in [
+            MENU_ID_OPEN_DASHBOARD,
+            MENU_ID_VIEW_LOGS,
+            MENU_ID_VIEW_DECIDE,
+            MENU_ID_RESET_RESTART,
+            MENU_ID_PAUSE,
+            MENU_ID_MUTE_1H,
+            MENU_ID_MUTE_1D,
+            MENU_ID_UNMUTE,
+            MENU_ID_QUIT,
+        ] {
+            assert!(ids.contains(&required), "menu_ids missing {required}");
+        }
+        // Ids stable as wire-level strings — main.rs / future scripting
+        // hangs event handlers off them.
+        assert_eq!(MENU_ID_OPEN_DASHBOARD, "open_dashboard");
+        assert_eq!(MENU_ID_VIEW_LOGS, "view_logs");
+        assert_eq!(MENU_ID_VIEW_DECIDE, "view_decide");
         assert_eq!(MENU_ID_RESET_RESTART, "reset_restart");
         assert_eq!(MENU_ID_PAUSE, "pause");
+        assert_eq!(MENU_ID_MUTE_1H, "mute_1h");
+        assert_eq!(MENU_ID_MUTE_1D, "mute_1d");
+        assert_eq!(MENU_ID_UNMUTE, "unmute");
         assert_eq!(MENU_ID_QUIT, "quit");
+    }
+
+    /// P5 — no duplicate ids slipped in. Tauri menu builds happily with two
+    /// items sharing an id, but the click handler can't disambiguate them.
+    #[test]
+    fn menu_ids_are_unique() {
+        let mut ids: Vec<&str> = menu_ids().to_vec();
+        ids.sort();
+        let n = ids.len();
+        ids.dedup();
+        assert_eq!(ids.len(), n, "menu ids must be unique; duplicates present");
     }
 }

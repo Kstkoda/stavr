@@ -27,9 +27,11 @@ export interface RouteOpts {
 export type RouteResult =
   | { ok: true; kind: 'decision'; outcome: 'responded' | 'late' | 'invalid'; decisionId: string; chosenOptionId: string }
   | { ok: true; kind: 'scope_extended'; scopeId: string }
+  | { ok: true; kind: 'scope_granted'; scopeId: string }
+  | { ok: true; kind: 'scope_rejected'; scopeId: string }
   | { ok: true; kind: 'ignore' }
   | { ok: true; kind: 'link' }
-  | { ok: false; error: 'unknown_action' | 'action_not_in_notification' | 'no_target' | 'downstream_failed' };
+  | { ok: false; error: 'unknown_action' | 'action_not_in_notification' | 'no_target' | 'downstream_failed' | 'wrong_state' };
 
 export class ReplyRouter {
   constructor(
@@ -56,10 +58,92 @@ export class ReplyRouter {
         return { ok: false, error: 'unknown_action' };
       case 'grant_extension':
         return this.routeScopeExtension(opts, action);
+      case 'grant_scope':
+        return this.routeScopeGrant(opts, action);
+      case 'reject_scope':
+        return this.routeScopeReject(opts, action);
       case 'link':
         return { ok: true, kind: 'link' };
       default:
         return { ok: false, error: 'unknown_action' };
+    }
+  }
+
+  // v0.6.X bonus — operator grants a proposed scope from out-of-band reply.
+  private async routeScopeGrant(opts: RouteOpts, action: NotificationAction): Promise<RouteResult> {
+    const scopeId = action.target_id;
+    if (!scopeId) return { ok: false, error: 'no_target' };
+    if (!this.trustStore) return { ok: false, error: 'downstream_failed' };
+    const existing = this.trustStore.get(scopeId);
+    if (!existing) return { ok: false, error: 'no_target' };
+    // The notification path uses the same TrustStore.grant() call the
+    // dashboard path uses — no notification-specific bypass. If the scope
+    // isn't `proposed` (already granted, revoked, expired), grant() is a
+    // no-op on status; signal that with wrong_state.
+    if (existing.status !== 'proposed') {
+      return { ok: false, error: 'wrong_state' };
+    }
+    try {
+      const granted = this.trustStore.grant(scopeId, `notify:${opts.source}`);
+      if (!granted) return { ok: false, error: 'downstream_failed' };
+      await this.broker.publish({
+        kind: 'trust_scope_granted',
+        at: new Date().toISOString(),
+        correlation_id: scopeId,
+        source_agent: `notify:${opts.source}`,
+        payload: {
+          scope_id: scopeId,
+          title: granted.title ?? '',
+          granted_by: `notify:${opts.source}`,
+          granted_at: granted.granted_at ?? new Date().toISOString(),
+          expires_at: granted.expires_at,
+        },
+      });
+      return { ok: true, kind: 'scope_granted', scopeId };
+    } catch (err) {
+      getLogger().warn('reply-router: scope grant failed', {
+        scope_id: scopeId,
+        error: (err as Error).message,
+      });
+      return { ok: false, error: 'downstream_failed' };
+    }
+  }
+
+  // v0.6.X bonus — operator rejects a proposed scope. There's no dedicated
+  // 'rejected' status in TrustStore today; we mark the row revoked and emit
+  // a dedicated `trust_scope_rejected` event for audit clarity.
+  private async routeScopeReject(opts: RouteOpts, action: NotificationAction): Promise<RouteResult> {
+    const scopeId = action.target_id;
+    if (!scopeId) return { ok: false, error: 'no_target' };
+    if (!this.trustStore) return { ok: false, error: 'downstream_failed' };
+    const existing = this.trustStore.get(scopeId);
+    if (!existing) return { ok: false, error: 'no_target' };
+    if (existing.status !== 'proposed') {
+      return { ok: false, error: 'wrong_state' };
+    }
+    try {
+      // Revoke transitions status → revoked, completing the lifecycle.
+      // The trust_scope_rejected event below is the operator-relevant
+      // audit; the trust_scope_revoked the underlying revoke() emits
+      // (if any) is purely technical.
+      this.trustStore.revoke(scopeId);
+      await this.broker.publish({
+        kind: 'trust_scope_rejected',
+        at: new Date().toISOString(),
+        correlation_id: scopeId,
+        source_agent: `notify:${opts.source}`,
+        payload: {
+          scope_id: scopeId,
+          rejected_by: `notify:${opts.source}`,
+        },
+      });
+      return { ok: true, kind: 'scope_rejected', scopeId };
+    } catch (err) {
+      getLogger().warn('reply-router: scope reject failed', {
+        scope_id: scopeId,
+        error: (err as Error).message,
+      });
+      return { ok: false, error: 'downstream_failed' };
     }
   }
 

@@ -9,11 +9,24 @@ export type NotificationKind =
   | 'scope_expiring'
   | 'health_alert'
   | 'work_complete'
-  | 'digest';
+  | 'digest'
+  // v0.6.X bonus — extended outbound coverage.
+  | 'scope_proposed'
+  | 'host_exec_denied'
+  | 'worker_dispatch_failed'
+  | 'cc_quota_warning';
 
 export type NotificationSeverity = 'info' | 'warn' | 'crit';
 
-export type NotificationActionKind = 'approve' | 'deny' | 'ignore' | 'link' | 'grant_extension';
+export type NotificationActionKind =
+  | 'approve'
+  | 'deny'
+  | 'ignore'
+  | 'link'
+  | 'grant_extension'
+  // v0.6.X bonus — out-of-band scope grant / reject from notification channels.
+  | 'grant_scope'
+  | 'reject_scope';
 
 export interface NotificationAction {
   /** Label shown on the button. */
