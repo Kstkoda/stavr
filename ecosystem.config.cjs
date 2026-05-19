@@ -41,11 +41,25 @@ module.exports = {
       env: {
         STAVR_DEBUG_ENABLED: "1",
       },
-      // Auto-restart with bounds: 3 restarts max, 30s gap. Past that, PM2
-      // stops respawning — gives a clear signal something's actually broken
-      // rather than masking it with infinite respawn loops.
-      max_restarts: 3,
+      // Auto-restart with bounds: 5 restarts max, 30s gap, exponential
+      // backoff past that. Past that, PM2 stops respawning — gives a
+      // clear signal something's actually broken rather than masking it
+      // with infinite respawn loops.
+      //
+      // v0.6.x fix — operator observed `tmp/pm2-stavr.err.log` filling
+      // with "daemon already running" / EADDRINUSE entries every ~30s
+      // even after the daemon had crashed dozens of times. Cause: PM2's
+      // default `min_uptime` is 1000ms, which a fast EADDRINUSE-exit
+      // satisfies, so the max_restarts counter never tripped. Raising
+      // min_uptime to 30000 means the process has to actually stay alive
+      // 30s before PM2 considers the restart "successful" and resets the
+      // counter — fast crashes accumulate properly. Add
+      // exp_backoff_restart_delay so consecutive fast failures back off
+      // instead of slamming the port.
+      max_restarts: 5,
+      min_uptime: 30000,
       restart_delay: 30000,
+      exp_backoff_restart_delay: 5000,
       // Don't auto-restart on clean exit (graceful shutdown is intentional).
       autorestart: true,
       // Send SIGTERM and wait this long for graceful shutdown before SIGKILL.
@@ -75,8 +89,10 @@ module.exports = {
       // events; if it climbs near the cap that's a planner-context retention
       // bug worth paging on rather than masking.
       node_args: ['--max-old-space-size=2048'],
-      max_restarts: 3,
+      max_restarts: 5,
+      min_uptime: 30000,
       restart_delay: 30000,
+      exp_backoff_restart_delay: 5000,
       autorestart: true,
       kill_timeout: 10000,
       max_memory_restart: '2000M',
