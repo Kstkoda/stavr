@@ -39,6 +39,8 @@ import {
 } from './observability/metrics.js';
 import { logContext } from './observability/logger.js';
 import { mountDebugEndpoints } from './observability/debug-endpoints.js';
+import { mountWebAuthnRoutes } from './security/webauthn-routes.js';
+import { getOrCreateIdentityStore, getOrCreateWebAuthnCoordinator } from './server.js';
 import { attachMcpAttributes } from './observability/spans.js';
 import { recordPerf, perfSnapshot } from './observability/perf-metrics.js';
 import { getV02Subsystem } from './steward/v02-wiring.js';
@@ -823,6 +825,14 @@ export async function mountTransports(
       version,
       sseSessions,
       ollamaModels: () => ollamaModelsCache,
+    });
+
+    // v0.7 Phase 1 — operator passkey ceremony endpoints under /api/auth/*.
+    // The coordinator and identity store are broker-scoped, so re-fetching
+    // them per-request is essentially free.
+    mountWebAuthnRoutes(app, {
+      getCoordinator: () => getOrCreateWebAuthnCoordinator(broker),
+      getIdentityStore: () => getOrCreateIdentityStore(broker),
     });
 
     // bom-oom-leak-hunt C2.4 — periodic SSE session janitor. Every 5 min,

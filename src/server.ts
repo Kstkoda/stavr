@@ -27,6 +27,8 @@ import { getV02Subsystem } from './steward/v02-wiring.js';
 import { registerHostExecTool } from './security/host-exec-tool.js';
 import { ActorPermissionStore } from './security/actor-permissions.js';
 import { CapabilityOverrideStore } from './security/capability-overrides.js';
+import { IdentityStore } from './security/identity-store.js';
+import { WebAuthnCoordinator } from './security/webauthn.js';
 import { ToolRegistry, wrapServerForRegistry } from './tools/registry.js';
 import { Notifier } from './notify/notifier.js';
 import { NtfyChannel } from './notify/channels/ntfy.js';
@@ -77,6 +79,8 @@ export function getToolRegistry(broker: Broker): ToolRegistry | undefined {
 
 const capabilityOverrideStoresByBroker = new WeakMap<Broker, CapabilityOverrideStore>();
 const actorPermissionStoresByBroker = new WeakMap<Broker, ActorPermissionStore>();
+const identityStoresByBroker = new WeakMap<Broker, IdentityStore>();
+const webauthnCoordsByBroker = new WeakMap<Broker, WebAuthnCoordinator>();
 
 /**
  * Layer 0 capability override store — operator-runtime hard gate
@@ -100,6 +104,28 @@ export function getOrCreateActorPermissionStore(broker: Broker): ActorPermission
   const store = new ActorPermissionStore(broker.store.rawDb);
   actorPermissionStoresByBroker.set(broker, store);
   return store;
+}
+
+/**
+ * Operator identity store + WebAuthn coordinator (v0.7 Phase 1, ADR-042
+ * §Decision 3 v0.7). One pair per broker; the IdentityStore backs the
+ * `operator_credentials` + `tier3_assertions` tables, and the
+ * WebAuthnCoordinator owns the in-memory pending-challenge registry.
+ */
+export function getOrCreateIdentityStore(broker: Broker): IdentityStore {
+  const existing = identityStoresByBroker.get(broker);
+  if (existing) return existing;
+  const store = new IdentityStore(broker.store.rawDb);
+  identityStoresByBroker.set(broker, store);
+  return store;
+}
+
+export function getOrCreateWebAuthnCoordinator(broker: Broker): WebAuthnCoordinator {
+  const existing = webauthnCoordsByBroker.get(broker);
+  if (existing) return existing;
+  const coord = new WebAuthnCoordinator(getOrCreateIdentityStore(broker));
+  webauthnCoordsByBroker.set(broker, coord);
+  return coord;
 }
 
 function getOrCreateOrchestrator(broker: Broker, trustStore: TrustStore): WorkerOrchestrator {
