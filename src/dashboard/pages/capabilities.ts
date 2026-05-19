@@ -88,9 +88,6 @@ function renderSlot(tag: CapabilityTag, profile: ProfileConfig): string {
   const fallback = models.slice(1, 3);
   return [
     `<div class="cap-slot" data-tag="${escapeHtml(tag)}" data-tier="${tier}">`,
-    `<div class="cap-slot-studs">`,
-    `<span class="stud"></span><span class="stud"></span><span class="stud"></span><span class="stud"></span>`,
-    `</div>`,
     `<div class="cap-slot-body">`,
     `<div class="cap-tag">${escapeHtml(CAPABILITY_LABEL[tag])}</div>`,
     `<div class="cap-model">${escapeHtml(shortModel(top))}</div>`,
@@ -210,23 +207,6 @@ const CAP_CSS = `
 .cap-slot[data-tier="haiku"]  { border-color: var(--accent-ai-internal); }
 .cap-slot[data-tier="other"]  { border-color: var(--border-strong); }
 .cap-slot:hover { transform: translateY(-2px); }
-.cap-slot-studs {
-  display: flex;
-  gap: 6px;
-  position: absolute;
-  top: -8px;
-  left: 14px;
-}
-.cap-slot-studs .stud {
-  width: 14px;
-  height: 8px;
-  border-radius: 3px 3px 0 0;
-  background: inherit;
-}
-.cap-slot[data-tier="opus"]   .cap-slot-studs .stud { background: var(--accent-ai-external); }
-.cap-slot[data-tier="sonnet"] .cap-slot-studs .stud { background: var(--accent-mcp); }
-.cap-slot[data-tier="haiku"]  .cap-slot-studs .stud { background: var(--accent-ai-internal); }
-.cap-slot[data-tier="other"]  .cap-slot-studs .stud { background: var(--border-strong); }
 .cap-slot-body { display: flex; flex-direction: column; gap: 6px; }
 .cap-tag {
   font-size: 11px;
@@ -325,9 +305,6 @@ const CAP_JS = `
         '<div class="cap-fallback">→ ' + fallback.map(function(m) { return escapeHtml(shortModel(m)); }).join(' · ') + '</div>';
       return ''
         + '<div class="cap-slot" data-tag="' + escapeHtml(tag) + '" data-tier="' + tier + '">'
-        +   '<div class="cap-slot-studs">'
-        +     '<span class="stud"></span><span class="stud"></span><span class="stud"></span><span class="stud"></span>'
-        +   '</div>'
         +   '<div class="cap-slot-body">'
         +     '<div class="cap-tag">' + escapeHtml(LABELS[tag] || tag) + '</div>'
         +     '<div class="cap-model">' + escapeHtml(shortModel(top)) + '</div>'
@@ -489,7 +466,7 @@ const CAP_V8_CSS = `
   font-family: inherit;
   font-size: 11px;
 }
-.cm-pick:hover { border-color: var(--rust); color: var(--rust-soft); }
+.cm-pick:hover { border-color: var(--rust); }
 .cm-cell[data-tier="opus"]   .cm-pick { border-left: 3px solid var(--accent-ai-external); }
 .cm-cell[data-tier="sonnet"] .cm-pick { border-left: 3px solid var(--accent-mcp); }
 .cm-cell[data-tier="haiku"]  .cm-pick { border-left: 3px solid var(--accent-ai-internal); }
