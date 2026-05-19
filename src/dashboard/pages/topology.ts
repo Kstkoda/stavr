@@ -475,9 +475,15 @@ function renderPaletteDoor(): string {
   // with a "v0.7" badge but never delivered functionality; hiding them
   // until v0.7 actually ships those affordances. Reset stays — it's
   // operator-facing and works.
+  //
+  // v0.6.11 Phase 6b (UX audit TO6) — a single accessible label.
+  // Previously the button had both `title="Reset layout"` AND inner
+  // `<span class="tip">reset layout</span>`, which produced a duplicate
+  // accessible name in the a11y tree. The visible tip stays; the title
+  // is dropped, and aria-label aligns with the visible text.
   return [
     `<div class="palette-door">`,
-    `<button type="button" data-role="topo-reset" title="Reset layout">↺<span class="tip">reset layout</span></button>`,
+    `<button type="button" data-role="topo-reset" aria-label="reset layout">↺<span class="tip" aria-hidden="true">reset layout</span></button>`,
     `</div>`,
   ].join('');
 }
@@ -620,6 +626,53 @@ const TOPOLOGY_CSS = `
   min-width: 200px;
 }
 .topo-strip .search-stub .kbd { color: var(--ink-3); font-size: 10px; margin-left: auto; }
+
+/* v0.6.11 Phase 6b — '/' search overlay */
+.topo-search-overlay {
+  position: fixed;
+  top: 86px; left: 50%;
+  transform: translateX(-50%) scale(0.96);
+  width: min(560px, 80vw);
+  background: var(--bg-popover, rgba(20, 22, 31, 0.92));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  z-index: 200;
+  display: none;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(20px);
+}
+.topo-search-overlay[data-open="true"] { display: block; transform: translateX(-50%) scale(1); }
+.topo-search-input {
+  width: 100%;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--ink-0);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.topo-search-input:focus { outline: 1px solid var(--rust, #b8542a); border-color: var(--rust, #b8542a); }
+.topo-search-matches {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-top: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.topo-search-hit {
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-1);
+  cursor: pointer;
+}
+.topo-search-hit:hover { background: rgba(255,255,255,0.05); border-color: var(--line-2); }
+.gnode.search-dim { opacity: 0.18; filter: saturate(0.4); transition: opacity 0.12s ease; }
 
 /* layout grid */
 .topo-frame {
@@ -1311,6 +1364,82 @@ const TOPOLOGY_JS = `
       openDrawerFor(el);
     }
   }
+
+  // ---------- v0.6.11 Phase 6b — '/' shortcut → node-id search overlay
+  // Audit TO5: Ctrl+K collides with the browser omnibox; rebound to '/'
+  // (GitHub style). Pressing '/' (when no input is focused) opens a small
+  // in-canvas search overlay that filters .gnode by data-id substring.
+  // Esc closes; Enter opens the drawer for the top match.
+  (function bindSearchShortcut() {
+    const stub = document.querySelector('[data-role="topo-search-shortcut"]');
+    if (!stub) return;
+    let overlay = null;
+    function ensureOverlay() {
+      if (overlay) return overlay;
+      overlay = document.createElement('div');
+      overlay.className = 'topo-search-overlay';
+      overlay.setAttribute('data-role', 'topo-search-overlay');
+      overlay.innerHTML =
+        '<input type="search" class="topo-search-input" placeholder="search nodes by id…" autocomplete="off" />'
+        + '<div class="topo-search-matches" data-role="topo-search-matches"></div>';
+      document.body.appendChild(overlay);
+      const input = overlay.querySelector('input');
+      const matches = overlay.querySelector('[data-role="topo-search-matches"]');
+      function recompute() {
+        const q = (input.value || '').trim().toLowerCase();
+        const nodes = Array.from(canvas.querySelectorAll('.gnode[data-id]'));
+        const hits = q ? nodes.filter(function(n) {
+          return (n.getAttribute('data-id') || '').toLowerCase().indexOf(q) >= 0
+            || ((n.querySelector('.node-label') && n.querySelector('.node-label').textContent || '').toLowerCase().indexOf(q) >= 0);
+        }) : [];
+        nodes.forEach(function(n) { n.classList.toggle('search-dim', !!q && hits.indexOf(n) < 0); });
+        matches.innerHTML = hits.slice(0, 10).map(function(n) {
+          return '<button type="button" class="topo-search-hit" data-id="' + (n.getAttribute('data-id') || '') + '">'
+            + (n.getAttribute('data-id') || '').replace(/</g,'&lt;') + '</button>';
+        }).join('');
+      }
+      input.addEventListener('input', recompute);
+      input.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Escape') { close(); return; }
+        if (ev.key === 'Enter') {
+          const first = matches.querySelector('.topo-search-hit');
+          if (first) first.click();
+        }
+      });
+      matches.addEventListener('click', function(ev) {
+        const btn = ev.target && ev.target.closest && ev.target.closest('.topo-search-hit');
+        if (!btn) return;
+        const id = btn.getAttribute('data-id');
+        const node = canvas.querySelector('[data-id="' + (id || '').replace(/"/g, '\\\\"') + '"]');
+        if (node) {
+          node.scrollIntoView({ block: 'center' });
+          openDrawerFor(node);
+        }
+        close();
+      });
+      return overlay;
+    }
+    function open() { ensureOverlay(); overlay.setAttribute('data-open', 'true'); overlay.querySelector('input').focus(); }
+    function close() {
+      if (!overlay) return;
+      overlay.removeAttribute('data-open');
+      Array.from(canvas.querySelectorAll('.gnode.search-dim')).forEach(function(n) { n.classList.remove('search-dim'); });
+    }
+    document.addEventListener('keydown', function(ev) {
+      const tgt = ev.target;
+      const tag = tgt && tgt.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (tgt && tgt.isContentEditable)) return;
+      if (ev.key === '/' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        ev.preventDefault();
+        open();
+      } else if (ev.key === 'Escape' && overlay && overlay.getAttribute('data-open') === 'true') {
+        close();
+      }
+    });
+    stub.addEventListener('click', open);
+    stub.setAttribute('role', 'button');
+    stub.style.cursor = 'pointer';
+  })();
 })();
 `;
 
