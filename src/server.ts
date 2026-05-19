@@ -31,6 +31,7 @@ import { IdentityStore } from './security/identity-store.js';
 import { WebAuthnCoordinator } from './security/webauthn.js';
 import { createFederation, type FederationSubsystem } from './federation/index.js';
 import { attachFederationReporter } from './federation/reporter.js';
+import { STAVR_MCP_ICONS, STAVR_MCP_DESCRIPTION, STAVR_WEBSITE_URL } from './dashboard/components/stavr-icon.js';
 import { ToolRegistry, wrapServerForRegistry } from './tools/registry.js';
 import { Notifier } from './notify/notifier.js';
 import { NtfyChannel } from './notify/channels/ntfy.js';
@@ -244,7 +245,17 @@ export function getDigestScheduler(broker: Broker): DigestScheduler | undefined 
 
 export function createSwitchServer(broker: Broker): SwitchServerHandle {
   const sessionId = newSessionId();
-  const server = new McpServer({ name: 'stavr', version: '0.1.0' });
+  // v0.7 Phase 8 — advertise the Raido rune icon + description + website
+  // so MCP clients (Cowork, Claude Code connector sidebar, etc.) render
+  // the stavR brand instead of a generic placeholder. icons / description
+  // / websiteUrl are part of the MCP Implementation schema (SDK 1.x).
+  const server = new McpServer({
+    name: 'stavr',
+    version: '0.1.0',
+    description: STAVR_MCP_DESCRIPTION,
+    websiteUrl: STAVR_WEBSITE_URL,
+    icons: STAVR_MCP_ICONS,
+  });
   broker.registerSession(sessionId, server);
 
   // v0.6.9 PR #1 — observe every registerTool call into the broker's
