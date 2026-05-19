@@ -30,6 +30,7 @@ import { CapabilityOverrideStore } from './security/capability-overrides.js';
 import { IdentityStore } from './security/identity-store.js';
 import { WebAuthnCoordinator } from './security/webauthn.js';
 import { createFederation, type FederationSubsystem } from './federation/index.js';
+import { attachFederationReporter } from './federation/reporter.js';
 import { ToolRegistry, wrapServerForRegistry } from './tools/registry.js';
 import { Notifier } from './notify/notifier.js';
 import { NtfyChannel } from './notify/channels/ntfy.js';
@@ -139,6 +140,10 @@ export function getOrCreateFederation(broker: Broker): FederationSubsystem {
   const existing = federationByBroker.get(broker);
   if (existing) return existing;
   const fed = createFederation();
+  // v0.7 Phase 3 — wire registry changes onto the broker as peer_joined /
+  // peer_left events so dashboard subscribers see the same fact pattern
+  // they see for everything else.
+  attachFederationReporter(fed.registry, broker);
   federationByBroker.set(broker, fed);
   return fed;
 }
