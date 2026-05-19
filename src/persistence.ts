@@ -557,6 +557,57 @@ export class EventStore {
       );
       CREATE INDEX IF NOT EXISTS idx_actor_permissions_actor ON actor_permissions(actor_id);
       CREATE INDEX IF NOT EXISTS idx_actor_permissions_tool ON actor_permissions(tool_id);
+
+      -- v0.7 Phase 1 — operator passkey credentials (WebAuthn / FIDO2).
+      -- One row per registered authenticator. credential_id is the raw
+      -- bytes the authenticator returns; we store the base64url form so it
+      -- joins naturally with browser-side assertions.
+      --
+      -- public_key is the COSE-encoded public key (raw bytes per the
+      -- WebAuthn spec). counter is the authenticator's signature counter
+      -- (used to detect cloned/replayed authenticators). transports is a
+      -- JSON array of the transports the browser reported at registration
+      -- ('usb' | 'ble' | 'nfc' | 'internal' | 'hybrid') — purely advisory
+      -- on subsequent assertion ceremonies.
+      --
+      -- Per ADR-042 §Decision 3 v0.7 (Option A), the passkey IS the
+      -- operator's root identity. v1.0 (Option B) layers BIP32-Ed25519
+      -- federation key derivation on top; this row remains the root.
+      CREATE TABLE IF NOT EXISTS operator_credentials (
+        credential_id     TEXT PRIMARY KEY,
+        operator_id       TEXT NOT NULL,
+        public_key        BLOB NOT NULL,
+        counter           INTEGER NOT NULL DEFAULT 0,
+        transports        TEXT NOT NULL DEFAULT '[]',
+        device_label      TEXT,
+        registered_at     INTEGER NOT NULL,
+        last_used_at      INTEGER,
+        revoked_at        INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_operator_credentials_operator ON operator_credentials(operator_id);
+
+      -- v0.7 Phase 1 — recent Tier 3 EXPLICIT assertions. A successful
+      -- WebAuthn assertion writes one row; gates that need "within 60s"
+      -- presence check most-recent vs now-window. Cleanup is by
+      -- created_at TTL (a sweeper drops rows older than 1 hour — well
+      -- past any reasonable assertion-window).
+      --
+      -- correlation_id, when set, scopes the assertion to a specific
+      -- decision: gates that require "fresh re-auth for THIS action" can
+      -- check the cid match, while general-purpose 60s windows ignore it.
+      CREATE TABLE IF NOT EXISTS tier3_assertions (
+        id                TEXT PRIMARY KEY,
+        operator_id       TEXT NOT NULL,
+        credential_id     TEXT NOT NULL,
+        correlation_id    TEXT,
+        scope_label       TEXT,
+        created_at        INTEGER NOT NULL,
+        expires_at        INTEGER NOT NULL,
+        FOREIGN KEY (credential_id) REFERENCES operator_credentials(credential_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_tier3_assertions_operator ON tier3_assertions(operator_id);
+      CREATE INDEX IF NOT EXISTS idx_tier3_assertions_created ON tier3_assertions(created_at);
+      CREATE INDEX IF NOT EXISTS idx_tier3_assertions_correlation ON tier3_assertions(correlation_id);
     `);
 
     // Seed no-go defaults (idempotent via INSERT OR IGNORE).
