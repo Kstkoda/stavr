@@ -39,6 +39,9 @@ tmp/heap-snapshots/*
 tmp/diag-reports/*
 !tmp/diag-reports/.gitkeep
 
+# v0.7 Phase 10a — peer-smoke regenerates these per run
+tmp/perf/peer-smoke-artifacts/
+
 # Repo-root heap snapshots (Node --heapsnapshot-near-heap-limit drops them here)
 *.heapsnapshot
 
