@@ -1,6 +1,7 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import type { Server as HttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
@@ -39,6 +40,7 @@ import {
 import { logContext } from './observability/logger.js';
 import { mountDebugEndpoints } from './observability/debug-endpoints.js';
 import { attachMcpAttributes } from './observability/spans.js';
+import { recordPerf, perfSnapshot } from './observability/perf-metrics.js';
 import { getV02Subsystem } from './steward/v02-wiring.js';
 import { computeUsage, fetchAnthropicBalance, type ComputeUsageOpts } from './usage.js';
 import {
@@ -208,12 +210,19 @@ export async function mountTransports(
     // Route labels are normalized (see `normalizeRoute`) to keep cardinality
     // bounded; /metrics itself is excluded so a scrape doesn't pollute the
     // histogram of its own metric.
+    //
+    // v0.6.11 Phase 3 — same hook also feeds the lightweight in-memory perf
+    // reservoir used by /dashboard/api/perf + the perf_sample event.
     app.use((req: Request, res: Response, next: NextFunction) => {
       if (req.path === '/metrics') return next();
       const endTimer = stavrHttpRequestDuration.startTimer({ method: req.method });
       const route = normalizeRoute(req.path);
+      const t0 = performance.now();
       res.on('finish', () => {
         endTimer({ route, status: String(res.statusCode) });
+        try {
+          recordPerf(`http:${req.method} ${route}`, performance.now() - t0, res.statusCode < 500);
+        } catch { /* metrics never fail the request */ }
       });
       next();
     });
@@ -419,6 +428,18 @@ export async function mountTransports(
           rss_threshold_mb: Number.parseInt(process.env.STAVR_RSS_WATCHDOG_MB ?? '4000', 10) || 4000,
         },
       });
+    });
+
+    // v0.6.11 Phase 3 — per-endpoint perf snapshot (HTTP routes + MCP
+    // methods + SSE broadcast). Same lifecycle + access posture as
+    // /dashboard/api/diagnostics/memory: loopback-only, read-only, JSON.
+    // Consumed by the Phase 4 diagnostics panel.
+    app.get('/dashboard/api/perf', (_req: Request, res: Response) => {
+      try {
+        res.json(perfSnapshot());
+      } catch (err) {
+        res.status(500).json({ ok: false, error: (err as Error).message });
+      }
     });
 
     // bom-diagnostics-2026 C3 — on-demand diagnostic endpoints

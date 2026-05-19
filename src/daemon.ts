@@ -29,6 +29,7 @@ import { start as startWorkerWatchdog } from './workers/watchdog.js';
 import { loadConfig } from './config.js';
 import { wireV02Subsystem, type V02SubsystemHandle } from './steward/v02-wiring.js';
 import { startMemoryPoller, type MemoryPollerStop } from './observability/memory-poller.js';
+import { startPerfPoller, type PerfPollerStop } from './observability/perf-poller.js';
 import { startRssWatchdog, type RssWatchdogStop } from './observability/rss-watchdog.js';
 import { resolveRetentionOpts } from './observability/retention.js';
 import { startOtel, type StartedOtel } from './observability/otel.js';
@@ -314,6 +315,19 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
+  // v0.6.11 Phase 3 — emit perf_sample every 60s carrying per-endpoint
+  // p50/p95/p99 latency snapshots from the reservoir in
+  // src/observability/perf-metrics.ts. Consumed by the diagnostics perf
+  // panel (Phase 4) + the load-runner regression harness.
+  let perfPollerStop: PerfPollerStop | undefined;
+  try {
+    perfPollerStop = startPerfPoller(broker);
+  } catch (err) {
+    logger.error('failed to start perf poller; daemon continues without it', {
+      error: (err as Error).message,
+    });
+  }
+
   // v0.6.x memory-leak fix Phase 3 — belt-and-braces RSS watchdog. PM2's
   // max_memory_restart can miss the window when the event loop is stalled by
   // a GC death spiral; this in-process check fires a heap snapshot + event
@@ -438,6 +452,9 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     workerWatchdog.stop();
     if (memoryPollerStop) {
       try { memoryPollerStop(); } catch { /* best effort */ }
+    }
+    if (perfPollerStop) {
+      try { perfPollerStop(); } catch { /* best effort */ }
     }
     if (rssWatchdogStop) {
       try { rssWatchdogStop(); } catch { /* best effort */ }
