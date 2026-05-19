@@ -1,0 +1,1 @@
+{"at":"2026-05-19T11:41:32.443Z","endpoints":{"http:GET /dashboard*":{"count":21603,"errors":0,"error_rate":0,"p50_ms":0.35,"p95_ms":1.63,"p99_ms":2.93,"avg_ms":0.51,"max_ms":7.6,"window_n":1024},"http:POST /mcp":{"count":25743,"errors":0,"error_rate":0,"p50_ms":0.18,"p95_ms":0.28,"p99_ms":0.42,"avg_ms":0.19,"max_ms":1.33,"window_n":1024}}}

@@ -1,0 +1,1 @@
+{"ok":true,"at":"2026-05-19T11:41:32.496Z","process":{"rss":102424576,"heap_total":49143808,"heap_used":40308608,"external":4335630,"array_buffers":221808,"uptime_seconds":5453},"db":{"page_count":134,"page_size":4096,"bytes":548864,"event_count":364},"broker":{"session_count":0,"subscription_count":0,"sse_sessions":0},"watchdog":{"rss_threshold_mb":4000}}
