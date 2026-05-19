@@ -137,6 +137,38 @@ export async function mountTransports(
   const sseSessions = new Map<string, McpSession>();
   const refreshSseGauge = (): void => setSseSessionsGauge(sseSessions.size);
   refreshSseGauge();
+
+  // v0.6.x memory-leak fix — visibility for the stateless-/mcp cleanup path
+  // (when an incoming POST never adopts a session id). We flush an aggregated
+  // `mcp_oneshot_cleanup` event at most once per 60s so the operator can see
+  // the path is exercised, without spamming the event log when Cowork polls.
+  const oneshotCleanup = (() => {
+    let count = 0;
+    let lastFlushMs = 0;
+    return {
+      tick(): void {
+        count++;
+        const now = Date.now();
+        if (now - lastFlushMs < 60_000) return;
+        const flushed = count;
+        count = 0;
+        lastFlushMs = now;
+        void broker
+          .publish({
+            kind: 'mcp_oneshot_cleanup',
+            at: new Date(now).toISOString(),
+            source_agent: 'stavr-daemon',
+            payload: {
+              count_since_last_flush: flushed,
+              broker_session_count: broker.sessionCount(),
+            },
+          })
+          .catch(() => {
+            /* persistence-failed; broker.publish already logs */
+          });
+      },
+    };
+  })();
   // Always create the registry — `pair --bootstrap` may run in this same
   // process even when HTTP isn't mounted (rare, but the shape is uniform).
   const pairingRegistry = opts.pairingRegistry ?? new PendingPairingRegistry();
@@ -470,6 +502,30 @@ export async function mountTransports(
           res.status(400).json({ ok: false, error: 'Mcp-Session-Id header required for non-POST requests' });
           return;
         }
+        // v0.6.x memory-leak fix — reject non-`initialize` POSTs without a
+        // session id BEFORE building an McpServer. With
+        // `sessionIdGenerator: () => randomUUID()` we operate in MCP stateful
+        // mode; the only valid first POST is `initialize`. Cowork's
+        // tools/list-without-init polling was creating a fresh McpServer
+        // per request just to have the SDK reject it with 400, which the
+        // operator observed as ~36 MB/min heap growth. See
+        // proposed/v0_6_x-memory-leak-findings.md.
+        const rpcMethod = typeof body.method === 'string' ? body.method : undefined;
+        if (rpcMethod !== 'initialize') {
+          res
+            .status(400)
+            .json({
+              jsonrpc: '2.0',
+              error: {
+                code: -32600,
+                message:
+                  'Mcp-Session-Id header required for non-initialize methods (server is in stateful mode)',
+              },
+              id: (req.body as { id?: unknown } | undefined)?.id ?? null,
+            });
+          oneshotCleanup.tick();
+          return;
+        }
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
         });
@@ -558,6 +614,22 @@ export async function mountTransports(
           .catch(() => {
             /* persistence-failed; broker.publish already logs */
           });
+      } else if (isNew) {
+        // v0.6.x memory-leak fix — stateless one-shot (no initialize) or
+        // SDK-rejected request: the transport never adopted a session id,
+        // so it's not in sseSessions and `transport.onclose` will never
+        // fire. We must release the per-request McpServer + transport
+        // explicitly or broker.subscribers retains the entire object
+        // graph (and the connected transport with its internal Maps)
+        // forever. See proposed/v0_6_x-memory-leak-findings.md.
+        broker.removeSession(session.handle.sessionId);
+        try {
+          await session.transport.close?.();
+        } catch {
+          /* socket likely already gone */
+        }
+        refreshSseGauge();
+        oneshotCleanup.tick();
       }
     });
 
