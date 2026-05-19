@@ -120,6 +120,25 @@ describe('Streams page — unit', () => {
     }));
     expect(html).toContain(`data-last-at="${startedAt}"`);
   });
+
+  it('v0.6.10 Task 2 — Worker roster table lifted from Topology renders below the grid', () => {
+    const html = renderStreamsPage(snap({
+      workers: [
+        worker({ id: 'w1', name: 'alpha', status: 'running' }),
+        worker({ id: 'w2', name: 'beta',  status: 'idle' }),
+      ],
+    }));
+    expect(html).toContain('Worker roster');
+    expect(html).toContain('data-role="streams-roster"');
+    expect(html).toContain('class="roster-row"');
+    expect(html).toContain('alpha');
+    expect(html).toContain('beta');
+    // Lifecycle pills (running → info, idle → success): asserting the
+    // pill classes anchors the visual variant just like the old Topology
+    // roster test did, but on the new owning page.
+    expect(html).toContain('pill-info');
+    expect(html).toContain('pill-success');
+  });
 });
 
 interface Harness {

@@ -19,29 +19,58 @@
  *  - Edit-mode parked with a v0.7 badge in the palette door.
  *
  * Worker nodes carry data-id + data-layer="worker" + data-started-at;
- * In-flight BOMs sidebar, Worker roster table, and SSE subscription are
- * unchanged from v0.4. The bricks/workers data fed in still drives the
- * node set, but the visual layer is now graph-first instead of
- * bus-row-stacked. The v0.3/v8 legacy scaffolding (topo-bus structural
- * axis, topo-mode-chips RADIAL/HEAT/HISTORY switcher, "STAVR DAEMON"
- * core label) was removed in v0.4.1 — see CLAUDE.md invariant #1.
+ * the SSE subscription refreshes on worker_/bom_step_/trust_scope_ events.
+ * The bricks/workers data fed in still drives the node set, but the
+ * visual layer is now graph-first instead of bus-row-stacked. The v0.3/v8
+ * legacy scaffolding (topo-bus structural axis, topo-mode-chips
+ * RADIAL/HEAT/HISTORY switcher, "STAVR DAEMON" core label) was removed
+ * in v0.4.1 — see CLAUDE.md invariant #1.
+ *
+ * v0.6.10 Task 2 — the In-flight BOMs sidebar moved to
+ * /dashboard/plans and the Worker roster table moved to
+ * /dashboard/streams. Topology is now pure-topology (constellation only).
  */
 import type { WorkerRecord } from '../../persistence.js';
 import type { Bom } from '../../types/stavr-bom.js';
 import { renderShell } from '../shell.js';
-import { renderScrubber } from '../components/scrubber.js';
-import { renderPill, type PillVariant } from '../components/pill.js';
-import { renderFoodLabel } from '../components/food-label.js';
-import { bomToFoodLabel } from '../adapters/bom.js';
 import type { InstalledBrickLite } from '../adapters/topology.js';
 import { resolveIconId, renderIcon } from '../components/icon-sprite.js';
 import {
   deriveLifecycleState,
   isCurrentlyActive,
-  lifecycleLabel,
-  type LifecycleState,
 } from '../../workers/lifecycle.js';
 import { fetchWorkerCounters } from '../data/worker-counters.js';
+import type {
+  McpCategoryNodeLite,
+  PeerEntryLite,
+  EventDensitySnapshot,
+} from '../data/topology-data.js';
+import {
+  renderTopologyTimeline,
+  TOPOLOGY_TIMELINE_CSS,
+  TOPOLOGY_TIMELINE_JS,
+} from '../widgets/topology-timeline.js';
+import {
+  TOPOLOGY_ACTOR_NODES_CSS,
+  type ActorNodeLite,
+} from '../widgets/topology-actor-nodes.js';
+import {
+  renderFlowParticleSurface,
+  TOPOLOGY_FLOW_PARTICLES_CSS,
+  TOPOLOGY_FLOW_PARTICLES_JS,
+} from '../widgets/topology-flow-particles.js';
+import {
+  renderParticleInspector,
+  TOPOLOGY_PARTICLE_INSPECTOR_CSS,
+  TOPOLOGY_PARTICLE_INSPECTOR_JS,
+} from '../widgets/topology-particle-inspector.js';
+import {
+  renderPermissionsDataBlob,
+  renderPermissionsDrawer,
+  TOPOLOGY_PERMISSIONS_DRAWER_CSS,
+  TOPOLOGY_PERMISSIONS_DRAWER_JS,
+} from '../widgets/topology-permissions-drawer.js';
+import type { PermissionsData } from '../data/permissions-data.js';
 
 export type { InstalledBrickLite } from '../adapters/topology.js';
 
@@ -65,9 +94,38 @@ export interface TopologyData {
    * "this · <port>" subtitle. Plumbed in by transports.ts at mount-time
    * from opts.port. Defaults to 7777 (the stavr CLI default) when absent. */
   port?: number;
+  /**
+   * v0.6.10 Task 1 — virtual MCP nodes derived from the in-process tool
+   * registry, one per category. Lets the operator see stavR's own tool
+   * surfaces on the constellation even before any external brick is
+   * installed.
+   */
+  mcpCategoryNodes?: McpCategoryNodeLite[];
+  /**
+   * v0.6.10 Task 1 — federation peers from `${STAVR_HOME}/peers.yaml`.
+   * Empty when the file is absent (default operator state today).
+   */
+  peers?: PeerEntryLite[];
+  /**
+   * v0.6.10 Task 3 — pre-aggregated heatmap timeline buckets. Replaces
+   * the flat scrubber polyline; thickness ∝ sqrt(count) in the renderer.
+   */
+  eventDensity?: EventDensitySnapshot;
+  /**
+   * v0.6.10 Task 4a — first-class actor-nodes for operator + CC +
+   * Cowork-Claude + remote peers. Derived from recent events'
+   * `source_agent` strings overlaid with peers.yaml.
+   */
+  actorNodes?: ActorNodeLite[];
+  /**
+   * v0.6.10 Task 5 — Permissions snapshot for the side-drawer (the
+   * deferred v0.6.9 P8). Embedded as a JSON blob in the page so the
+   * drawer JS can slice rows client-side without an extra round-trip.
+   */
+  permissions?: PermissionsData;
 }
 
-type GraphType = 'core' | 'mcp-remote' | 'mcp-local' | 'webhook' | 'db' | 'model' | 'worker' | 'peer';
+type GraphType = 'core' | 'mcp-remote' | 'mcp-local' | 'webhook' | 'db' | 'model' | 'worker' | 'peer' | 'actor';
 type GraphShape = 'hex' | 'round' | 'square';
 type GraphStatus = 'ok' | 'warn' | 'crit';
 
@@ -87,6 +145,12 @@ interface GraphNode {
   endedAt?: number;
   /** Free-form metadata for the inspector. */
   meta?: Record<string, string>;
+  /**
+   * v0.6.10 Task 4a — when this node is an actor, the family (operator
+   * / cc / cowork / peer / default). Drives the --actor-* color token
+   * and the actor-glyph ring.
+   */
+  actorClass?: 'operator' | 'cc' | 'cowork' | 'peer' | 'default';
 }
 
 interface GraphEdge {
@@ -99,30 +163,6 @@ interface GraphEdge {
   /** Optional label text shown along the path. */
   label?: string;
 }
-
-const WORKER_STATUS_PILL: Record<string, PillVariant> = {
-  idle:     'success',
-  running:  'info',
-  starting: 'info',
-  crashed:  'danger',
-  terminated: 'neutral',
-};
-
-/**
- * BOM v0.6.6 P3 — pill variant per derived lifecycle bucket. Replaces
- * the per-status mapping above for the roster pill, so an operator-killed
- * worker reads visually different from a clean exit (per BOM hard rule #6).
- */
-const WORKER_LIFECYCLE_PILL: Record<LifecycleState, PillVariant> = {
-  'starting':          'info',
-  'running':           'info',
-  'completed-clean':   'success',
-  'completed-error':   'warning',
-  'killed-by-operator':'warning', // operator action, not a failure -> distinct from danger
-  'killed-by-system':  'danger',
-  'crashed':           'danger',
-  'stale':             'warning',
-};
 
 function escapeHtml(s: string): string {
   return String(s)
@@ -159,6 +199,88 @@ function bricksToNodes(bricks: InstalledBrickLite[]): GraphNode[] {
       status: 'ok',
       x: 0, y: 0,
       meta: { kind: String(b.kind) },
+    };
+  });
+}
+
+/**
+ * v0.6.10 Task 1 — turn ToolRegistry categories into MCP-local nodes so
+ * the canvas is populated even when no bricks are installed in manifest.
+ * Each category becomes one `t-mcp-local` round node labelled with the
+ * category and tool count.
+ */
+function mcpCategoryNodesToGraph(mcps: McpCategoryNodeLite[]): GraphNode[] {
+  return mcps.map((m) => ({
+    id: m.id,
+    type: 'mcp-local',
+    displayName: m.display_name,
+    role: `${m.tool_count} tool${m.tool_count === 1 ? '' : 's'}`,
+    iconId: resolveIconId(m.display_name),
+    shape: 'round',
+    status: 'ok',
+    x: 0,
+    y: 0,
+    meta: { category: m.category, tool_count: String(m.tool_count), source: m.source },
+  }));
+}
+
+/**
+ * v0.6.10 Task 1 — federation peers as t-peer nodes. Status carries
+ * directly to the halo so an unknown peer reads as a faint ring.
+ */
+function peersToNodes(peers: PeerEntryLite[]): GraphNode[] {
+  return peers.map((p) => {
+    const status: GraphStatus =
+      p.status === 'crit' ? 'crit' : p.status === 'warn' ? 'warn' : 'ok';
+    const meta: Record<string, string> = { peer_status: p.status };
+    if (p.endpoint) meta.endpoint = p.endpoint;
+    if (p.role) meta.role = p.role;
+    return {
+      id: `peer-${p.id}`,
+      type: 'peer',
+      displayName: p.display_name,
+      role: p.role,
+      iconId: resolveIconId('peer'),
+      shape: 'round',
+      status,
+      x: 0,
+      y: 0,
+      meta,
+    };
+  });
+}
+
+/**
+ * v0.6.10 Task 4a — actor-node converter. Maps an ActorNodeLite into a
+ * GraphNode tagged with type='actor' + the actorClass so the renderer
+ * can attach `.actor-node[data-actor-class=...]`.
+ */
+function actorsToNodes(actors: ActorNodeLite[]): GraphNode[] {
+  return actors.map((a) => {
+    const status: GraphStatus =
+      a.status === 'crit' ? 'crit' : a.status === 'warn' ? 'warn' : 'ok';
+    const iconHint =
+      a.actorClass === 'operator' ? 'operator'
+      : a.actorClass === 'cc' ? 'worker'
+      : a.actorClass === 'cowork' ? 'worker'
+      : a.actorClass === 'peer' ? 'peer'
+      : 'rune';
+    const meta: Record<string, string> = { actor_class: a.actorClass };
+    if (a.source_agent) meta.source_agent = a.source_agent;
+    if (a.last_seen_at) meta.last_seen_at = a.last_seen_at;
+    if (a.peer_id) meta.peer_id = a.peer_id;
+    return {
+      id: a.id,
+      type: 'actor',
+      displayName: a.display_name,
+      role: a.role,
+      iconId: resolveIconId(iconHint),
+      shape: 'round',
+      status,
+      x: 0,
+      y: 0,
+      actorClass: a.actorClass,
+      meta,
     };
   });
 }
@@ -207,6 +329,10 @@ function layoutGraph(nodes: GraphNode[]): GraphNode[] {
     'webhook':    { startDeg: 80,  endDeg: 110, radius: 240 },
     'worker':     { startDeg: 40,  endDeg: 80,  radius: 200 },
     'peer':       { startDeg: 110, endDeg: 140, radius: 260 },
+    // v0.6.10 Task 4a — actors orbit on the outermost ring so they
+    // visually frame the daemon's tool surfaces (operator + CC at the
+    // top, cowork on the side, peers wrap around the bottom).
+    'actor':      { startDeg: 200, endDeg: 340, radius: 310 },
   };
 
   const grouped = new Map<GraphType, GraphNode[]>();
@@ -248,14 +374,26 @@ function buildEdges(nodes: GraphNode[]): GraphEdge[] {
 // ============================== rendering ==============================
 
 function renderNode(n: GraphNode, isCore: boolean, port: number): string {
-  const shapeCls = `shape ${n.shape} t-${n.type}`;
+  // v0.6.10 Task 4a — actors share the .gnode chassis but use the
+  // --actor-* token rather than --t-*. We still emit a t-* class so the
+  // legend chip count + filter chip pressing keeps working (the chip
+  // strip queries by data-type).
+  const isActor = n.type === 'actor';
+  const shapeCls = isActor
+    ? `shape ${n.shape} t-actor actor-shape`
+    : `shape ${n.shape} t-${n.type}`;
   const haloCls = `halo ${n.status}`;
-  const dataLayer = isCore ? 'steward' : (n.type === 'worker' ? 'worker' : 'brick');
+  const dataLayer = isCore
+    ? 'steward'
+    : n.type === 'worker' ? 'worker'
+    : isActor ? 'actor'
+    : 'brick';
   const extraData: string[] = [];
   if (n.startedAt) extraData.push(`data-started-at="${n.startedAt}"`);
   if (typeof n.endedAt === 'number') extraData.push(`data-ended-at="${n.endedAt}"`);
+  if (isActor && n.actorClass) extraData.push(`data-actor-class="${n.actorClass}"`);
   // Core stays unwrapped from the drag listener (it's the anchor).
-  const coreCls = isCore ? ' core' : '';
+  const coreCls = isCore ? ' core' : (isActor ? ' actor-node' : '');
   const stamp = isCore
     ? `<span class="topo-daemon-disc" aria-hidden="true"></span>`
     : '';
@@ -299,65 +437,9 @@ function renderEdge(n: Map<string, GraphNode>, e: GraphEdge): string {
   ].join('');
 }
 
-function renderBomSidebar(data: TopologyData): string {
-  if (data.inFlightBoms.length === 0) {
-    return [
-      `<aside class="topo-side glass">`,
-      `<h2 class="card-title">In-flight BOMs</h2>`,
-      `<div class="placeholder">Nothing running.</div>`,
-      `</aside>`,
-    ].join('');
-  }
-  const groups = new Map<string, Bom[]>();
-  for (const b of data.inFlightBoms) {
-    const key = b.scope_id ?? '_unscoped';
-    const arr = groups.get(key) ?? [];
-    arr.push(b);
-    groups.set(key, arr);
-  }
-  const groupsHtml = Array.from(groups.entries()).map(([scopeId, boms]) => {
-    const scope = data.scopes.find((s) => s.id === scopeId);
-    const heading = scope
-      ? `${escapeHtml(scope.title)} · <span class="scope-id">${escapeHtml(scopeId.slice(0, 12))}</span>`
-      : `<em>unscoped</em>`;
-    const items = boms.map((b) => {
-      const fl = bomToFoodLabel(b);
-      return renderFoodLabel({ ...fl, modelMix: undefined, name: fl.name.length > 40 ? fl.name.slice(0, 38) + '…' : fl.name });
-    }).join('');
-    return [
-      `<section class="scope-group">`,
-      `<h3 class="scope-h">${heading}</h3>`,
-      `<div class="scope-boms">${items}</div>`,
-      `</section>`,
-    ].join('');
-  }).join('');
-  return [
-    `<aside class="topo-side glass">`,
-    `<h2 class="card-title">In-flight BOMs · ${data.inFlightBoms.length}</h2>`,
-    groupsHtml,
-    `</aside>`,
-  ].join('');
-}
-
-function renderWorkerRoster(workers: WorkerRecord[], now: number = Date.now()): string {
-  if (workers.length === 0) return '<div class="placeholder">No workers running.</div>';
-  return workers.map((w) => {
-    // BOM v0.6.6 P3 — pill text + variant come from lifecycle_state so
-    // operator-kill renders distinct from a clean exit.
-    const lifecycle = deriveLifecycleState(w, now);
-    const pill = renderPill({
-      text: lifecycleLabel(lifecycle),
-      variant: WORKER_LIFECYCLE_PILL[lifecycle] ?? 'neutral',
-    });
-    return [
-      `<li class="roster-row" data-id="${escapeHtml(w.id)}" data-lifecycle="${escapeHtml(lifecycle)}">`,
-      `<span class="roster-name">${escapeHtml(w.name)}</span>`,
-      `<span class="roster-type">${escapeHtml(w.type)}</span>`,
-      pill,
-      `</li>`,
-    ].join('');
-  }).join('');
-}
+// v0.6.10 Task 2 — renderBomSidebar moved to src/dashboard/pages/plans.ts
+// (now lives as `renderInFlightSidebar`).
+// v0.6.10 Task 2 — renderWorkerRoster moved to src/dashboard/pages/streams.ts.
 
 function renderFilterStrip(typeCounts: Record<GraphType, number>): string {
   const cell = (cls: string, label: string, type: GraphType) =>
@@ -374,6 +456,7 @@ function renderFilterStrip(typeCounts: Record<GraphType, number>): string {
     cell('model', 'Model', 'model'),
     cell('worker', 'Worker', 'worker'),
     cell('peer', 'Peer', 'peer'),
+    cell('actor', 'Actor', 'actor'),
     `</div>`,
     `<span class="grow"></span>`,
     // v0.6 Task 4 Phase C #7 — Ctrl+K collides with the browser
@@ -505,6 +588,9 @@ const TOPOLOGY_CSS = `
 .topo-strip .chip.model      .sw { background: var(--t-model); }
 .topo-strip .chip.worker     .sw { background: var(--t-worker); }
 .topo-strip .chip.peer       .sw { background: var(--t-peer); }
+.topo-strip .chip.actor      .sw {
+  background: linear-gradient(135deg, var(--actor-operator), var(--actor-cc) 60%, var(--actor-cowork));
+}
 .topo-strip .chip .ct { color: var(--ink-3); font-size: 9.5px; margin-left: 3px; }
 .topo-strip .grow { flex: 1; }
 .topo-strip .live-toggle {
@@ -544,6 +630,8 @@ const TOPOLOGY_CSS = `
   min-height: 0;
 }
 @media (max-width: 1100px) { .topo-frame { grid-template-columns: 1fr; } }
+/* v0.6.10 Task 2 — Topology is canvas-only; sidebars moved off page. */
+.topo-frame-solo { grid-template-columns: 1fr; }
 
 /* canvas */
 .topo-canvas {
@@ -689,6 +777,7 @@ const TOPOLOGY_CSS = `
 .t-model      { color: var(--t-model); }
 .t-worker     { color: var(--t-worker); }
 .t-peer       { color: var(--t-peer); }
+.t-actor      { color: var(--actor-default); } /* overridden per data-actor-class below */
 
 .node-label {
   font-family: var(--mono); font-size: 10.5px;
@@ -790,8 +879,7 @@ const TOPOLOGY_CSS = `
 .placeholder { color: var(--ink-3); font-style: italic; font-size: 12px; padding: 8px 0; }
 
 /* roster */
-.topo-roster { padding: 14px; }
-.topo-roster h2 { margin-bottom: 6px; }
+/* v0.6.10 Task 2 — .topo-roster removed; roster lives on /dashboard/streams now. */
 .roster-row {
   display: grid; grid-template-columns: 1fr auto auto;
   gap: 10px; align-items: center;
@@ -1154,31 +1242,32 @@ const TOPOLOGY_JS = `
     });
   }
 
-  // ---------- time scrubber ----------
-  const scrubber = document.querySelector('.scrubber-slider');
-  const scrubVal = document.querySelector('[data-role="value"]');
-  const scrubTime = document.querySelector('[data-role="scrub-time"]');
-  if (scrubber && events.length > 0) {
-    scrubber.max = events.length;
-    scrubber.value = events.length;
-    scrubber.addEventListener('input', function() {
-      const idx = Number(scrubber.value);
-      if (idx >= events.length) {
-        if (scrubVal) scrubVal.textContent = 'live';
-        if (scrubTime) scrubTime.textContent = '';
-        applySnapshot(idx);
-      } else {
-        const ev = events[idx];
-        if (scrubVal) scrubVal.textContent = '@ ' + (idx + 1) + '/' + events.length;
-        if (scrubTime) scrubTime.textContent = ev && ev.at ? new Date(ev.at).toISOString().slice(11, 19) : '';
-        applySnapshot(idx);
+  // ---------- time scrubber (v0.6.10 Task 3 — heatmap timeline) ----------
+  // The timeline widget owns its own range input + readout; we just hook
+  // into the custom 'topology:scrub' event to drive worker dimming.
+  const timeline = document.querySelector('[data-role="topo-timeline"]');
+  if (timeline) {
+    timeline.addEventListener('topology:scrub', function(ev) {
+      const detail = (ev && ev.detail) || {};
+      const total = Number(detail.total || 0);
+      const idx = Number(detail.idx || 0);
+      if (idx >= total || !detail.bucket) {
+        applySnapshot(events.length);
+        return;
       }
-    });
-    scrubber.addEventListener('change', function() {
-      scrubber.value = events.length;
-      if (scrubVal) scrubVal.textContent = 'live';
-      if (scrubTime) scrubTime.textContent = '';
-      applySnapshot(events.length);
+      // Find the event index whose timestamp is nearest the bucket's
+      // start — gives the existing applySnapshot routine the same
+      // contract it had with the flat scrubber.
+      const target = Date.parse(detail.bucket.at);
+      let nearest = events.length;
+      let bestDelta = Infinity;
+      for (let i = 0; i < events.length; i++) {
+        const at = Date.parse(events[i].at);
+        if (!Number.isFinite(at)) continue;
+        const d = Math.abs(at - target);
+        if (d < bestDelta) { bestDelta = d; nearest = i; }
+      }
+      applySnapshot(nearest);
     });
   }
   function applySnapshot(idx) {
@@ -1267,11 +1356,37 @@ export function renderTopologyPage(data?: TopologyData): string {
       hiddenHistoricWorkers.push(w);
     }
   }
-  const allNodes: GraphNode[] = [core, ...bricksToNodes(snapshot.bricks), ...workersToNodes(canvasWorkers, canvasNow)];
+  // v0.6.10 Task 1 — pull in MCP-category nodes (registry-derived, even
+  // when zero bricks are installed) and federation peers. The legacy
+  // bricksToNodes pass stays so installed external MCPs / webhooks / DBs
+  // still show up; the two sources are additive and de-duped by id.
+  const brickNodes = bricksToNodes(snapshot.bricks);
+  const mcpNodes = mcpCategoryNodesToGraph(snapshot.mcpCategoryNodes ?? []);
+  const peerNodes = peersToNodes(snapshot.peers ?? []);
+  const workerNodes = workersToNodes(canvasWorkers, canvasNow);
+  // v0.6.10 Task 4a — actor-nodes from the fetcher (event-derived +
+  // peers.yaml overlay).
+  const actorGraphNodes = actorsToNodes(snapshot.actorNodes ?? []);
+
+  const seen = new Set<string>();
+  const dedup = (n: GraphNode): boolean => {
+    if (seen.has(n.id)) return false;
+    seen.add(n.id);
+    return true;
+  };
+  seen.add(core.id);
+  const allNodes: GraphNode[] = [
+    core,
+    ...brickNodes.filter(dedup),
+    ...mcpNodes.filter(dedup),
+    ...peerNodes.filter(dedup),
+    ...workerNodes.filter(dedup),
+    ...actorGraphNodes.filter(dedup),
+  ];
   layoutGraph(allNodes);
 
   const typeCounts: Record<GraphType, number> = {
-    core: 0, 'mcp-remote': 0, 'mcp-local': 0, webhook: 0, db: 0, model: 0, worker: 0, peer: 0,
+    core: 0, 'mcp-remote': 0, 'mcp-local': 0, webhook: 0, db: 0, model: 0, worker: 0, peer: 0, actor: 0,
   };
   for (const n of allNodes) typeCounts[n.type] = (typeCounts[n.type] || 0) + 1;
 
@@ -1283,17 +1398,28 @@ export function renderTopologyPage(data?: TopologyData): string {
   const corePort = snapshot.port ?? 7777;
   const nodesHtml = allNodes.map((n) => renderNode(n, n.id === 'stavr-core', corePort)).join('');
 
-  // Scrubber + tick markers (unchanged contract).
+  // v0.6.10 Task 3 — YouTube-style heatmap timeline replaces the flat
+  // scrubber. The fetcher pre-aggregates buckets; when buckets are
+  // missing (legacy callers, tests with no event store) we fall back to
+  // a single empty bucket so the widget still renders the read-out.
+  const density: EventDensitySnapshot = snapshot.eventDensity ?? {
+    bucketMs: 60_000,
+    from: new Date(Date.now() - 60 * 60_000).toISOString(),
+    to: new Date().toISOString(),
+    buckets: [],
+    peak: 0,
+  };
+  const timelineHtml = renderTopologyTimeline({ density });
+
+  // Tick markers carry the worker-dimming reference; we still build them
+  // so the existing applySnapshot logic that reads `topo-events` has
+  // something to drive against. The page JS now consumes the heatmap's
+  // `topology:scrub` event in addition to the legacy range input.
   const steps = Math.max(1, snapshot.scrubberSteps ?? 30);
   const tickMarkers = Array.from({ length: steps }, (_, i) => ({
     at: new Date(Date.now() - (steps - i) * 60_000).toISOString(),
     kind: 'tick',
   }));
-  const scrubberHtml = renderScrubber({ steps: tickMarkers.length });
-  const scrubberWithTime = scrubberHtml.replace(
-    '<span class="scrubber-value" data-role="value">live</span>',
-    '<span class="scrubber-value" data-role="value">live</span><span class="scrubber-time" data-role="scrub-time"></span>',
-  );
 
   const filterStrip = renderFilterStrip(typeCounts);
   const paletteDoor = renderPaletteDoor();
@@ -1325,7 +1451,10 @@ export function renderTopologyPage(data?: TopologyData): string {
     `<span class="page-sub" data-role="topology-header">${workerHeader} · ${snapshot.bricks.length} brick${snapshot.bricks.length === 1 ? '' : 's'} · ${snapshot.inFlightBoms.length} in-flight · drag to pin${hiddenChip}</span>`,
     `</div>`,
     filterStrip,
-    `<div class="topo-frame">`,
+    // v0.6.10 Task 2 — Topology page is now pure-topology: the BOM
+    // sidebar moved to /dashboard/plans and the Worker roster moved
+    // to /dashboard/streams. Operators reach those from the topbar.
+    `<div class="topo-frame topo-frame-solo">`,
     `<div class="topo-canvas glass" data-role="topo-canvas" data-live="on">`,
     `<div class="grid-bg"></div>`,
     `<div class="cluster-blob c-mcp"></div>`,
@@ -1334,21 +1463,25 @@ export function renderTopologyPage(data?: TopologyData): string {
     paletteDoor,
     `<div class="topo-stage">`,
     svg,
+    // v0.6.10 Task 4b — flow-particle surface sits between the edge
+    // SVG (z-index 1) and the node DOM (z-index 2). Particles read as
+    // flowing under the nodes.
+    renderFlowParticleSurface(),
     `<div class="topo-nodes">${nodesHtml}</div>`,
     `</div>`,
     legend,
-    scrubberWithTime,
+    timelineHtml,
     `</div>`,
-    renderBomSidebar(snapshot),
-    `</div>`,
-    `<section class="topo-roster glass">`,
-    `<h2 class="card-title">Worker roster</h2>`,
-    `<ul style="list-style:none;padding:0;margin:0;">`,
-    renderWorkerRoster(snapshot.workers),
-    `</ul>`,
-    `</section>`,
     `</div>`,
     renderDrawer(),
+    // v0.6.10 Task 4c — particle click-inspector, slides in from the
+    // right with forensic detail on the clicked particle's event.
+    renderParticleInspector(),
+    // v0.6.10 Task 5 — permissions side-drawer slides in from the
+    // left when an actor or worker node is clicked. The data blob
+    // ships inline so the drawer fills on first click.
+    renderPermissionsDrawer(),
+    snapshot.permissions ? renderPermissionsDataBlob(snapshot.permissions) : '',
     `<script id="topo-events" type="application/json">${JSON.stringify(tickMarkers)}</script>`,
   ].join('');
 
@@ -1356,7 +1489,7 @@ export function renderTopologyPage(data?: TopologyData): string {
     title: 'Stavr — Topology',
     activePage: 'topology',
     body,
-    head: `<style>${TOPOLOGY_CSS}</style>`,
-    script: TOPOLOGY_JS,
+    head: `<style>${TOPOLOGY_CSS}\n${TOPOLOGY_TIMELINE_CSS}\n${TOPOLOGY_ACTOR_NODES_CSS}\n${TOPOLOGY_FLOW_PARTICLES_CSS}\n${TOPOLOGY_PARTICLE_INSPECTOR_CSS}\n${TOPOLOGY_PERMISSIONS_DRAWER_CSS}</style>`,
+    script: `${TOPOLOGY_JS}\n${TOPOLOGY_TIMELINE_JS}\n${TOPOLOGY_FLOW_PARTICLES_JS}\n${TOPOLOGY_PARTICLE_INSPECTOR_JS}\n${TOPOLOGY_PERMISSIONS_DRAWER_JS}`,
   });
 }

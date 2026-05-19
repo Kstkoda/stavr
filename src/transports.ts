@@ -15,6 +15,7 @@ import {
 import { loadChannelStatuses } from './dashboard/data/channels.js';
 import { fetchToolsData } from './dashboard/data/tools-data.js';
 import { fetchWorkerCounters } from './dashboard/data/worker-counters.js';
+import { fetchTopologyExtras } from './dashboard/data/topology-data.js';
 import { deriveLifecycleState } from './workers/lifecycle.js';
 import { fetchPermissionsData } from './dashboard/data/permissions-data.js';
 import { TIERS, defaultTierFor, type Tier } from './tools/categories.js';
@@ -1012,7 +1013,22 @@ export function mountDashboardRoutes(
       failed: 0, cancelled: 0, rejected: 0,
     } as Record<typeof boms[number]['status'], number>;
     for (const b of boms) totals[b.status]++;
-    return { boms, totals };
+    // v0.6.10 Task 2 — in-flight BOMs sidebar lifted from Topology to
+    // Plans. Carry both the BOM list and the scopes referenced by them
+    // so the side panel can render scope-group headers without a second
+    // store query.
+    const inFlightBoms = boms.filter(
+      (b) => b.status === 'approved' || b.status === 'running' || b.status === 'proposed',
+    );
+    const active = trustStore.list({ status: 'active' });
+    const scopes = active.map((s) => ({
+      id: s.id,
+      title: s.title,
+      expires_at: s.expires_at,
+      actions_executed: s.actions_executed,
+      expires_after_actions: s.expires_after_actions,
+    }));
+    return { boms, totals, inFlightBoms, scopes };
   }
 
   // Decide page snapshot — open decisions for action, plus the most
@@ -1060,7 +1076,35 @@ export function mountDashboardRoutes(
       actions_executed: s.actions_executed,
       expires_after_actions: s.expires_after_actions,
     }));
-    return { workers, bricks, scopes, inFlightBoms, port: ctx.port };
+    // v0.6.10 Task 1 — MCP-category nodes (registry-derived) + peers
+    // (peers.yaml). Task 3 — heatmap timeline buckets from the event
+    // store. Task 4a — actor-nodes from source_agent + peers. Pulled
+    // together so the topology snapshot stays a single round-trip
+    // from the dashboard.
+    const { mcpCategoryNodes, peers, eventDensity, actorNodes } = fetchTopologyExtras({
+      registry: getOrCreateToolRegistry(broker),
+      store: broker.store,
+    });
+    // v0.6.10 Task 5 — permissions snapshot for the side-drawer.
+    // Reuses the same registry + stores the standalone permissions
+    // page consumes; embedded into the page as a JSON blob.
+    const permissions = fetchPermissionsData({
+      registry: getOrCreateToolRegistry(broker),
+      caps: getOrCreateCapabilityOverrideStore(broker),
+      perms: getOrCreateActorPermissionStore(broker),
+    });
+    return {
+      workers,
+      bricks,
+      scopes,
+      inFlightBoms,
+      port: ctx.port,
+      mcpCategoryNodes,
+      peers,
+      eventDensity,
+      actorNodes,
+      permissions,
+    };
   }
 
   // Streams page snapshot — workers + last few events per worker.

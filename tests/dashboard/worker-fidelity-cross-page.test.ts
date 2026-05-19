@@ -173,19 +173,21 @@ describe('cross-page agreement on active count (BOM v0.6.6 P3 acceptance)', () =
       scopes: [],
       inFlightBoms: [],
     });
-    // The two May-15 zombie IDs must NOT appear in the canvas node list.
-    // Canvas nodes are emitted with data-id="<id>" by renderNode; we
-    // assert the zombies are absent from the topo-nodes container.
-    const canvasMatch = html.match(/<div class="topo-nodes">([\s\S]*?)<\/div>\s*<\/div>\s*<aside class="topo-side/);
-    const canvasHtml = canvasMatch ? canvasMatch[1] : html;
-    expect(canvasHtml).not.toContain('data-id="oom-leak-hunt-2026-05-15"');
-    expect(canvasHtml).not.toContain('data-id="leak-hunt-retry-a"');
+    // v0.6.10 Task 2 — Topology is canvas-only now (the right rail
+    // moved to /plans + /streams). The zombie absence is asserted by
+    // verifying their data-id strings don't appear on the topology page
+    // at all; the operator's primary view doesn't see them.
+    expect(html).not.toContain('data-id="oom-leak-hunt-2026-05-15"');
+    expect(html).not.toContain('data-id="leak-hunt-retry-a"');
     // The toggle MUST surface their existence.
     expect(html).toMatch(/Show terminated \(2\)/);
   });
 
-  it('Topology roster pill text reads the lifecycle label (operator-kill is distinct from crashed)', () => {
-    const html = renderTopologyPage({
+  it('Streams roster pill text reads the lifecycle label (operator-kill is distinct from crashed)', () => {
+    // v0.6.10 Task 2 — Worker roster moved from Topology to Streams.
+    // The lifecycle-distinction assertion follows the table to its new
+    // owning page (per CLAUDE.md §1 — tests are derivative of the spec).
+    const html = renderStreamsPage({
       workers: [
         makeWorker({
           id: 'op-killed',
@@ -201,9 +203,7 @@ describe('cross-page agreement on active count (BOM v0.6.6 P3 acceptance)', () =
           ended_at: isoMinutesAgo(2),
         }),
       ],
-      bricks: [],
-      scopes: [],
-      inFlightBoms: [],
+      recent: {},
     });
     // The two rows MUST be visually distinguishable.
     expect(html).toMatch(/killed by operator/);

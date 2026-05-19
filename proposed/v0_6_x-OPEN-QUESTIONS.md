@@ -55,14 +55,18 @@ PR B shipped the smaller, lower-risk fixes:
   separator); cards grouped into collapsible `<details>` sections by
   category; GitHub default-collapsed; EXPLICIT + NO_GO cards visually
   emphasized; "Critical tools" section pinned to the top.
-- **Phase C (Topology cleanup)** ✅ partial — #4 palette-door FAB
-  cleanup (Add/Edit v0.7-parked buttons hidden) and #7 keyboard
-  shortcut rebind (`/` primary, `⌘K` on Mac via `navigator.platform`
-  detection) shipped. **Deferred to a follow-up topology PR**:
-  - #1 Galactic map empty (wire MCP/worker/peer nodes into topology data)
-  - #2 Move worker roster → Streams page
-  - #3 Move in-flight BOMs panel → Plans page
-  - #6 YouTube-style heatmap timeline (replace flat blue scrubber polyline)
+- **Phase C (Topology cleanup)** ✅ complete (#4 + #7 in PR B, the rest
+  in `feat/v0.6.10-topology`):
+  - #4 palette-door FAB cleanup (Add/Edit v0.7-parked buttons hidden) ✅ PR B
+  - #7 keyboard shortcut rebind (`/` primary, `⌘K` on Mac via
+    `navigator.platform` detection) ✅ PR B
+  - #1 Galactic map empty (MCP-category nodes from ToolRegistry + peers
+    from peers.yaml + active workers) ✅ v0.6.10
+  - #2 Move worker roster → Streams page ✅ v0.6.10
+  - #3 Move in-flight BOMs panel → Plans page ✅ v0.6.10
+  - #6 YouTube-style heatmap timeline (thickness ∝ sqrt(density),
+    monochrome rust gradient, hover tooltip with per-kind breakdown,
+    5s/1m/5m zoom chips) ✅ v0.6.10
 - **Phase D (Decide expandable rows)** ✅ shipped — resolved decision
   rows now use `<details>` with the full record on expand
   (correlation_id, requested_at, deadline, response timestamp, elapsed,
@@ -70,21 +74,39 @@ PR B shipped the smaller, lower-risk fixes:
   PR-URL + scope-id cross-links added as best-effort regex extraction
   from the question text.
 
-### v0.6.9 P8 — Topology side-drawer for permissions
+### v0.6.9 P8 — Topology side-drawer for permissions ✅ v0.6.10
 
-The standalone `/dashboard/permissions` page is the authoritative
-surface today and delivers the full Layer 0 + matrix + named-policy
-apply experience. Wiring a side-drawer onto `/dashboard/topology` that
-mirrors the same matrix shape is a real UI integration (the Topology
-page is dense; the drawer needs careful CSS work to coexist with the
-existing graph view). PR B already ships:
+Shipped in `feat/v0.6.10-topology`:
 
-- P6 named policies (built-in presets) + Apply affordance
-- P7 YAML import/export + `stavr permissions {export,import,show,set}`
-- P9 audit events on every Layer 0 + matrix mutation
+- Click an actor-node or worker-node on the topology canvas → side
+  drawer slides in from the left.
+- Per-tool tier dropdown + Layer 0 capability toggle for the matched
+  actor, wired to the existing `/dashboard/permissions/actor` POST and
+  `/dashboard/permissions/capability` POST + DELETE endpoints.
+- Deep-link via `?inspect=<actor-id>` so the operator can share a URL
+  to a specific actor's permission state.
+- Backdrop overlays only the left third of the canvas — the
+  constellation stays visible and unmoved.
 
-P8 is the single deferred slice. Track for a follow-up
-`feat/v0.6.9-topology-drawer` PR.
+The standalone `/dashboard/permissions` page remains the macro view;
+the drawer is the per-actor quick-edit surface.
+
+## v0.6.10 Topology revamp — what landed
+
+Branch `feat/v0.6.10-topology`, single PR:
+
+- Task 1 — `src/dashboard/data/topology-data.ts` fetcher surfaces
+  MCP-category nodes + peers + density buckets in one round-trip.
+- Task 2 — Worker roster moved to `/dashboard/streams`, in-flight
+  BOMs sidebar moved to `/dashboard/plans`. Topology is canvas-only.
+- Task 3 — YouTube-style heatmap timeline replaces the flat scrubber.
+- Task 4a — actor-nodes (operator, CC, Cowork-Claude, peers) on the
+  outermost ring; --actor-* color tokens land in tokens.ts.
+- Task 4b — colored + iconified SSE-driven flow particles between
+  actors and resources; rAF loop, 200-particle cap, FIFO eviction.
+- Task 4c — particle click-inspector with source_agent, signed_by
+  v0.7 placeholder, correlation_id, payload, event-log cross-link.
+- Task 5 — permissions side-drawer (v0.6.9 P8 finally landed).
 
 ## Open questions (no decision needed yet)
 

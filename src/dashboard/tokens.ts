@@ -81,6 +81,17 @@ export const TOKENS_CSS = `
   --t-worker:     #6dd58c;
   --t-peer:       #f06ec1;
 
+  /* v0.6.10 Task 4a — Actor palette. First-class actors on the topology
+     constellation get their own color so flow particles read at a glance
+     (operator = rust, CC = blue, Cowork-Claude = teal, remote peer = cyan,
+     fallback / switch-default = neutral). Status is still encoded by the
+     halo per CLAUDE.md §5 — these tokens drive node fill only. */
+  --actor-operator: #b8542a;
+  --actor-cc:       #6aa9ff;
+  --actor-cowork:   #5ec1a2;
+  --actor-peer:     #5cc6ff;
+  --actor-default:  #4f5160;
+
   /* Convenience aliases used in mockups */
   --purple: #a78bfa;
   --sky:    #6aa9ff;

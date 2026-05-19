@@ -161,24 +161,47 @@ describe('Topology page — unit', () => {
     expect(html).toContain(`data-started-at="${Date.parse(t0)}"`);
   });
 
-  it('renders an inspector + scrubber + bom sidebar', () => {
+  it('renders an inspector + heatmap timeline (BOM sidebar moved to /plans in v0.6.10 Task 2)', () => {
     const html = renderTopologyPage(snapshot({
       workers: [worker({ id: 'w1' })],
       inFlightBoms: [bom({ id: 'bom_1', goal: 'do it', scope_id: 'scope_a' })],
       scopes: [{ id: 'scope_a', title: 'release-cut' }],
     }));
     expect(html).toContain('id="inspector"');
-    expect(html).toContain('class="scrubber-slider"');
-    expect(html).toContain('In-flight BOMs');
-    expect(html).toContain('release-cut');
-    expect(html).toContain('do it');
+    // v0.6.10 Task 3 — flat scrubber replaced by the heatmap timeline.
+    expect(html).toContain('data-role="topo-timeline"');
+    expect(html).toContain('data-role="topo-tl-slider"');
+    // v0.6.10 Task 2 — In-flight BOMs sidebar lives on /dashboard/plans now.
+    // Topology is pure-topology; the BOM list must NOT render here.
+    expect(html).not.toContain('In-flight BOMs');
+    expect(html).not.toContain('release-cut');
+    expect(html).not.toContain('do it');
   });
 
-  it('shows an empty placeholder when no BOMs are in flight', () => {
+  it('v0.6.10 Task 3 — heatmap timeline renders zoom chips + ribbon + tooltip surface', () => {
     const html = renderTopologyPage(snapshot({
-      workers: [worker({ id: 'w1' })],
+      eventDensity: {
+        bucketMs: 60_000,
+        from: '2026-05-19T11:00:00.000Z',
+        to:   '2026-05-19T12:00:00.000Z',
+        peak: 3,
+        buckets: [
+          { at: '2026-05-19T11:00:00.000Z', count: 0, kinds: {} },
+          { at: '2026-05-19T11:01:00.000Z', count: 3, kinds: { progress: 3 } },
+          { at: '2026-05-19T11:02:00.000Z', count: 1, kinds: { worker_started: 1 } },
+        ],
+      },
     }));
-    expect(html).toContain('Nothing running.');
+    expect(html).toContain('data-role="topo-timeline"');
+    expect(html).toContain('class="topo-tl-zoom"');
+    expect(html).toContain('data-zoom="5"');
+    expect(html).toContain('data-zoom="60"');
+    expect(html).toContain('data-zoom="300"');
+    expect(html).toContain('class="topo-tl-poly"');
+    expect(html).toContain('class="topo-tl-heat"');
+    // Hover hit-zones carry the bucket data the JS tooltip reads.
+    expect(html).toContain('data-count="3"');
+    expect(html).toContain('data-kinds="progress=3"');
   });
 
   it('wires SSE refresh on worker_/bom_step_/trust_scope_ events', () => {
@@ -189,18 +212,119 @@ describe('Topology page — unit', () => {
     expect(html).toContain('trust_scope_');
   });
 
-  it('emits a roster row per worker with a status pill', () => {
+  it('v0.6.10 Task 1 — renders MCP-category nodes from the registry', () => {
+    const html = renderTopologyPage(snapshot({
+      mcpCategoryNodes: [
+        { id: 'mcp-cat-worker', category: 'worker', display_name: 'Workers', tool_count: 3, source: 'registry' },
+        { id: 'mcp-cat-github', category: 'github', display_name: 'GitHub',  tool_count: 1, source: 'registry' },
+      ],
+    }));
+    expect(html).toContain('data-id="mcp-cat-worker"');
+    expect(html).toContain('data-id="mcp-cat-github"');
+    expect(html).toContain('data-type="mcp-local"');
+    expect(html).toContain('Workers');
+    expect(html).toContain('GitHub');
+  });
+
+  it('v0.6.10 Task 5 — renders the permissions side-drawer + backdrop on the topology page', () => {
+    const html = renderTopologyPage(snapshot());
+    expect(html).toContain('data-role="topo-perm-drawer"');
+    expect(html).toContain('data-role="topo-perm-backdrop"');
+    expect(html).toContain('data-role="tpd-rows"');
+    expect(html).toContain('data-role="tpd-close"');
+    expect(html).toContain('Open full permissions matrix');
+  });
+
+  it('v0.6.10 Task 5 — permissions data blob ships inline when TopologyData.permissions is supplied', () => {
+    const html = renderTopologyPage(snapshot({
+      permissions: {
+        tools: [
+          { id: 'worker_spawn', category: 'worker', description: '', defaultTier: 'CONFIRM', layer0: null, disabledNow: false },
+        ],
+        actors: ['operator', 'cc'],
+        matrix: [
+          { actor: 'operator', tool: 'worker_spawn', tier: 'AUTO', source: 'matrix' },
+          { actor: 'cc',       tool: 'worker_spawn', tier: 'CONFIRM', source: 'default' },
+        ],
+        disabledCount: 0,
+        toolCount: 1,
+        yamlMirrorEnabled: false,
+      },
+    }));
+    expect(html).toContain('id="topo-permissions-data"');
+    expect(html).toContain('"worker_spawn"');
+    expect(html).toContain('"operator"');
+  });
+
+  it('v0.6.10 Task 4c — renders the particle click-inspector with placeholder + cross-link', () => {
+    const html = renderTopologyPage(snapshot());
+    expect(html).toContain('data-role="topo-particle-inspector"');
+    expect(html).toContain('data-role="tpi-source-agent"');
+    expect(html).toContain('data-role="tpi-signed-by"');
+    expect(html).toContain('data-role="tpi-corr"');
+    expect(html).toContain('data-role="tpi-payload"');
+    expect(html).toContain('data-role="tpi-eventlog"');
+    // v0.7 passkey placeholder is the canonical copy from the dispatch.
+    expect(html).toContain('v0.7 will add operator passkey signature');
+    expect(html).toContain('View in event log');
+  });
+
+  it('v0.6.10 Task 4b — emits a flow-particle surface for SSE-driven instruction animation', () => {
+    const html = renderTopologyPage(snapshot());
+    expect(html).toContain('data-role="topo-particles"');
+    expect(html).toContain('.tp-dot');
+    // Icon SVG strings for the five classes are inlined in the JS.
+    expect(html).toContain('"operator":');
+    expect(html).toContain('"cc":');
+    expect(html).toContain('"cowork":');
+    expect(html).toContain('"peer":');
+  });
+
+  it('v0.6.10 Task 4a — renders actor-nodes with data-actor-class for the color palette', () => {
+    const html = renderTopologyPage(snapshot({
+      actorNodes: [
+        { id: 'actor-operator-op',  actorClass: 'operator', display_name: 'operator', status: 'ok',   source_agent: 'op' },
+        { id: 'actor-cc-cc-feat-1', actorClass: 'cc',       display_name: 'cc-feat-1', status: 'ok',   source_agent: 'cc-feat-1' },
+        { id: 'actor-cowork-cw',    actorClass: 'cowork',   display_name: 'cowork',   status: 'warn', source_agent: 'cw' },
+      ],
+    }));
+    expect(html).toContain('data-id="actor-operator-op"');
+    expect(html).toContain('data-id="actor-cc-cc-feat-1"');
+    expect(html).toContain('data-id="actor-cowork-cw"');
+    expect(html).toContain('data-actor-class="operator"');
+    expect(html).toContain('data-actor-class="cc"');
+    expect(html).toContain('data-actor-class="cowork"');
+    expect(html).toContain('class="gnode actor-node"');
+    // Actor filter chip is part of the legend strip.
+    expect(html).toContain('data-type="actor"');
+  });
+
+  it('v0.6.10 Task 1 — renders peer nodes from peers.yaml feed', () => {
+    const html = renderTopologyPage(snapshot({
+      peers: [
+        { id: 'twin-a', display_name: 'Twin A', status: 'ok', role: 'child' },
+        { id: 'twin-b', display_name: 'twin-b', status: 'unknown' },
+      ],
+    }));
+    expect(html).toContain('data-id="peer-twin-a"');
+    expect(html).toContain('data-id="peer-twin-b"');
+    expect(html).toContain('data-type="peer"');
+    expect(html).toContain('Twin A');
+  });
+
+  it('v0.6.10 Task 2 — Worker roster table moved to /streams; topology is pure-topology', () => {
     const html = renderTopologyPage(snapshot({
       workers: [
         worker({ id: 'w1', name: 'alpha', status: 'running' }),
         worker({ id: 'w2', name: 'beta',  status: 'idle' }),
       ],
     }));
-    expect(html).toContain('Worker roster');
-    expect(html).toContain('alpha');
-    expect(html).toContain('beta');
-    expect(html).toContain('pill-info');
-    expect(html).toContain('pill-success');
+    // Workers still appear as constellation NODES (canvas), not as a roster table.
+    expect(html).toContain('data-id="w1"');
+    expect(html).toContain('data-id="w2"');
+    // The roster table section must NOT render on Topology anymore.
+    expect(html).not.toContain('Worker roster');
+    expect(html).not.toContain('class="topo-roster');
   });
 });
 
