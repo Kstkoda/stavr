@@ -834,6 +834,7 @@ export async function mountTransports(
     mountWebAuthnRoutes(app, {
       getCoordinator: () => getOrCreateWebAuthnCoordinator(broker),
       getIdentityStore: () => getOrCreateIdentityStore(broker),
+      getBroker: () => broker,
     });
 
     // v0.7 Phase 2-trimmed — federation HTTP surface under /api/federation/*.

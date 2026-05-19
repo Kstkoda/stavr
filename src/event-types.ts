@@ -127,6 +127,22 @@ export const EventKind = z.enum([
   // v0.6.11 Phase 3 — periodic per-endpoint perf snapshot
   //             (HTTP routes + MCP methods). Operational; retained briefly.
   'perf_sample',
+  // v0.7 Phase 3 — federation roles + peer lifecycle.
+  // peer_joined / peer_left fire when the federation subsystem's
+  // registry adds or removes a peer (mDNS or peers.yaml change).
+  // bom_role_assigned annotates a BOM with its Originator/Participant/
+  // Convener attribution at dispatch. federation_handoff_* track
+  // explicit cross-peer transfers of Originator role (operator switches
+  // machines mid-task).
+  'peer_joined',
+  'peer_left',
+  'bom_role_assigned',
+  'federation_handoff_started',
+  'federation_handoff_completed',
+  // v0.7 Phase 3 — operator passkey assertion audit. Emitted by the
+  // WebAuthn coordinator on every successful Tier 3 verification so
+  // forensic review can correlate assertions to the actions they gated.
+  'tier3_assertion_recorded',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -885,6 +901,19 @@ export const WorkerBlockedBySignaturePayload = z.object({
   detail: z.string().max(240).optional(),
 });
 
+/** v0.7 Phase 3 — federation context that rides on every event when the
+ *  daemon is part of a multi-peer federation. The originating peer
+ *  stamps `origin_peer` so subscribers (local + mirrored) can attribute
+ *  the event to a specific instance; `role` carries the per-task role
+ *  the origin held at emission time. Absent when federation is off OR
+ *  the event is single-machine work. */
+export const FederationContextSchema = z.object({
+  origin_peer: z.string().min(1),
+  role: z.enum(['originator', 'participant', 'convener']),
+  convener_peer: z.string().min(1).optional(),
+});
+export type FederationContextEvent = z.infer<typeof FederationContextSchema>;
+
 export const Event = z.object({
   kind: EventKind,
   at: z.string().datetime(),
@@ -892,8 +921,54 @@ export const Event = z.object({
   tenant_id: z.string().optional(),
   source_agent: z.string(),
   payload: z.unknown(),
+  federation_context: FederationContextSchema.optional(),
 });
 export type Event = z.infer<typeof Event>;
+
+// v0.7 Phase 3 payloads.
+export const PeerJoinedPayload = z.object({
+  peer_id: z.string().min(1),
+  display_name: z.string().min(1),
+  hostname: z.string().min(1),
+  port: z.number().int().positive(),
+  trust: z.enum(['local-equivalent', 'verified', 'untrusted']),
+  configured: z.boolean(),
+  discovered: z.boolean(),
+});
+
+export const PeerLeftPayload = z.object({
+  peer_id: z.string().min(1),
+  reason: z.enum(['mdns_lost', 'unreachable', 'config_removed']),
+});
+
+export const BomRoleAssignedPayload = z.object({
+  bom_id: z.string().min(1),
+  originator_peer: z.string().min(1),
+  role: z.enum(['originator', 'participant', 'convener']),
+  convener_peer: z.string().min(1).optional(),
+});
+
+export const FederationHandoffStartedPayload = z.object({
+  bom_id: z.string().min(1),
+  from_peer: z.string().min(1),
+  to_peer: z.string().min(1),
+  reason: z.string().min(1),
+});
+
+export const FederationHandoffCompletedPayload = z.object({
+  bom_id: z.string().min(1),
+  from_peer: z.string().min(1),
+  to_peer: z.string().min(1),
+  outcome: z.enum(['accepted', 'rejected', 'timed_out']),
+});
+
+export const Tier3AssertionRecordedPayload = z.object({
+  operator_id: z.string().min(1),
+  credential_id: z.string().min(1),
+  correlation_id: z.string().optional(),
+  scope_label: z.string().optional(),
+  expires_at: z.number().int().positive(),
+});
 
 export const PERSISTED_EVENT_KINDS: EventKindT[] = EventKind.options;
 
@@ -982,6 +1057,13 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     worker_blocked_by_signature: WorkerBlockedBySignaturePayload,
     capability_override_changed: CapabilityOverrideChangedPayload,
     actor_permission_changed: ActorPermissionChangedPayload,
+    // v0.7 Phase 3 — federation roles + lifecycle.
+    peer_joined: PeerJoinedPayload,
+    peer_left: PeerLeftPayload,
+    bom_role_assigned: BomRoleAssignedPayload,
+    federation_handoff_started: FederationHandoffStartedPayload,
+    federation_handoff_completed: FederationHandoffCompletedPayload,
+    tier3_assertion_recorded: Tier3AssertionRecordedPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);

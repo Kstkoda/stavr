@@ -21,6 +21,7 @@
  * `src/security/actor-permissions.ts`.
  */
 import type { Express, Request, Response } from 'express';
+import type { Broker } from '../broker.js';
 import { WebAuthnCeremonyError, type WebAuthnCoordinator } from './webauthn.js';
 import type { IdentityStore, RegisteredCredential } from './identity-store.js';
 
@@ -29,6 +30,10 @@ export interface MountOptions {
   getCoordinator: () => WebAuthnCoordinator;
   /** Returns the identity store (for list / revoke / recent endpoints). */
   getIdentityStore: () => IdentityStore;
+  /** Optional broker for emitting `tier3_assertion_recorded` events after
+   *  a successful assertion. When absent, the audit event is skipped — useful
+   *  for stand-alone tests, but the daemon always supplies this. */
+  getBroker?: () => Broker;
 }
 
 const DEFAULT_OPERATOR = 'operator';
@@ -116,11 +121,37 @@ export function mountWebAuthnRoutes(app: Express, opts: MountOptions): void {
         typeof req.body?.assertionTtlMs === 'number' && req.body.assertionTtlMs > 0
           ? Math.min(req.body.assertionTtlMs, 5 * 60 * 1000)
           : undefined;
+      const correlationIdReq =
+        typeof req.body?.correlationId === 'string' && req.body.correlationId.length > 0
+          ? (req.body.correlationId as string)
+          : undefined;
+      const scopeLabelReq =
+        typeof req.body?.scopeLabel === 'string' && req.body.scopeLabel.length > 0
+          ? (req.body.scopeLabel as string)
+          : undefined;
       const result = await opts.getCoordinator().finishAuthentication({
         operatorId,
         response,
         ...(ttlMs !== undefined ? { assertionTtlMs: ttlMs } : {}),
       });
+      // v0.7 Phase 3 — audit the successful assertion. The broker is
+      // optional so the routes module stays usable in stand-alone tests.
+      const broker = opts.getBroker?.();
+      if (broker) {
+        void broker.publish({
+          kind: 'tier3_assertion_recorded',
+          at: new Date().toISOString(),
+          source_agent: 'stavr-webauthn',
+          ...(correlationIdReq !== undefined ? { correlation_id: correlationIdReq } : {}),
+          payload: {
+            operator_id: operatorId,
+            credential_id: result.credentialId,
+            ...(correlationIdReq !== undefined ? { correlation_id: correlationIdReq } : {}),
+            ...(scopeLabelReq !== undefined ? { scope_label: scopeLabelReq } : {}),
+            expires_at: result.expiresAt,
+          },
+        });
+      }
       res.json({
         ok: true,
         assertion_id: result.assertionId,
