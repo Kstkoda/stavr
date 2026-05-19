@@ -34,6 +34,7 @@ export const OPERATIONAL_KINDS: ReadonlySet<string> = new Set([
   'sse_session_force_removed',
   'mcp_session_deleted',
   'retention_swept',
+  'perf_sample',
 ]);
 
 /**

@@ -124,6 +124,9 @@ export const EventKind = z.enum([
   // v0.6.9 P9 — per-actor permission tier changed (matrix row written,
   //             reset, or filled by a named-policy apply).
   'actor_permission_changed',
+  // v0.6.11 Phase 3 — periodic per-endpoint perf snapshot
+  //             (HTTP routes + MCP methods). Operational; retained briefly.
+  'perf_sample',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
