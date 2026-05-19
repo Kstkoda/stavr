@@ -76,3 +76,66 @@ Contributions to this project are accepted under the Developer Certificate of
 Origin (DCO) version 1.1 (https://developercertificate.org/). Each commit must
 be signed off with `git commit -s` to attest that the contributor authored the
 code or has rights to contribute it under the project's license.
+
+================================================================================
+THIRD-PARTY RUNTIME DEPENDENCIES
+================================================================================
+
+stavR depends on the following third-party Node packages at runtime. Each is
+distributed under its own license; the canonical license text travels with the
+package itself in node_modules/<pkg>/LICENSE. License identifiers below use
+SPDX shortcodes.
+
+Model Context Protocol SDK
+--------------------------
+@modelcontextprotocol/sdk (MIT) — official TypeScript SDK for MCP servers and
+clients. Used by the daemon HTTP / stdio transports and by the worker-spawner
+adapter (v0.7 PR alpha) to invoke worker MCP child processes.
+https://github.com/modelcontextprotocol/typescript-sdk
+
+WebAuthn server library
+-----------------------
+@simplewebauthn/server (MIT) — added in v0.7 Phase 1. Validates registration
+attestations and authentication assertions against the operator's passkey.
+Authors: Matthew Miller and contributors.
+https://github.com/MasterKale/SimpleWebAuthn
+
+mDNS service discovery
+----------------------
+bonjour-service (MIT) — added in v0.7 Phase 2. Advertises this daemon as
+_stavr._tcp.local on the LAN and discovers other stavR instances for the
+federation peer registry. Active maintained fork of the original `bonjour`
+package by ON LX Ltd. and contributors.
+https://github.com/onlxltd/bonjour-service
+
+Database and persistence
+------------------------
+better-sqlite3 (MIT) — synchronous SQLite bindings backing runestone.db.
+yaml (ISC) — YAML parser used for peers.yaml + worker-mcp-servers.yaml +
+            operator-supplied policy presets.
+
+HTTP and observability
+----------------------
+express (MIT) — HTTP server framework for the dashboard + /api/* routes.
+zod (MIT) — schema validation across the broker event surface and BOM types.
+@opentelemetry/sdk-node (Apache-2.0) — OpenTelemetry SDK used for tracing.
+pino (MIT) — structured logger used in production mode.
+
+Each runtime dependency contributes its own LICENSE file under node_modules.
+No code is statically vendored from these packages; they are consumed as
+declared dependencies in package.json and resolved at npm install time.
+
+================================================================================
+v0.7 FAMILY-SCALE INFRASTRUCTURE
+================================================================================
+
+The v0.7 federation layer (peers.yaml + mDNS + WebAuthn passkeys) was designed
+in conversation with Cowork-Claude during the 2026-05-18/19 session that
+produced ADR-042. Five interlocking decisions (federation roles, peer
+discovery, operator identity, instruction-flow visualization, worker
+polymorphism) were brainstormed via the 10-3-1 ideation rule and locked in
+ADR-042 with cross-references to ADR-034 §B (family-scale positioning).
+
+stavR's WebAuthn use is conventional — passkey as the operator's root
+identity, with Tier 3 EXPLICIT actions gated on a fresh assertion. The
+FIDO Alliance and W3C are credited as authors of the underlying specs.
