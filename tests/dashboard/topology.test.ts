@@ -226,6 +226,19 @@ describe('Topology page — unit', () => {
     expect(html).toContain('GitHub');
   });
 
+  it('v0.6.10 Task 4c — renders the particle click-inspector with placeholder + cross-link', () => {
+    const html = renderTopologyPage(snapshot());
+    expect(html).toContain('data-role="topo-particle-inspector"');
+    expect(html).toContain('data-role="tpi-source-agent"');
+    expect(html).toContain('data-role="tpi-signed-by"');
+    expect(html).toContain('data-role="tpi-corr"');
+    expect(html).toContain('data-role="tpi-payload"');
+    expect(html).toContain('data-role="tpi-eventlog"');
+    // v0.7 passkey placeholder is the canonical copy from the dispatch.
+    expect(html).toContain('v0.7 will add operator passkey signature');
+    expect(html).toContain('View in event log');
+  });
+
   it('v0.6.10 Task 4b — emits a flow-particle surface for SSE-driven instruction animation', () => {
     const html = renderTopologyPage(snapshot());
     expect(html).toContain('data-role="topo-particles"');

@@ -59,6 +59,11 @@ import {
   TOPOLOGY_FLOW_PARTICLES_CSS,
   TOPOLOGY_FLOW_PARTICLES_JS,
 } from '../widgets/topology-flow-particles.js';
+import {
+  renderParticleInspector,
+  TOPOLOGY_PARTICLE_INSPECTOR_CSS,
+  TOPOLOGY_PARTICLE_INSPECTOR_JS,
+} from '../widgets/topology-particle-inspector.js';
 
 export type { InstalledBrickLite } from '../adapters/topology.js';
 
@@ -1456,6 +1461,9 @@ export function renderTopologyPage(data?: TopologyData): string {
     `</div>`,
     `</div>`,
     renderDrawer(),
+    // v0.6.10 Task 4c — particle click-inspector, slides in from the
+    // right with forensic detail on the clicked particle's event.
+    renderParticleInspector(),
     `<script id="topo-events" type="application/json">${JSON.stringify(tickMarkers)}</script>`,
   ].join('');
 
@@ -1463,7 +1471,7 @@ export function renderTopologyPage(data?: TopologyData): string {
     title: 'Stavr — Topology',
     activePage: 'topology',
     body,
-    head: `<style>${TOPOLOGY_CSS}\n${TOPOLOGY_TIMELINE_CSS}\n${TOPOLOGY_ACTOR_NODES_CSS}\n${TOPOLOGY_FLOW_PARTICLES_CSS}</style>`,
-    script: `${TOPOLOGY_JS}\n${TOPOLOGY_TIMELINE_JS}\n${TOPOLOGY_FLOW_PARTICLES_JS}`,
+    head: `<style>${TOPOLOGY_CSS}\n${TOPOLOGY_TIMELINE_CSS}\n${TOPOLOGY_ACTOR_NODES_CSS}\n${TOPOLOGY_FLOW_PARTICLES_CSS}\n${TOPOLOGY_PARTICLE_INSPECTOR_CSS}</style>`,
+    script: `${TOPOLOGY_JS}\n${TOPOLOGY_TIMELINE_JS}\n${TOPOLOGY_FLOW_PARTICLES_JS}\n${TOPOLOGY_PARTICLE_INSPECTOR_JS}`,
   });
 }
