@@ -16,6 +16,7 @@ import {
 import { loadChannelStatuses } from './dashboard/data/channels.js';
 import { fetchToolsData } from './dashboard/data/tools-data.js';
 import { fetchWorkerCounters } from './dashboard/data/worker-counters.js';
+import { fetchHostCeilingData } from './dashboard/data/host-ceiling.js';
 import { fetchTopologyExtras } from './dashboard/data/topology-data.js';
 import { deriveLifecycleState } from './workers/lifecycle.js';
 import { fetchPermissionsData } from './dashboard/data/permissions-data.js';
@@ -1452,6 +1453,7 @@ export function mountDashboardRoutes(
         kind: b.kind,
         enabled: b.enabled,
       })),
+      hostCeiling: fetchHostCeilingData(broker),
     };
   }
 
