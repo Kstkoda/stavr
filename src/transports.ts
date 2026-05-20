@@ -445,6 +445,60 @@ export async function mountTransports(
       }
     });
 
+    // v0.6.12 Phase 3 — storage snapshot for the engine detail page.
+    // Returns runestone.db size + per-table row counts + recent retention
+    // sweep events. Loopback-only, read-only. Consumed by the Phase 3
+    // Storage panel on /dashboard/diagnostics/engine.
+    app.get('/dashboard/api/diagnostics/storage', (_req: Request, res: Response) => {
+      try {
+        const raw = broker.store.rawDb;
+        const pageCount = raw.pragma('page_count', { simple: true });
+        const pageSize  = raw.pragma('page_size', { simple: true });
+        const bytes = (typeof pageCount === 'number' && typeof pageSize === 'number')
+          ? pageCount * pageSize : null;
+        const tables: Record<string, number> = {};
+        const tableNames = ['events', 'bricks', 'workers', 'boms', 'decisions'];
+        for (const name of tableNames) {
+          try {
+            const row = raw.prepare(`SELECT COUNT(*) AS c FROM ${name}`).get() as { c: number };
+            tables[name] = row.c;
+          } catch {
+            // table missing — skip
+          }
+        }
+        // Recent retention sweeps. Each sweep emits a `retention_swept`
+        // event with the deletion counts; surface the latest 10.
+        let sweeps: Array<{ at: string; deleted: number; window_days: number | null }> = [];
+        try {
+          const rows = raw.prepare(
+            `SELECT at, payload_json FROM events WHERE kind = 'retention_swept' ORDER BY at DESC LIMIT 10`,
+          ).all() as Array<{ at: string; payload_json: string | null }>;
+          sweeps = rows.map((r) => {
+            let deleted = 0;
+            let window_days: number | null = null;
+            try {
+              const p = r.payload_json ? JSON.parse(r.payload_json) : {};
+              if (typeof p.deleted_count === 'number') deleted = p.deleted_count;
+              else if (typeof p.deleted === 'number') deleted = p.deleted;
+              else if (p.totals && typeof p.totals.deleted === 'number') deleted = p.totals.deleted;
+              if (typeof p.window_days === 'number') window_days = p.window_days;
+            } catch { /* shape-tolerant */ }
+            return { at: r.at, deleted, window_days };
+          });
+        } catch {
+          // events table missing in some test fixtures
+        }
+        res.json({
+          ok: true,
+          at: new Date().toISOString(),
+          db: { page_count: pageCount, page_size: pageSize, bytes, tables },
+          retention: { recent_sweeps: sweeps },
+        });
+      } catch (err) {
+        res.status(500).json({ ok: false, error: (err as Error).message });
+      }
+    });
+
     // bom-diagnostics-2026 C3 — on-demand diagnostic endpoints
     // (heap-snapshot, cpu-profile, diagnostic-report). All three are
     // loopback-only AND gated by STAVR_DEBUG_ENABLED=1. When the gate is off

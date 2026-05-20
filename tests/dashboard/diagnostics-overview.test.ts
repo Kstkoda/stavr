@@ -80,13 +80,14 @@ describe('Diagnostics overview — 5 tiles, no orphans', () => {
   });
 });
 
-describe('Diagnostics drill stubs — every detail route renders shell', () => {
+describe('Diagnostics drill detail pages — every route renders real content', () => {
   for (const id of ['connections', 'workers', 'federation', 'alerts'] as const) {
-    it(`${id} stub renders with breadcrumb back to overview`, () => {
+    it(`${id} renders with breadcrumb back to overview`, () => {
       const html = renderDiagnosticsDetailStub(id);
       expect(html).toContain('href="/dashboard/diagnostics"');
       expect(html).toContain(`Diagnostics · ${id}`);
-      expect(html).toContain('Phase 4');
+      // Each detail page has a summary tile grid + a roster table.
+      expect(html).toContain('diag-summary-tile');
     });
   }
 });

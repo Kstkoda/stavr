@@ -70,6 +70,77 @@ const DIAGNOSTICS_CSS = `
   padding: 4px 0;
   display: flex; flex-direction: column; gap: 10px;
 }
+/* v0.6.12 Phase 3 — Engine detail navigation primitives */
+.diag-bread {
+  font-family: var(--mono); font-size: 11px; color: var(--ink-2);
+  display: flex; align-items: center; gap: 8px;
+  padding: 2px 0;
+}
+.diag-bread a { color: var(--rust); }
+.diag-bread .sep { color: var(--ink-3); }
+.diag-jump {
+  display: flex; gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11px;
+}
+.diag-jump a {
+  padding: 4px 10px;
+  border-radius: 6px;
+  color: var(--ink-1);
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--line-2);
+}
+.diag-jump a:hover { background: rgba(255,255,255,0.06); color: var(--ink-0); }
+.diag-anchor {
+  scroll-margin-top: 60px;
+  display: flex; flex-direction: column; gap: 10px;
+  padding-top: 8px;
+}
+.diag-anchor-title {
+  margin: 8px 0 4px;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  font-family: var(--mono);
+}
+/* Storage panel — runestone.db size + retention sweep history */
+.diag-storage {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 10px;
+  padding: 12px 14px;
+}
+@media (max-width: 900px) { .diag-storage { grid-template-columns: 1fr; } }
+.diag-storage .stor-card {
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.diag-storage .stor-title {
+  font-family: var(--mono); font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ink-2);
+}
+.diag-storage .stor-big {
+  font-family: var(--mono); font-size: 18px;
+  color: var(--ink-0);
+}
+.diag-storage .stor-sub {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--ink-2);
+}
+.diag-storage .stor-list {
+  font-family: var(--mono); font-size: 11px;
+  display: flex; flex-direction: column; gap: 2px;
+  color: var(--ink-1);
+  max-height: 160px; overflow-y: auto;
+}
+.diag-storage .stor-empty {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--ink-3); font-style: italic;
+}
 
 .jobs-banner {
   display: flex; gap: 6px;
@@ -999,6 +1070,50 @@ const DIAGNOSTICS_JS = `
     }
   })();
 
+  // ---- v0.6.12 Phase 3 — Storage panel poll ----
+  (function initStoragePanel() {
+    const sizeEl = document.querySelector('[data-role="stor-db-size"]');
+    if (!sizeEl) return;
+    const metaEl = document.querySelector('[data-role="stor-db-meta"]');
+    const rowEl  = document.querySelector('[data-role="stor-row-counts"]');
+    const sweepEl = document.querySelector('[data-role="stor-sweeps"]');
+    function fmtBytes(b) {
+      if (b == null) return '—';
+      if (b < 1024) return b + ' B';
+      if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+      if (b < 1024*1024*1024) return (b/1024/1024).toFixed(1) + ' MB';
+      return (b/1024/1024/1024).toFixed(2) + ' GB';
+    }
+    async function refresh() {
+      try {
+        const r = await fetch('/dashboard/api/diagnostics/storage', { headers: { accept: 'application/json' } });
+        if (!r.ok) return;
+        const body = await r.json();
+        sizeEl.textContent = fmtBytes(body.db && body.db.bytes);
+        if (metaEl) metaEl.textContent = (body.db.page_count || 0) + ' pages · ' + (body.db.page_size || 0) + 'B page size';
+        if (rowEl) {
+          const tables = body.db.tables || {};
+          const parts = Object.keys(tables).map(function(k) { return k + ' ' + tables[k]; });
+          rowEl.textContent = parts.length ? 'rows: ' + parts.join(' · ') : 'no table counts available';
+        }
+        if (sweepEl) {
+          const sweeps = (body.retention && body.retention.recent_sweeps) || [];
+          if (sweeps.length === 0) {
+            sweepEl.innerHTML = '<div class="stor-empty">No sweep events visible yet — retention runs every 60m.</div>';
+          } else {
+            sweepEl.innerHTML = sweeps.map(function(s) {
+              const ts = s.at ? new Date(s.at).toISOString().slice(11, 19) : '—';
+              return '<div>' + ts + ' · deleted ' + (s.deleted || 0) + (s.window_days != null ? ' · window ' + s.window_days + 'd' : '') + '</div>';
+            }).join('');
+          }
+        }
+      } catch (_) {}
+    }
+    refresh();
+    if (window.__stavrCleanup) window.__stavrCleanup.setInterval(refresh, 30_000);
+    else setInterval(refresh, 30_000);
+  })();
+
   if (tail) {
     tail.addEventListener('mouseenter', function(){ paused = true; });
     tail.addEventListener('mouseleave', function(){ paused = false; });
@@ -1229,23 +1344,58 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     `</div>`,
   ].join('');
 
+  // v0.6.12 Phase 3 — breadcrumb + jump-bar so the engine detail page
+  // navigates as a real drill page, not a landing. Anchors map to the
+  // four Health / Storage / Steward / Traffic substrate groupings.
+  const breadcrumb = [
+    `<div class="diag-bread">`,
+    `<a href="/dashboard/diagnostics">Diagnostics</a>`,
+    `<span class="sep">/</span>`,
+    `<span>engine</span>`,
+    `</div>`,
+  ].join('');
+  const jumpBar = [
+    `<nav class="diag-jump" aria-label="Engine sub-sections">`,
+    `<a href="#health">Health</a>`,
+    `<a href="#storage">Storage</a>`,
+    `<a href="#steward">Steward</a>`,
+    `<a href="#traffic">Traffic</a>`,
+    `</nav>`,
+  ].join('');
+  const storagePanel = renderStoragePanel();
+
   const body = [
     `<div class="diag-page">`,
+    breadcrumb,
     `<div class="page-head">`,
     `<div>`,
-    `<h1 class="page-title">Diagnostics</h1>`,
+    `<h1 class="page-title">Engine — health · storage · steward · traffic</h1>`,
     `<div class="page-sub">Proxmox-dense sectioned trends · self-heal · live trace</div>`,
     `</div>`,
     windowBar,
     `</div>`,
+    jumpBar,
     `<div class="diag-top">${jobsBanner}</div>`,
+    `<section id="health" class="diag-anchor">`,
+    `<h2 class="diag-anchor-title">Health</h2>`,
     buildVersionsSection,
     perfSection,
+    `</section>`,
+    `<section id="storage" class="diag-anchor">`,
+    `<h2 class="diag-anchor-title">Storage</h2>`,
+    storagePanel,
+    `</section>`,
+    `<section id="steward" class="diag-anchor">`,
+    `<h2 class="diag-anchor-title">Steward</h2>`,
+    stewardPanel,
+    `</section>`,
+    `<section id="traffic" class="diag-anchor">`,
+    `<h2 class="diag-anchor-title">Traffic</h2>`,
     mcpSection,
     fleetSection,
     workerSection,
-    stewardPanel,
     `<div class="bottom-row">${healPanel}${tailPanel}</div>`,
+    `</section>`,
     `</div>`,
   ].join('');
 
@@ -1256,6 +1406,33 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     head: `<style>${DIAGNOSTICS_CSS}${STEWARD_PANEL_CSS}${BUILD_VERSIONS_CSS}</style>`,
     script: DIAGNOSTICS_JS,
   });
+}
+
+// ============== v0.6.12 Phase 3 — Storage panel (engine detail) ==============
+/**
+ * Storage panel — sqlite file size + retention sweep history.
+ *
+ * The size + sweep history are populated by page JS hitting
+ * /dashboard/api/diagnostics/storage. Server-render is the empty/stub
+ * state so the engine page is never blank.
+ */
+function renderStoragePanel(): string {
+  return [
+    `<div class="diag-storage glass">`,
+    `<div class="stor-card">`,
+    `<div class="stor-title">runestone.db</div>`,
+    `<div class="stor-big" data-role="stor-db-size">—</div>`,
+    `<div class="stor-sub" data-role="stor-db-meta">size pending — JS polls /dashboard/api/diagnostics/storage</div>`,
+    `<div class="stor-sub" data-role="stor-row-counts" style="margin-top:6px;">row counts: pending</div>`,
+    `</div>`,
+    `<div class="stor-card">`,
+    `<div class="stor-title">Retention sweeps · last 10</div>`,
+    `<div class="stor-list" data-role="stor-sweeps">`,
+    `<div class="stor-empty">No sweep events visible yet — retention runs every 60m.</div>`,
+    `</div>`,
+    `</div>`,
+    `</div>`,
+  ].join('');
 }
 
 // =================== v0.6.8 Section 0 — Build & Versions ===================
