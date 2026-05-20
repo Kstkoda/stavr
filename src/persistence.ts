@@ -1136,6 +1136,32 @@ export class EventStore {
     return { ...existing, status, pid: pid ?? existing.pid, last_activity_at: last };
   }
 
+  /**
+   * v0.6.12 Phase 5 — worker retention hard-delete. Removes worker rows
+   * where status is terminated/crashed AND ended_at is older than the
+   * cutoff. Caller computes the cutoff via observability/worker-retention.ts.
+   * Additive method — does not change the workers schema.
+   *
+   * Returns the number of rows deleted. Errors are caught + logged so the
+   * daemon scheduler treats it as best-effort, like pruneEvents.
+   */
+  deleteWorkersOlderThan(cutoffIso: string): number {
+    try {
+      const res = this.db
+        .prepare(
+          `DELETE FROM workers
+           WHERE status IN ('terminated', 'crashed')
+             AND ended_at IS NOT NULL
+             AND ended_at < ?`,
+        )
+        .run(cutoffIso);
+      return Number(res.changes ?? 0);
+    } catch (err) {
+      getLogger().error('deleteWorkersOlderThan failed; daemon continues', { error: (err as Error).message });
+      return 0;
+    }
+  }
+
   listWorkersForWatchdog(): Array<{
     id: string;
     name: string;
