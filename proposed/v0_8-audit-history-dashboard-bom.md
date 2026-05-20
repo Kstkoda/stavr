@@ -2,11 +2,23 @@
 
 > Mid-size PR (split into 2). Adds `/dashboard/history` — a single chronological + correlation-id-threaded view across decisions, trust scopes, BOMs, plans, host_exec calls, commits, PRs, and CI runs. Closes the "I can't go back and see what happened" gap exposed by today's revert-then-merge cascade. Pure read-only UI over existing data sources; no schema changes, no writes.
 
+## Refresh note (2026-05-20)
+
+This BOM was written in the v0.5/v0.6 era and its baselines are stale. It is **still valid** — the audit-history dashboard concept is sound and arguably more relevant now — but CC must treat the following as superseded:
+
+- **Test baseline:** the "≥788 passing" figure below is obsolete. Current baseline is ≈1401 passing as of 2026-05-20. CC: capture the live `npm test` count at Phase 0 (P0) and use *that* as the regression floor.
+- **PR / commit references:** the PR #30/#31/#32, "v0.6 PR #1", and commit-SHA references in the Context and P0 sections are historical examples, not current state. Ignore them as instructions.
+- **Base:** branch off **current `main`** (which now includes v0.6.12, v0.7, the ADR-044/045 closeout, and the observability spec) — not any v0.5/v0.6-era HEAD.
+- **Sensitivity:** keep `routine` (still read-only UI), but per the 2026-05-20 verification-window memory, run a `targeted` verification window, not "smoke".
+- **Cross-ref:** the observability metrics spec (`proposed/observability-metrics-spec.md`) and the Diagnostics rebuild (task #72) now exist — the History page should reuse, not duplicate, any shared data-fetcher patterns.
+
+The phase structure, file plan, and acceptance criteria below remain correct.
+
 **Estimated wall-clock**: 7–9 hours CC sequential across 2 PRs.
 
 **Sensitivity**: `routine` — read-only UI, reversible, no infra impact. CC follows standard autonomous flow per CLAUDE.md section 9.
 
-**Stop conditions**: end of any phase if `npm test` regresses (must stay ≥788 passing per current baseline post-v0.5 + autonomy timeout fix), `npm run build` fails, or new History page violates the "no writes from this surface" invariant.
+**Stop conditions**: end of any phase if `npm test` regresses (must stay at or above the live baseline captured at P0 — ≈1401 as of 2026-05-20, NOT the stale "788" figure), `npm run build` fails, or new History page violates the "no writes from this surface" invariant.
 
 **Do NOT pause for approval** between phases within a PR. Open PR at end of each phase-group (2 PRs total).
 
