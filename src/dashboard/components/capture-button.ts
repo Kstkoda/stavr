@@ -21,7 +21,7 @@ export const CAPTURE_BUTTON_CSS = `
   border: 1px solid var(--rust);
   box-shadow: 0 6px 16px var(--rust-glow), 0 0 0 1px rgba(0,0,0,0.4);
   font-size: 22px;
-  font-weight: 700;
+  font-weight: 500;
   cursor: pointer;
   display: grid;
   place-items: center;

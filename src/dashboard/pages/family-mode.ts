@@ -172,12 +172,12 @@ const FAMILY_MODE_STYLES = `
 <style>
 .peer-table { width: 100%; border-collapse: collapse; }
 .peer-table th, .peer-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line, rgba(255,255,255,.08)); }
-.peer-table th { font-weight: 600; font-size: 0.85em; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.04em; }
-.peer-name-primary { font-weight: 600; }
+.peer-table th { font-weight: 500; font-size: 0.85em; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.04em; }
+.peer-name-primary { font-weight: 500; }
 .peer-name-secondary { font-size: 0.85em; opacity: 0.6; font-family: var(--mono); }
 .peer-port { opacity: 0.6; }
 .peer-tags { font-size: 0.85em; }
-.peer-tags .tag { display: inline-block; padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,.06); border: 1px solid var(--line, rgba(255,255,255,.1)); margin-right: 4px; font-size: 0.9em; }
+.peer-tags .tag { display: inline-block; padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,.06); border: 1px solid var(--line, rgba(255,255,255,.1)); margin-right: 4px; font-size: 0.9em; }
 .peer-last-seen { opacity: 0.7; }
 .family-mode-empty ol { padding-left: 1.5em; }
 .family-mode-empty li { margin-bottom: 0.5em; }

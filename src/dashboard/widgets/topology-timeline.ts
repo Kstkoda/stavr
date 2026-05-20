@@ -198,7 +198,7 @@ export const TOPOLOGY_TIMELINE_CSS = `
 }
 .topo-tl-head {
   display: flex; align-items: center; gap: 12px;
-  font-family: var(--mono); font-size: 10.5px;
+  font-family: var(--mono); font-size: 11px;
   color: var(--ink-2);
 }
 .topo-tl-label { letter-spacing: .12em; text-transform: uppercase; color: var(--ink-1); }
@@ -208,7 +208,7 @@ export const TOPOLOGY_TIMELINE_CSS = `
   background: transparent; color: var(--ink-2);
   border: 1px solid var(--line-2);
   padding: 2px 8px; border-radius: 999px;
-  font-family: var(--mono); font-size: 10px;
+  font-family: var(--mono); font-size: 11px;
   cursor: pointer; line-height: 1.2;
 }
 .topo-tl-zoom[aria-pressed="true"] {
@@ -260,7 +260,7 @@ export const TOPOLOGY_TIMELINE_CSS = `
   border: 1px solid var(--line-2);
   border-radius: 6px;
   padding: 6px 10px;
-  font-family: var(--mono); font-size: 10.5px;
+  font-family: var(--mono); font-size: 11px;
   white-space: nowrap;
   opacity: 0; pointer-events: none;
   transform: translateX(-50%);
@@ -270,15 +270,15 @@ export const TOPOLOGY_TIMELINE_CSS = `
 .topo-tl-tooltip[data-open="true"] { opacity: 1; }
 .topo-tl-tooltip .tl-tip-h {
   color: var(--ink-2); margin-bottom: 2px;
-  letter-spacing: .08em; text-transform: uppercase; font-size: 9.5px;
+  letter-spacing: .08em; text-transform: uppercase; font-size: 11px;
 }
-.topo-tl-tooltip .tl-tip-count { color: var(--rust); font-weight: 600; }
-.topo-tl-tooltip .tl-tip-kinds { color: var(--ink-2); font-size: 10px; }
+.topo-tl-tooltip .tl-tip-count { color: var(--rust); font-weight: 500; }
+.topo-tl-tooltip .tl-tip-kinds { color: var(--ink-2); font-size: 11px; }
 .topo-tl-readout {
   position: absolute;
   right: 0; top: -22px;
   display: inline-flex; gap: 8px;
-  font-family: var(--mono); font-size: 10.5px;
+  font-family: var(--mono); font-size: 11px;
   color: var(--ink-3);
 }
 .topo-tl-readout [data-role="topo-tl-value"] {

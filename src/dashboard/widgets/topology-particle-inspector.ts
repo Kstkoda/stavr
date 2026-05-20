@@ -79,7 +79,7 @@ export const TOPOLOGY_PARTICLE_INSPECTOR_CSS = `
   width: 380px; max-width: 92vw;
   background: linear-gradient(180deg, rgba(20,22,31,.96), rgba(15,16,24,.96));
   border: 1px solid var(--line-2);
-  border-radius: 14px;
+  border-radius: 12px;
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
   box-shadow: -18px 0 44px rgba(0,0,0,.55);
@@ -100,7 +100,7 @@ export const TOPOLOGY_PARTICLE_INSPECTOR_CSS = `
   display: grid; place-items: center;
   background: var(--surface-2);
   color: var(--actor-default);
-  border-radius: 9px;
+  border-radius: 10px;
   border: 1px solid currentColor;
 }
 .topo-particle-inspector[data-actor-class="operator"] .tpi-mark { color: var(--actor-operator); }
@@ -111,13 +111,13 @@ export const TOPOLOGY_PARTICLE_INSPECTOR_CSS = `
 .tpi-id { flex: 1; min-width: 0; }
 .tpi-row1 { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--ink-0); }
 .tpi-class {
-  font-size: 9.5px;
+  font-size: 11px;
   padding: 1px 7px; border-radius: 999px;
   background: var(--surface-2); color: var(--ink-1);
   border: 1px solid var(--line-2);
   letter-spacing: .04em; text-transform: uppercase;
 }
-.tpi-row2 { font-size: 10.5px; color: var(--ink-3); margin-top: 3px; }
+.tpi-row2 { font-size: 11px; color: var(--ink-3); margin-top: 3px; }
 .tpi-close {
   background: transparent; color: var(--ink-2);
   border: 1px solid var(--line-2);
@@ -127,12 +127,12 @@ export const TOPOLOGY_PARTICLE_INSPECTOR_CSS = `
 .tpi-body { flex: 1; overflow: auto; padding: 12px 14px; }
 .tpi-field { margin-bottom: 12px; }
 .tpi-k {
-  font-size: 9.5px;
+  font-size: 11px;
   letter-spacing: .12em; text-transform: uppercase;
   color: var(--ink-3); margin-bottom: 4px;
 }
 .tpi-v {
-  font-size: 11.5px; color: var(--ink-1);
+  font-size: 12px; color: var(--ink-1);
   word-break: break-all;
   padding: 5px 8px;
   background: var(--bg-0, rgba(0,0,0,0.2));
@@ -152,7 +152,7 @@ export const TOPOLOGY_PARTICLE_INSPECTOR_CSS = `
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 8px 10px; margin: 4px 0 0 0;
-  font-size: 10.5px; color: var(--ink-1);
+  font-size: 11px; color: var(--ink-1);
   white-space: pre-wrap; word-break: break-all;
   max-height: 280px; overflow: auto;
 }

@@ -215,8 +215,8 @@ const DECIDE_CSS = `
   margin-bottom: 10px;
 }
 .decide-q {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
   color: var(--text-primary);
 }
 .decide-meta {
@@ -239,10 +239,10 @@ const DECIDE_CSS = `
 .decide-timer {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--risk-medium);
   padding: 2px 10px;
-  border-radius: 5px;
+  border-radius: 6px;
   border: 1px solid var(--risk-medium);
   background: rgba(250,204,21,0.10);
 }
@@ -262,7 +262,7 @@ const DECIDE_CSS = `
   50%      { opacity: 0.55; }
 }
 .decide-default { color: var(--text-secondary); }
-.decide-default-none { color: var(--risk-high); font-weight: 600; }
+.decide-default-none { color: var(--risk-high); font-weight: 500; }
 .decide-opts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -276,7 +276,7 @@ const DECIDE_CSS = `
   padding: 10px 14px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
-  border-radius: 7px;
+  border-radius: 6px;
   cursor: pointer;
   color: var(--text-primary);
   transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
@@ -284,9 +284,9 @@ const DECIDE_CSS = `
 .opt-btn:hover { background: var(--bg-hover); border-color: var(--accent-mcp); transform: translateY(-1px); }
 .opt-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .opt-btn.opt-default { border-color: var(--accent-mcp); }
-.opt-label { font-size: 13px; font-weight: 600; }
+.opt-label { font-size: 13px; font-weight: 500; }
 .opt-default-tag {
-  font-size: 9px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--accent-mcp);
@@ -317,7 +317,7 @@ const DECIDE_CSS = `
   gap: 8px;
   font-size: 11px;
   padding: 4px 6px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--bg-elevated);
 }
 .ctx-kind { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--accent-mcp); }
@@ -327,7 +327,7 @@ const DECIDE_CSS = `
 
 .section-h {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-secondary);
@@ -344,7 +344,7 @@ const DECIDE_CSS = `
 .resolved-card {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 6px;
   font-size: 12px;
   overflow: hidden;
 }
@@ -360,7 +360,7 @@ const DECIDE_CSS = `
 .resolved-summary::before {
   content: '▸';
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 11px;
   flex-shrink: 0;
   transition: transform 0.15s ease;
 }
@@ -374,7 +374,7 @@ const DECIDE_CSS = `
   color: var(--text-dim);
   font-size: 11px;
 }
-.resolved-chosen { color: var(--text-primary); font-weight: 600; }
+.resolved-chosen { color: var(--text-primary); font-weight: 500; }
 .resolved-elapsed { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .resolved-detail {
   padding: 0 12px 12px 28px;
@@ -394,7 +394,7 @@ const DECIDE_CSS = `
 }
 .resolved-meta dt { color: var(--text-dim); }
 .resolved-meta dd { color: var(--text-primary); margin: 0; }
-.resolved-meta code { font-family: var(--font-mono); font-size: 10.5px; }
+.resolved-meta code { font-family: var(--font-mono); font-size: 11px; }
 .resolved-options-head {
   font-size: 11px;
   color: var(--text-dim);
@@ -407,15 +407,15 @@ const DECIDE_CSS = `
   font-size: 11px;
   color: var(--text-secondary);
 }
-.resolved-opt-chosen { color: var(--text-primary); font-weight: 600; }
-.resolved-opt-flag { color: var(--text-dim); font-size: 10px; }
+.resolved-opt-chosen { color: var(--text-primary); font-weight: 500; }
+.resolved-opt-flag { color: var(--text-dim); font-size: 11px; }
 .resolved-links { display: flex; gap: 10px; }
 .resolved-link {
   color: #4ea2d8;
   text-decoration: none;
   font-size: 11px;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: rgba(78, 162, 216, 0.08);
 }
 .resolved-link:hover { background: rgba(78, 162, 216, 0.18); }

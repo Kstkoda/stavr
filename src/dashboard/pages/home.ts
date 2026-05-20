@@ -200,13 +200,13 @@ const HOME_CSS = `
   padding: 12px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   transition: border-color 0.12s ease, transform 0.12s ease;
 }
 .action:hover { border-color: var(--border-strong); transform: translateY(-1px); }
 .action-label {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
 }
 .action-sub {

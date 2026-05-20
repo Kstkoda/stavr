@@ -93,7 +93,7 @@ export const TOPOLOGY_PERMISSIONS_DRAWER_CSS = `
   width: 400px; max-width: 92vw;
   background: linear-gradient(180deg, rgba(20,22,31,.96), rgba(15,16,24,.96));
   border: 1px solid var(--line-2);
-  border-radius: 14px;
+  border-radius: 12px;
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
   box-shadow: 18px 0 44px rgba(0,0,0,.55);
@@ -128,11 +128,11 @@ export const TOPOLOGY_PERMISSIONS_DRAWER_CSS = `
 .tpd-id { flex: 1; min-width: 0; }
 .tpd-actor-label {
   display: block;
-  font-size: 13px; color: var(--ink-0); font-weight: 600;
+  font-size: 13px; color: var(--ink-0); font-weight: 500;
 }
 .tpd-actor-meta {
   display: block;
-  font-size: 10.5px; color: var(--ink-3); margin-top: 2px;
+  font-size: 11px; color: var(--ink-3); margin-top: 2px;
 }
 .tpd-close {
   background: transparent; color: var(--ink-2);
@@ -152,7 +152,7 @@ export const TOPOLOGY_PERMISSIONS_DRAWER_CSS = `
 .tpd-empty {
   color: var(--ink-3);
   font-style: italic;
-  font-size: 11.5px;
+  font-size: 12px;
   padding: 16px 4px;
 }
 .tpd-row {
@@ -162,7 +162,7 @@ export const TOPOLOGY_PERMISSIONS_DRAWER_CSS = `
   padding: 6px 8px;
   background: var(--bg-glass);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 11px;
 }
 .tpd-tool-id {
@@ -175,14 +175,14 @@ export const TOPOLOGY_PERMISSIONS_DRAWER_CSS = `
   background: var(--bg-0, rgba(0,0,0,0.2));
   color: var(--ink-1);
   border: 1px solid var(--line-2);
-  border-radius: 5px;
+  border-radius: 6px;
   padding: 3px 6px;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
 }
 .tpd-row .tpd-l0 {
   display: inline-flex; align-items: center; gap: 4px;
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 8px;
   border-radius: 999px;
   cursor: pointer;

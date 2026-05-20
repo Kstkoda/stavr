@@ -46,8 +46,8 @@ export const SCRUBBER_CSS = `
   gap: 14px;
 }
 .scrubber-label {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-dim);

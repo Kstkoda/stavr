@@ -299,7 +299,7 @@ const PLANS_CSS = `
 .risk-glyph {
   width: 16px;
   text-align: center;
-  font-weight: 700;
+  font-weight: 500;
 }
 .risk-glyph-ok   { color: var(--risk-low); }
 .risk-glyph-warn { color: var(--risk-medium); }
@@ -311,8 +311,8 @@ const PLANS_CSS = `
 .risk-chips { display: flex; gap: 4px; flex-wrap: wrap; }
 .risk-chip {
   padding: 1px 7px;
-  border-radius: 4px;
-  font-size: 10px;
+  border-radius: 6px;
+  font-size: 11px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   border: 1px solid var(--border-strong);
 }
@@ -334,7 +334,7 @@ const PLANS_CSS = `
 }
 .step-header {
   display: contents;
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-dim);
@@ -342,7 +342,7 @@ const PLANS_CSS = `
 .step-header > span {
   border-bottom: 1px solid var(--border);
   padding-bottom: 6px;
-  font-weight: 700;
+  font-weight: 500;
 }
 .step-cell {
   font-size: 12px;
@@ -364,9 +364,9 @@ const PLANS_CSS = `
 }
 .btn {
   padding: 7px 14px;
-  border-radius: 7px;
+  border-radius: 6px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.03em;
   border: 1px solid var(--border-strong);
   background: var(--bg-elevated);
@@ -401,7 +401,7 @@ const PLANS_CSS = `
   background: var(--bg-popover, rgba(28,30,40,0.85));
   border: 1px solid var(--line);
   border-left: 3px solid var(--info, #6ea8fe);
-  border-radius: 7px;
+  border-radius: 6px;
   font-size: 12px;
   color: var(--ink-0);
   backdrop-filter: blur(14px);

@@ -232,10 +232,10 @@ export const TOPOLOGY_ACTOR_NODES_CSS = `
 }
 
 .gnode.actor-node .node-label {
-  font-weight: 600;
+  font-weight: 500;
 }
 .gnode.actor-node .node-label .role {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 `;

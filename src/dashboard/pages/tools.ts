@@ -104,7 +104,7 @@ const TOOLS_CSS = `
 .tools-pending-banner {
   background: rgba(250, 156, 76, 0.08);
   border: 1px solid rgba(250, 156, 76, 0.3);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 8px 12px;
   color: var(--ink-dim);
   font-size: 13px;
@@ -120,7 +120,7 @@ const TOOLS_CSS = `
 .tools-toolbar select {
   background: rgba(20, 22, 31, 0.55);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 6px 10px;
   color: var(--ink);
   font-size: 13px;
@@ -160,7 +160,7 @@ const TOOLS_CSS = `
 .tools-cat {
   font-size: 11px;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.06);
   color: var(--ink-dim);
   white-space: nowrap;
@@ -180,8 +180,8 @@ const TOOLS_CSS = `
 }
 .tools-tier {
   padding: 2px 6px;
-  border-radius: 4px;
-  font-weight: 600;
+  border-radius: 6px;
+  font-weight: 500;
   font-size: 11px;
 }
 .tools-tier-AUTO     { background: rgba(126, 211, 102, 0.18); color: #7ed366; }
@@ -199,7 +199,7 @@ const TOOLS_CSS = `
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink-dim);
   font-family: var(--mono);
   margin-left: auto;
@@ -210,7 +210,7 @@ const TOOLS_CSS = `
 }
 .tools-tier-legend .tl::before {
   content: ""; display: inline-block;
-  width: 8px; height: 8px; border-radius: 2px;
+  width: 8px; height: 8px; border-radius: 6px;
 }
 .tools-tier-legend .tl-AUTO::before     { background: #7ed366; }
 .tools-tier-legend .tl-CONFIRM::before  { background: #4ea2d8; }
@@ -218,7 +218,7 @@ const TOOLS_CSS = `
 .tools-tier-legend .tl-NO_GO::before    { background: #d84e4e; }
 .tools-rev {
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: 6px;
   font-size: 11px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--ink-dim);
@@ -295,7 +295,7 @@ const TOOLS_CSS = `
 .tools-card[data-tier="EXPLICIT"] .tools-id,
 .tools-card[data-tier="NO_GO"]    .tools-id {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--ink-0, #fff);
 }
 `;

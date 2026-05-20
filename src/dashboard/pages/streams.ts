@@ -140,7 +140,7 @@ const STREAMS_CSS = `
   font-size: 13px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
-  border-radius: 7px;
+  border-radius: 6px;
   color: var(--text-primary);
   font-family: inherit;
 }
@@ -150,7 +150,7 @@ const STREAMS_CSS = `
   font-size: 12px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
-  border-radius: 7px;
+  border-radius: 6px;
   color: var(--text-primary);
   font-family: inherit;
 }
@@ -193,7 +193,7 @@ const STREAMS_CSS = `
   background: rgba(255,255,255,.02);
   border-radius: 10px 10px 0 0;
 }
-.pane-name { font-size: 12px; font-weight: 600; color: var(--text-primary); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane-name { font-size: 12px; font-weight: 500; color: var(--text-primary); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pane-type {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 11px;
@@ -257,7 +257,7 @@ const STREAMS_CSS = `
   position: absolute;
   top: 20px;
   right: 24px;
-  font-size: 28px;
+  font-size: 22px;
   background: transparent;
   border: 0;
   color: var(--text-secondary);

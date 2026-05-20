@@ -110,6 +110,6 @@ export const BRICK_CSS = `
 .brick:focus-visible {
   outline: 2px solid var(--accent-mcp);
   outline-offset: 2px;
-  border-radius: 9px;
+  border-radius: 10px;
 }
 `;

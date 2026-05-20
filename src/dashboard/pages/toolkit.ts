@@ -106,7 +106,7 @@ const TOOLKIT_CSS = `
   gap: 18px;
   min-height: 120px;
   padding: 10px;
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px dashed transparent;
 }
 .brick-zone.above { align-items: flex-end; }
@@ -125,7 +125,7 @@ const TOOLKIT_CSS = `
   gap: 6px;
   cursor: pointer;
   padding: 6px;
-  border-radius: 8px;
+  border-radius: 10px;
   transition: background 0.12s ease;
 }
 .brick-tile:hover { background: var(--bg-elevated); }
@@ -136,7 +136,7 @@ const TOOLKIT_CSS = `
   gap: 4px;
   text-align: center;
 }
-.brick-tile-name { font-size: 11px; color: var(--text-primary); font-weight: 600; }
+.brick-tile-name { font-size: 11px; color: var(--text-primary); font-weight: 500; }
 
 .toolkit-side {
   background: var(--bg-glass);
@@ -185,9 +185,9 @@ const TOOLKIT_CSS = `
   width: 100%;
 }
 .cfg-input:focus { outline: 2px solid var(--accent-mcp); outline-offset: 1px; }
-.cfg-secret-note { font-size: 10px; color: var(--text-dim); }
+.cfg-secret-note { font-size: 11px; color: var(--text-dim); }
 .cfg-headers-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; align-items: center; }
-.btn { padding: 7px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; border: 1px solid var(--border-strong); background: var(--bg-elevated); color: var(--text-primary); cursor: pointer; }
+.btn { padding: 7px 14px; border-radius: 6px; font-size: 12px; font-weight: 500; border: 1px solid var(--border-strong); background: var(--bg-elevated); color: var(--text-primary); cursor: pointer; }
 .btn.primary { background: rgba(96,165,250,0.15); border-color: var(--accent-mcp); color: var(--accent-mcp); }
 .btn.primary:hover { background: rgba(96,165,250,0.30); }
 .btn.ghost   { background: transparent; }
@@ -426,11 +426,11 @@ export function renderToolkitPage(data?: ToolkitData): string {
     `</div>`,
     `<h2 class="card-title" style="margin-top:6px;">Colour key</h2>`,
     `<ul style="list-style:none;padding:0;margin:0;font-size:12px;display:flex;flex-direction:column;gap:6px;">`,
-    `<li><span style="display:inline-block;width:10px;height:10px;background:var(--accent-ai-external);border-radius:2px;margin-right:6px;"></span> external AI</li>`,
-    `<li><span style="display:inline-block;width:10px;height:10px;background:var(--accent-ai-internal);border-radius:2px;margin-right:6px;"></span> internal AI</li>`,
-    `<li><span style="display:inline-block;width:10px;height:10px;background:var(--accent-mcp);border-radius:2px;margin-right:6px;"></span> MCP utility</li>`,
-    `<li><span style="display:inline-block;width:10px;height:10px;background:var(--accent-connector-above);border-radius:2px;margin-right:6px;"></span> connector (above bus)</li>`,
-    `<li><span style="display:inline-block;width:10px;height:10px;background:var(--accent-connector-below);border-radius:2px;margin-right:6px;"></span> connector (below bus)</li>`,
+    `<li><span style="display:inline-block;width:10px;height:10px;background:var(--accent-ai-external);border-radius: 6px;margin-right:6px;"></span> external AI</li>`,
+    `<li><span style="display:inline-block;width:10px;height:10px;background:var(--accent-ai-internal);border-radius: 6px;margin-right:6px;"></span> internal AI</li>`,
+    `<li><span style="display:inline-block;width:10px;height:10px;background:var(--accent-mcp);border-radius: 6px;margin-right:6px;"></span> MCP utility</li>`,
+    `<li><span style="display:inline-block;width:10px;height:10px;background:var(--accent-connector-above);border-radius: 6px;margin-right:6px;"></span> connector (above bus)</li>`,
+    `<li><span style="display:inline-block;width:10px;height:10px;background:var(--accent-connector-below);border-radius: 6px;margin-right:6px;"></span> connector (below bus)</li>`,
     `</ul>`,
     `</aside>`,
     `</div>`,

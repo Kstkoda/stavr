@@ -106,6 +106,25 @@ export const TOKENS_CSS = `
   --glass-blur: 14px;
   --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* === v0.6.12 Phase 1 — canonical design tokens (honesty pass) ===
+   * Before: 18 distinct font-sizes (sub-pixel + below-11 floor present),
+   *         6 weights, 17 radii. After: 7/2/4. See recon-findings doc.
+   * Codemod replaced raw values in CSS template literals; these vars are
+   * for new code — prefer them over fresh literals. */
+  --font-size-xs:  11px;
+  --font-size-sm:  12px;
+  --font-size-md:  13px;
+  --font-size-lg:  14px;
+  --font-size-xl:  16px;
+  --font-size-2xl: 18px;
+  --font-size-3xl: 22px;
+  --font-weight-regular: 400;
+  --font-weight-strong:  500;
+  --radius-sm:   6px;
+  --radius-md:  10px;
+  --radius-lg:  12px;
+  --radius-pill: 999px;
 }
 
 /* Glass utility — every panel/band/card uses this. */
@@ -119,7 +138,7 @@ export const TOKENS_CSS = `
 .glass-strong {
   background: var(--bg-glass-2);
   border: 1px solid var(--line-2);
-  border-radius: 14px;
+  border-radius: 12px;
   backdrop-filter: blur(28px) saturate(150%);
   -webkit-backdrop-filter: blur(28px) saturate(150%);
 }
