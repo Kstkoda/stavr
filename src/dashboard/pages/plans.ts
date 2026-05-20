@@ -710,8 +710,16 @@ export function renderPlansPage(data?: PlansData): PlansPageRender {
     boms: [],
     totals: { proposed: 0, approved: 0, running: 0, done: 0, failed: 0, cancelled: 0, rejected: 0 },
   };
+  // v0.6.12 Phase 10 — honesty relabel. Previous copy said "propose one
+  // and it'll appear here" but there's no Propose button on this page and
+  // no /dashboard/plans/new route. Be honest: BOMs come from Capture-this
+  // (Steward route) or from CC dispatch (e.g. `claude /loop` writing to
+  // proposed/*.md). Propose UI lands in v0.7.
   const rows = snapshot.boms.length === 0
-    ? `<div class="empty-plans">No BOMs yet — propose one and it'll appear here.</div>`
+    ? `<div class="empty-plans">
+        <strong>No BOMs yet.</strong>
+        BOMs come from <a href="/dashboard/decide" style="color:var(--rust);">Capture-this</a> (Steward route) or from a CC dispatch writing to <code>proposed/*.md</code>. The in-dashboard <em>Propose</em> form lands in v0.7.
+      </div>`
     : snapshot.boms.map(renderBomRow).join('');
   // v0.6.10 Task 2 — in-flight BOMs sidebar lifted from Topology.
   const inFlightBoms = snapshot.inFlightBoms ?? [];
