@@ -32,6 +32,7 @@ import { startMemoryPoller, type MemoryPollerStop } from './observability/memory
 import { startPerfPoller, type PerfPollerStop } from './observability/perf-poller.js';
 import { startRssWatchdog, type RssWatchdogStop } from './observability/rss-watchdog.js';
 import { resolveRetentionOpts } from './observability/retention.js';
+import { resolveWorkerRetentionOpts, hardDeleteCutoffIso } from './observability/worker-retention.js';
 import { startOtel, type StartedOtel } from './observability/otel.js';
 import { startEventLoopMonitor, type EventLoopMonitorStop } from './observability/event-loop.js';
 
@@ -391,6 +392,42 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     60 * 60_000,
   );
   retentionHandle.unref?.();
+
+  // v0.6.12 Phase 5 — worker hard-delete retention. Runs alongside the
+  // events retention sweep. STAVR_WORKER_HARD_DELETE_DAYS controls the
+  // cutoff (default 30); UI archive window (4h default) is a separate
+  // filter applied in the dashboard data fetchers — no DB change.
+  const runWorkerRetention = async (trigger: 'boot' | 'scheduled'): Promise<void> => {
+    try {
+      const opts = resolveWorkerRetentionOpts();
+      const cutoff = hardDeleteCutoffIso(opts);
+      const deleted = store.deleteWorkersOlderThan(cutoff);
+      if (deleted > 0) {
+        await broker
+          .publish({
+            kind: 'retention_swept',
+            at: new Date().toISOString(),
+            source_agent: 'stavr-daemon',
+            payload: {
+              trigger,
+              subject: 'workers',
+              deleted_count: deleted,
+              cutoff,
+              policy: opts,
+            },
+          })
+          .catch(() => {});
+      }
+    } catch (err) {
+      logger.error('worker retention sweep failed; daemon continues', { error: (err as Error).message });
+    }
+  };
+  void runWorkerRetention('boot');
+  const workerRetentionHandle: ReturnType<typeof setInterval> = setInterval(
+    () => void runWorkerRetention('scheduled'),
+    60 * 60_000,
+  );
+  workerRetentionHandle.unref?.();
 
   // v0.4 — runtime-toggle expiry sweep. Default TTL when an operator
   // enables a debug endpoint from the dashboard is 60 minutes; we sweep

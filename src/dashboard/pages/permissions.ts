@@ -53,9 +53,14 @@ function renderLayer0Row(t: PermissionsToolSummary): string {
     : '';
   const pillClass = t.disabledNow ? 'perm-pill-off' : 'perm-pill-on';
   const pillText = t.disabledNow ? 'DISABLED' : 'ENABLED';
+  // v0.6.12 Phase 7 — tier-color badge per row + data attributes for filtering.
+  const tierLabel = t.defaultTier === 'NO_GO' ? 'NO-GO' : t.defaultTier;
+  const tierCls = `perm-tier-${t.defaultTier.toLowerCase().replace('_', '-')}`;
+  const stateAttr = t.disabledNow ? 'disabled' : 'enabled';
   return [
-    `<tr data-tool="${escapeHtml(t.id)}">`,
-    `<td><code>${escapeHtml(t.id)}</code></td>`,
+    `<tr data-tool="${escapeHtml(t.id)}" data-category="${escapeHtml(t.category)}" data-tier="${escapeHtml(t.defaultTier)}" data-state="${stateAttr}">`,
+    `<td><code title="${escapeHtml(t.description)}">${escapeHtml(t.id)}</code></td>`,
+    `<td><span class="perm-tier-badge ${tierCls}" title="Default tier · ${escapeHtml(tierLabel)}">${escapeHtml(tierLabel)}</span></td>`,
     `<td><span class="perm-pill ${pillClass}">${pillText}</span></td>`,
     `<td><span class="perm-state">${escapeHtml(state)}</span>${until ? ` <span class="perm-state-dim">until ${escapeHtml(until)}</span>` : ''}</td>`,
     `<td class="perm-reason">${escapeHtml(reason)}</td>`,
@@ -66,6 +71,31 @@ function renderLayer0Row(t: PermissionsToolSummary): string {
     `</td>`,
     `</tr>`,
   ].join('');
+}
+
+// v0.6.12 Phase 7 — Layer 0 tools grouped by category with collapsible
+// headers. Categories sort lexically; each group's header row shows the
+// count and acts as a divider. Tools inside each group keep the same row
+// shape as before — just a `<tr class="perm-cat-head">` ahead of them.
+function renderLayer0GroupedRows(tools: PermissionsToolSummary[]): string {
+  const groups = new Map<string, PermissionsToolSummary[]>();
+  for (const t of tools) {
+    const arr = groups.get(t.category) ?? [];
+    arr.push(t);
+    groups.set(t.category, arr);
+  }
+  const out: string[] = [];
+  const orderedCats = Array.from(groups.keys()).sort();
+  for (const cat of orderedCats) {
+    const items = groups.get(cat) ?? [];
+    out.push(
+      `<tr class="perm-cat-head" data-category="${escapeHtml(cat)}">`,
+      `<td colspan="6"><span class="perm-cat-label">${escapeHtml(cat)}</span> <span class="perm-cat-count">${items.length}</span></td>`,
+      `</tr>`,
+    );
+    for (const t of items) out.push(renderLayer0Row(t));
+  }
+  return out.join('');
 }
 
 function renderMatrixHeaderRow(tools: PermissionsToolSummary[]): string {
@@ -216,6 +246,63 @@ const PERMISSIONS_CSS = `
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* v0.6.12 Phase 7 — tier-color badges + category groupers + filter chips. */
+.perm-tier-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.perm-tier-badge.perm-tier-auto     { background: rgba(109,213,140,0.14); color: var(--ok); }
+.perm-tier-badge.perm-tier-confirm  { background: rgba(106,169,255,0.14); color: var(--sky); }
+.perm-tier-badge.perm-tier-explicit { background: rgba(226,169,66,0.14);  color: var(--warn); }
+.perm-tier-badge.perm-tier-no-go    { background: rgba(239,90,111,0.14);  color: var(--crit); }
+.perm-cat-head td {
+  background: rgba(255,255,255,0.03);
+  padding: 6px 8px;
+  border-top: 1px solid var(--line-2);
+}
+.perm-cat-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-1);
+  font-weight: 500;
+}
+.perm-cat-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-left: 6px;
+}
+.perm-filters {
+  display: flex; gap: 14px; flex-wrap: wrap;
+  align-items: center;
+  font-family: var(--mono); font-size: 11px;
+  color: var(--ink-2);
+  padding: 8px 0 12px;
+}
+.perm-filter-group { display: flex; gap: 6px; align-items: center; }
+.perm-filter-group .l { color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; }
+.perm-filter-chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  background: rgba(255,255,255,0.02);
+  color: var(--ink-1);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.perm-filter-chip[aria-pressed="true"] {
+  background: var(--rust-soft);
+  color: #ffd9c4;
+  border-color: var(--rust);
+}
 `;
 
 const PERMISSIONS_JS = `
@@ -273,6 +360,46 @@ const PERMISSIONS_JS = `
       }
     });
   });
+  // v0.6.12 Phase 7 — filter chips for tier / state / category.
+  const filterState = { tier: 'all', state: 'all', category: 'all' };
+  function applyFilters() {
+    document.querySelectorAll('tr[data-tool]').forEach(function (tr) {
+      const tier = tr.getAttribute('data-tier') || '';
+      const state = tr.getAttribute('data-state') || '';
+      const cat = tr.getAttribute('data-category') || '';
+      const matchTier = filterState.tier === 'all' || tier === filterState.tier;
+      const matchState = filterState.state === 'all' || state === filterState.state;
+      const matchCat = filterState.category === 'all' || cat === filterState.category;
+      tr.style.display = (matchTier && matchState && matchCat) ? '' : 'none';
+    });
+    // Hide category headers when their group is empty after filter.
+    document.querySelectorAll('tr.perm-cat-head').forEach(function (head) {
+      const cat = head.getAttribute('data-category') || '';
+      const matchCat = filterState.category === 'all' || cat === filterState.category;
+      let anyVisible = false;
+      let sib = head.nextElementSibling;
+      while (sib && !sib.classList.contains('perm-cat-head')) {
+        if (sib.style.display !== 'none') { anyVisible = true; break; }
+        sib = sib.nextElementSibling;
+      }
+      head.style.display = (matchCat && anyVisible) ? '' : 'none';
+    });
+  }
+  document.querySelectorAll('.perm-filter-chip').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const filter = btn.getAttribute('data-filter');
+      const value = btn.getAttribute('data-value');
+      if (!filter || !value) return;
+      filterState[filter] = value;
+      // Toggle aria-pressed within the same group.
+      const group = btn.closest('.perm-filter-group');
+      if (group) group.querySelectorAll('.perm-filter-chip').forEach(function (b) {
+        b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+      });
+      applyFilters();
+    });
+  });
+
   // v0.6.9 P6 — named-policy apply.
   const policySel = document.querySelector('[data-role="perm-policy-select"]');
   const actorSel  = document.querySelector('[data-role="perm-policy-actor"]');
@@ -316,13 +443,39 @@ const PERMISSIONS_JS = `
 export function renderPermissionsPage(data?: PermissionsData): string {
   const d = data ?? emptyPermissionsData();
 
-  const layer0Rows = d.tools.map(renderLayer0Row).join('');
+  // v0.6.12 Phase 7 — grouped Layer 0 table with category headers + filter bar.
+  const layer0Rows = renderLayer0GroupedRows(d.tools);
+  const categories = Array.from(new Set(d.tools.map((t) => t.category))).sort();
+  const filterBar = d.tools.length > 0 ? [
+    `<div class="perm-filters" data-role="perm-filters">`,
+    `<div class="perm-filter-group">`,
+    `<span class="l">tier</span>`,
+    `<button type="button" class="perm-filter-chip" data-filter="tier" data-value="all" aria-pressed="true">all</button>`,
+    `<button type="button" class="perm-filter-chip" data-filter="tier" data-value="AUTO">AUTO</button>`,
+    `<button type="button" class="perm-filter-chip" data-filter="tier" data-value="CONFIRM">CONFIRM</button>`,
+    `<button type="button" class="perm-filter-chip" data-filter="tier" data-value="EXPLICIT">EXPLICIT</button>`,
+    `<button type="button" class="perm-filter-chip" data-filter="tier" data-value="NO_GO">NO-GO</button>`,
+    `</div>`,
+    `<div class="perm-filter-group">`,
+    `<span class="l">state</span>`,
+    `<button type="button" class="perm-filter-chip" data-filter="state" data-value="all" aria-pressed="true">all</button>`,
+    `<button type="button" class="perm-filter-chip" data-filter="state" data-value="enabled">enabled</button>`,
+    `<button type="button" class="perm-filter-chip" data-filter="state" data-value="disabled">disabled</button>`,
+    `</div>`,
+    `<div class="perm-filter-group">`,
+    `<span class="l">category</span>`,
+    `<button type="button" class="perm-filter-chip" data-filter="category" data-value="all" aria-pressed="true">all</button>`,
+    ...categories.map((c) => `<button type="button" class="perm-filter-chip" data-filter="category" data-value="${escapeHtml(c)}">${escapeHtml(c)}</button>`),
+    `</div>`,
+    `</div>`,
+  ].join('') : '';
   const layer0Section = d.tools.length === 0
     ? `<div class="placeholder">No tools registered. Layer 0 has nothing to gate yet.</div>`
     : [
+        filterBar,
         `<div class="perm-matrix-wrap">`,
         `<table class="perm-table">`,
-        `<thead><tr><th>tool</th><th>state</th><th>detail</th><th>reason</th><th>action</th></tr></thead>`,
+        `<thead><tr><th>tool</th><th>default tier</th><th>state</th><th>detail</th><th>reason</th><th>action</th></tr></thead>`,
         `<tbody>${layer0Rows}</tbody>`,
         `</table>`,
         `</div>`,

@@ -13,6 +13,7 @@ import type { InstalledBrickLite } from '../adapters/topology.js';
 import { renderShell } from '../shell.js';
 import { fetchWorkerCounters } from '../data/worker-counters.js';
 import { deriveLifecycleState } from '../../workers/lifecycle.js';
+import { metricTooltip } from '../components/tooltips.js';
 
 export type DiagnosticsDetailId = 'connections' | 'workers' | 'federation' | 'alerts';
 
@@ -164,7 +165,11 @@ export function renderConnectionsDetail(bricks: InstalledBrickLite[] = []): stri
     `<div class="diag-detail">`,
     renderHeader({ id: 'connections', title: 'Connections', sub: 'MCP servers, per-row latency + error rate. Live polling every 30s.' }),
     `<div class="diag-summary">`,
-    summary.map((s) => `<div class="diag-summary-tile ${s.cls}"><div class="l">${escapeHtml(s.l)}</div><div class="v">${escapeHtml(s.v)}</div></div>`).join(''),
+    summary.map((s) => {
+      const tip = metricTooltip(s.l.toLowerCase()) ?? '';
+      const tipAttr = tip ? ` title="${tip.replace(/"/g, '&quot;')}"` : '';
+      return `<div class="diag-summary-tile ${s.cls}"${tipAttr}><div class="l">${escapeHtml(s.l)}</div><div class="v">${escapeHtml(s.v)}</div></div>`;
+    }).join(''),
     `</div>`,
     `<div class="diag-table">`,
     `<div class="diag-table-head"><span>MCP roster</span><span>${enabled.length} live</span></div>`,
@@ -219,7 +224,11 @@ export function renderWorkersDetail(workers: WorkerRecord[] = []): string {
     `<div class="diag-detail">`,
     renderHeader({ id: 'workers', title: 'Workers', sub: 'Active + last-4h workers (per Phase 5 retention). Per-worker output lives on the Streams page.' }),
     `<div class="diag-summary">`,
-    summary.map((s) => `<div class="diag-summary-tile ${s.cls}"><div class="l">${escapeHtml(s.l)}</div><div class="v">${escapeHtml(s.v)}</div></div>`).join(''),
+    summary.map((s) => {
+      const tip = metricTooltip(s.l.toLowerCase()) ?? '';
+      const tipAttr = tip ? ` title="${tip.replace(/"/g, '&quot;')}"` : '';
+      return `<div class="diag-summary-tile ${s.cls}"${tipAttr}><div class="l">${escapeHtml(s.l)}</div><div class="v">${escapeHtml(s.v)}</div></div>`;
+    }).join(''),
     `</div>`,
     `<div class="diag-table">`,
     `<div class="diag-table-head"><span>Worker roster</span><span>${workers.length} total</span></div>`,
@@ -268,7 +277,11 @@ export function renderFederationDetail(peers: PeerLite[] = []): string {
     `<div class="diag-detail">`,
     renderHeader({ id: 'federation', title: 'Federation', sub: 'Peer roster from peers.yaml + mDNS discovery. Real post-v0.7.' }),
     `<div class="diag-summary">`,
-    summary.map((s) => `<div class="diag-summary-tile ${s.cls}"><div class="l">${escapeHtml(s.l)}</div><div class="v">${escapeHtml(s.v)}</div></div>`).join(''),
+    summary.map((s) => {
+      const tip = metricTooltip(s.l.toLowerCase()) ?? '';
+      const tipAttr = tip ? ` title="${tip.replace(/"/g, '&quot;')}"` : '';
+      return `<div class="diag-summary-tile ${s.cls}"${tipAttr}><div class="l">${escapeHtml(s.l)}</div><div class="v">${escapeHtml(s.v)}</div></div>`;
+    }).join(''),
     `</div>`,
     `<div class="diag-table">`,
     `<div class="diag-table-head"><span>Peer roster</span><span>${peers.length} configured</span></div>`,
@@ -323,7 +336,11 @@ export function renderAlertsDetail(alerts: AlertLite[] = []): string {
     `<div class="diag-detail">`,
     renderHeader({ id: 'alerts', title: 'Alerts', sub: 'Active warnings + recent history. Acks record to the event log (self-heal channel).' }),
     `<div class="diag-summary">`,
-    summary.map((s) => `<div class="diag-summary-tile ${s.cls}"><div class="l">${escapeHtml(s.l)}</div><div class="v">${escapeHtml(s.v)}</div></div>`).join(''),
+    summary.map((s) => {
+      const tip = metricTooltip(s.l.toLowerCase()) ?? '';
+      const tipAttr = tip ? ` title="${tip.replace(/"/g, '&quot;')}"` : '';
+      return `<div class="diag-summary-tile ${s.cls}"${tipAttr}><div class="l">${escapeHtml(s.l)}</div><div class="v">${escapeHtml(s.v)}</div></div>`;
+    }).join(''),
     `</div>`,
     `<div class="diag-table">`,
     `<div class="diag-table-head"><span>Alerts · latest 50</span><span>${alerts.length} total</span></div>`,

@@ -25,6 +25,7 @@ import {
   formatUptime,
   type BuildVersions,
 } from '../data/build-versions.js';
+import { metricTooltip } from '../components/tooltips.js';
 
 export interface DiagnosticsData {
   bricks?: InstalledBrickLite[];
@@ -490,14 +491,17 @@ function renderGauge(label: string, value: string, sub: string, status: 'ok' | '
   const c = 2 * Math.PI * radius;
   const dash = (pct / 100) * c;
   const color = status === 'crit' ? 'var(--crit)' : status === 'warn' ? 'var(--warn)' : 'var(--ok)';
+  // v0.6.12 Phase 6 — tooltip per gauge label.
+  const tip = metricTooltip(label) ?? '';
+  const tipAttr = tip ? ` title="${tip.replace(/"/g, '&quot;')}"` : '';
   return [
-    `<div class="gauge ${status === 'ok' ? '' : status}">`,
+    `<div class="gauge ${status === 'ok' ? '' : status}"${tipAttr}>`,
     `<svg class="g-svg" viewBox="0 0 48 48" aria-hidden="true">`,
     `<circle cx="24" cy="24" r="${radius}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="3"/>`,
     `<circle cx="24" cy="24" r="${radius}" fill="none" stroke="${color}" stroke-width="3"`,
     ` stroke-dasharray="${dash.toFixed(1)} ${c.toFixed(1)}" stroke-linecap="round"`,
     ` transform="rotate(-90 24 24)"/>`,
-    `<text x="24" y="27" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--ink-0)" font-weight="600">${escapeHtml(value)}</text>`,
+    `<text x="24" y="27" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--ink-0)" font-weight="500">${escapeHtml(value)}</text>`,
     `</svg>`,
     `<div class="g-label">${escapeHtml(label)}</div>`,
     `<div class="g-sub">${escapeHtml(sub)}</div>`,
