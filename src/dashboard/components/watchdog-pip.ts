@@ -19,7 +19,7 @@ export const WATCHDOG_PIP_CSS = `
   background: rgba(109, 213, 140, 0.08);
   border: 1px solid rgba(109, 213, 140, 0.25);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.12em;
   color: var(--ok);
   text-transform: uppercase;

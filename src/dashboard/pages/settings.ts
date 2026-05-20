@@ -292,11 +292,11 @@ const SETTINGS_CSS = `
 .mode-card input[type="radio"] { display: none; }
 .mode-head { display: flex; align-items: center; gap: 10px; }
 .mode-active-flag {
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--accent-mcp);
-  font-weight: 700;
+  font-weight: 500;
 }
 .mode-desc { color: var(--text-secondary); font-size: 12px; }
 
@@ -307,7 +307,7 @@ const SETTINGS_CSS = `
 }
 .settings-table th {
   text-align: left;
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-dim);
@@ -321,7 +321,7 @@ const SETTINGS_CSS = `
 }
 .settings-table tr[data-enabled="false"] { opacity: 0.55; }
 .settings-table .muted { color: var(--text-dim); }
-.settings-table .muted.small { font-size: 10px; }
+.settings-table .muted.small { font-size: 11px; }
 .scope-id, .rule-id code, .rule-pattern code {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 11px;
@@ -353,7 +353,7 @@ const SETTINGS_CSS = `
   padding: 7px 14px;
   border-radius: 6px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   border: 1px solid var(--border-strong);
   background: var(--bg-elevated);
   color: var(--text-primary);
@@ -375,8 +375,8 @@ a.btn { display: inline-block; text-decoration: none; line-height: 1.3; }
 .source-tag {
   display: inline-block;
   padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 9px;
+  border-radius: 6px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-right: 6px;
@@ -408,7 +408,7 @@ a.btn { display: inline-block; text-decoration: none; line-height: 1.3; }
   justify-content: space-between;
   gap: 12px;
 }
-.pending-scope-title { font-weight: 600; font-size: 13px; color: var(--text-primary); }
+.pending-scope-title { font-weight: 500; font-size: 13px; color: var(--text-primary); }
 .pending-scope-id { margin-top: 2px; }
 .pending-scope-desc { font-size: 12px; color: var(--text-secondary); }
 .pending-scope-actions {
@@ -422,7 +422,7 @@ a.btn { display: inline-block; text-decoration: none; line-height: 1.3; }
   flex-direction: column;
   gap: 3px;
 }
-.pending-scope-meta { font-size: 10px; }
+.pending-scope-meta { font-size: 11px; }
 
 /* v0.6 notification channels */
 .channel-label { font-weight: 500; }
@@ -758,7 +758,7 @@ function renderDiagnosticsSection(
     const expiresAt = t?.expires_at ?? null;
     return `
       <tr data-role="diag-row" data-key="${escapeHtml(row.key)}">
-        <td>${escapeHtml(row.label)} <code style="margin-left:6px;font-size:10px;color:var(--text-dim);">${escapeHtml(row.endpoint)}</code></td>
+        <td>${escapeHtml(row.label)} <code style="margin-left:6px;font-size: 11px;color:var(--text-dim);">${escapeHtml(row.endpoint)}</code></td>
         <td>
           <label class="diag-switch">
             <input type="checkbox" data-role="diag-toggle" data-key="${escapeHtml(row.key)}"${on ? ' checked' : ''} />

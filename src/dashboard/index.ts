@@ -28,6 +28,13 @@ import { renderPermissionsPage } from './pages/permissions.js';
 import type { PermissionsData } from './data/permissions-data.js';
 import { renderCapabilitiesPage, type CapabilitiesData } from './pages/capabilities.js';
 import { renderDiagnosticsPage, type DiagnosticsData } from './pages/diagnostics.js';
+import { renderDiagnosticsOverview } from './pages/diagnostics-overview.js';
+import {
+  renderConnectionsDetail,
+  renderWorkersDetail,
+  renderFederationDetail,
+  renderAlertsDetail,
+} from './pages/diagnostics-details.js';
 import { renderSettingsPage, type SettingsData } from './pages/settings.js';
 import { renderFamilyModePage, type FamilyModeData } from './pages/family-mode.js';
 import { renderAboutPage } from './pages/about.js';
@@ -94,7 +101,7 @@ export function mountDashboardPages(
     tools:        () => renderToolsPage(deps.toolsData?.()),
     permissions:  () => renderPermissionsPage(deps.permissionsData?.()),
     capabilities: () => renderCapabilitiesPage(deps.capabilitiesData?.()),
-    diagnostics:  () => renderDiagnosticsPage(deps.diagnosticsData?.()),
+    diagnostics:  () => renderDiagnosticsOverview(deps.diagnosticsData?.()),
     settings:     () => renderSettingsPage(deps.settingsData?.()),
     'family-mode': () => renderFamilyModePage(deps.familyModeData?.()),
     about:        () => renderAboutPage(),
@@ -106,6 +113,35 @@ export function mountDashboardPages(
       sendHtml(res, render());
     });
   }
+
+  // v0.6.12 Phase 2 — Diagnostics drill routes. Engine reuses the dense
+  // existing layout (Health/Storage/Steward/Traffic), the other four
+  // render honesty stubs in Phase 2 and are filled in Phase 4.
+  app.get('/dashboard/diagnostics/engine', (_req, res) => {
+    sendHtml(res, renderDiagnosticsPage(deps.diagnosticsData?.()));
+  });
+  app.get('/dashboard/diagnostics/connections', (_req, res) => {
+    const d = deps.diagnosticsData?.();
+    sendHtml(res, renderConnectionsDetail(d?.bricks ?? []));
+  });
+  app.get('/dashboard/diagnostics/workers', (_req, res) => {
+    const d = deps.diagnosticsData?.();
+    sendHtml(res, renderWorkersDetail(d?.workers ?? []));
+  });
+  app.get('/dashboard/diagnostics/federation', (_req, res) => {
+    // peerCount on the DiagnosticsData bag is a number; until a richer
+    // peer-roster getter wires through, render N placeholder rows so the
+    // page has structure beyond the count tile.
+    const d = deps.diagnosticsData?.();
+    const count = d?.peerCount ?? 0;
+    const peers = Array.from({ length: count }, (_, i) => ({
+      id: `peer-${i + 1}`, reachable: true,
+    }));
+    sendHtml(res, renderFederationDetail(peers));
+  });
+  app.get('/dashboard/diagnostics/alerts', (_req, res) => {
+    sendHtml(res, renderAlertsDetail([]));
+  });
 }
 
 export { NAV_ENTRIES } from './shell.js';

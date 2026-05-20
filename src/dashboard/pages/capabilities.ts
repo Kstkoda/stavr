@@ -138,7 +138,7 @@ const CAP_CSS = `
   margin-bottom: 18px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 4px;
   width: max-content;
 }
@@ -150,7 +150,7 @@ const CAP_CSS = `
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.04em;
 }
 .cap-toggle button[data-active="true"] {
@@ -216,7 +216,7 @@ const CAP_CSS = `
 }
 .cap-model {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--text-primary);
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
@@ -253,7 +253,7 @@ const CAP_CSS = `
   padding: 10px 14px;
   background: var(--bg-surface);
   border-left: 3px solid var(--accent-mcp);
-  border-radius: 4px;
+  border-radius: 6px;
   color: var(--text-secondary);
   font-size: 12px;
 }
@@ -409,11 +409,11 @@ const CAP_V8_CSS = `
   display: grid;
   place-items: center;
   font-size: 22px;
-  font-weight: 800;
+  font-weight: 500;
   color: #fff8f0;
 }
 .steward-info { flex: 1; }
-.steward-name { font-size: 14px; font-weight: 700; }
+.steward-name { font-size: 14px; font-weight: 500; }
 .steward-sub  { font-size: 11px; color: var(--text-secondary); }
 .steward-pick {
   display: flex;
@@ -444,7 +444,7 @@ const CAP_V8_CSS = `
   text-align: left;
 }
 .cm-h {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-secondary);
@@ -473,7 +473,7 @@ const CAP_V8_CSS = `
 .cm-cell[data-tier="other"]  .cm-pick { border-left: 3px solid var(--text-dim); }
 .cm-warn {
   color: var(--health-warn);
-  font-weight: 700;
+  font-weight: 500;
 }
 `;
 

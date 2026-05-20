@@ -40,7 +40,7 @@ export const PILL_CSS = `
   padding: 2px 9px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   border: 1px solid var(--border-strong);

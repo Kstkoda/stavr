@@ -143,7 +143,7 @@ button { font: inherit; }
   align-items: center;
   gap: 10px;
   font-family: var(--mono);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
   letter-spacing: 0.02em;
 }
@@ -158,7 +158,7 @@ button { font: inherit; }
   box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 4px 14px var(--rust-glow);
   filter: drop-shadow(0 0 4px var(--rust-glow));
 }
-.brand .stav { color: var(--ink-0); font-weight: 700; }
+.brand .stav { color: var(--ink-0); font-weight: 500; }
 .brand .rune-i {
   color: var(--rust);
   font-family: var(--mono);
@@ -169,11 +169,11 @@ button { font: inherit; }
 /* v0.6.11 Phase 5 — daemon version chip beside the wordmark. */
 .brand-version {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 11px;
   letter-spacing: 0.04em;
   padding: 2px 7px;
   margin-left: 6px;
-  border-radius: 5px;
+  border-radius: 6px;
   background: rgba(255,255,255,0.04);
   border: 1px solid var(--line-2);
   color: var(--ink-2);
@@ -193,8 +193,8 @@ button { font: inherit; }
 }
 .nav-tab {
   padding: 6px 12px;
-  border-radius: 8px;
-  font-size: 12.5px;
+  border-radius: 10px;
+  font-size: 12px;
   color: var(--ink-1);
   border: 1px solid transparent;
   transition: background .15s ease, color .15s ease, border-color .15s ease;
@@ -261,7 +261,7 @@ svg.icon-lg { width: 22px; height: 22px; }
 }
 .page-title {
   font-size: 22px;
-  font-weight: 450;
+  font-weight: 500;
   letter-spacing: -0.02em;
   margin: 0;
   color: var(--ink-0);
@@ -277,8 +277,8 @@ svg.icon-lg { width: 22px; height: 22px; }
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
 }
 .card-title {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-3);
@@ -310,7 +310,7 @@ svg.icon-lg { width: 22px; height: 22px; }
     var(--bg-glass) 100%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.4s linear infinite;
-  border-radius: 4px;
+  border-radius: 6px;
   min-height: 14px;
 }
 .skeleton-line { height: 14px; margin: 6px 0; }
@@ -328,7 +328,7 @@ svg.icon-lg { width: 22px; height: 22px; }
   background: var(--bg-popover);
   border: 1px solid var(--line-2);
   border-left: 3px solid var(--warn);
-  border-radius: 7px;
+  border-radius: 6px;
   padding: 8px 14px;
   font-size: 12px;
   color: var(--ink-0);

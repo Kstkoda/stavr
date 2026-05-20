@@ -126,18 +126,18 @@ const PERMISSIONS_CSS = `
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   vertical-align: middle;
 }
-.perm-table th { color: var(--ink-dim); font-weight: 600; }
+.perm-table th { color: var(--ink-dim); font-weight: 500; }
 .perm-pill {
   padding: 2px 6px;
-  border-radius: 4px;
-  font-weight: 600;
+  border-radius: 6px;
+  font-weight: 500;
   font-size: 11px;
   display: inline-block;
 }
 .perm-pill-on { background: rgba(126, 211, 102, 0.18); color: #7ed366; }
 .perm-pill-off { background: rgba(216, 78, 78, 0.18); color: #d84e4e; }
 .perm-state { color: var(--ink); font-family: var(--font-mono); font-size: 11px; }
-.perm-state-dim { color: var(--ink-dim); font-size: 10px; }
+.perm-state-dim { color: var(--ink-dim); font-size: 11px; }
 .perm-reason {
   color: var(--ink-dim);
   font-style: italic;
@@ -161,14 +161,14 @@ const PERMISSIONS_CSS = `
   background: rgba(0, 0, 0, 0.3);
   color: var(--ink);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 2px 4px;
   font-size: 11px;
 }
 .perm-cell-default select { color: var(--ink-dim); }
 .perm-default-flag {
   color: var(--ink-dim);
-  font-size: 10px;
+  font-size: 11px;
   margin-left: 4px;
 }
 .perm-actor-name { font-family: var(--font-mono); }
@@ -178,7 +178,7 @@ const PERMISSIONS_CSS = `
 .perm-deferred {
   background: rgba(78, 162, 216, 0.08);
   border: 1px solid rgba(78, 162, 216, 0.30);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 8px 12px;
   color: var(--ink-dim);
   font-size: 12px;
@@ -194,7 +194,7 @@ const PERMISSIONS_CSS = `
   background: rgba(0, 0, 0, 0.3);
   color: var(--ink);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 3px 6px;
   font-size: 11px;
 }
@@ -202,7 +202,7 @@ const PERMISSIONS_CSS = `
   background: rgba(0, 0, 0, 0.3);
   color: var(--ink);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 3px 6px;
   font-size: 11px;
   width: 140px;

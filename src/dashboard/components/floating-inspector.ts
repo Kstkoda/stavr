@@ -58,17 +58,17 @@ export const FLOATING_INSPECTOR_CSS = `
 .float-inspector .fi-icon {
   width: 28px;
   height: 28px;
-  border-radius: 7px;
+  border-radius: 6px;
   display: grid;
   place-items: center;
   background: var(--rust-glow);
   color: var(--text-primary);
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 500;
 }
 .float-inspector .fi-title {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
 }
 .float-inspector .fi-sub {
@@ -85,7 +85,7 @@ export const FLOATING_INSPECTOR_CSS = `
 }
 .float-inspector .fi-section dt {
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }

@@ -157,14 +157,14 @@ const MCPS_CSS = `
   width: 32px;
   height: 32px;
   background: var(--bg-elevated);
-  border-radius: 8px;
+  border-radius: 10px;
   display: grid;
   place-items: center;
   font-size: 18px;
   flex-shrink: 0;
 }
 .mcp-name {
-  font-weight: 600;
+  font-weight: 500;
   font-size: 13px;
   display: flex;
   align-items: center;
@@ -185,9 +185,9 @@ const MCPS_CSS = `
   margin-top: 4px;
 }
 .mcp-tag {
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid var(--border);
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -229,7 +229,7 @@ const MCPS_CSS = `
 }
 .mcps-table th {
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -237,7 +237,7 @@ const MCPS_CSS = `
   font-size: 11px;
   background: var(--bg-elevated);
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
 .mcps-section { display: none; }

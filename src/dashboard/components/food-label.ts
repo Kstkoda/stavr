@@ -112,7 +112,7 @@ export const FOOD_LABEL_CSS = `
   background: var(--bg-elevated);
 }
 .food-label .fl-name {
-  font-weight: 600;
+  font-weight: 500;
   font-size: 14px;
   color: var(--text-primary);
 }
@@ -127,8 +127,8 @@ export const FOOD_LABEL_CSS = `
 }
 .food-label .fl-cell:last-child { border-right: 0; }
 .food-label .fl-label {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-dim);
@@ -136,7 +136,7 @@ export const FOOD_LABEL_CSS = `
 }
 .food-label .fl-value {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
 }
 .food-label .fl-risk.risk-low    .fl-value { color: var(--risk-low); }

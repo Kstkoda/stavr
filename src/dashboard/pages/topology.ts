@@ -580,12 +580,12 @@ const TOPOLOGY_CSS = `
   padding: 3px 9px; border-radius: 999px;
   border: 1px solid var(--line-2);
   background: var(--bg-glass);
-  font-size: 10.5px; color: var(--ink-1);
+  font-size: 11px; color: var(--ink-1);
   cursor: pointer; user-select: none;
   font-family: var(--mono);
 }
 .topo-strip .chip[aria-pressed="false"] { opacity: .35; }
-.topo-strip .chip .sw { width: 8px; height: 8px; border-radius: 2px; }
+.topo-strip .chip .sw { width: 8px; height: 8px; border-radius: 6px; }
 .topo-strip .chip.core       .sw { background: var(--t-core); }
 .topo-strip .chip.mcp-remote .sw { background: var(--t-mcp-remote); }
 .topo-strip .chip.mcp-local  .sw { background: var(--t-mcp-local); }
@@ -597,7 +597,7 @@ const TOPOLOGY_CSS = `
 .topo-strip .chip.actor      .sw {
   background: linear-gradient(135deg, var(--actor-operator), var(--actor-cc) 60%, var(--actor-cowork));
 }
-.topo-strip .chip .ct { color: var(--ink-3); font-size: 9.5px; margin-left: 3px; }
+.topo-strip .chip .ct { color: var(--ink-3); font-size: 11px; margin-left: 3px; }
 .topo-strip .grow { flex: 1; }
 .topo-strip .live-toggle {
   display: inline-flex; align-items: center; gap: 6px;
@@ -625,7 +625,7 @@ const TOPOLOGY_CSS = `
   color: var(--ink-2); font-family: var(--mono); font-size: 11px;
   min-width: 200px;
 }
-.topo-strip .search-stub .kbd { color: var(--ink-3); font-size: 10px; margin-left: auto; }
+.topo-strip .search-stub .kbd { color: var(--ink-3); font-size: 11px; margin-left: auto; }
 
 /* v0.6.11 Phase 6b — '/' search overlay */
 .topo-search-overlay {
@@ -647,7 +647,7 @@ const TOPOLOGY_CSS = `
   width: 100%;
   background: rgba(255,255,255,0.04);
   border: 1px solid var(--line-2);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 8px 12px;
   color: var(--ink-0);
   font-family: var(--mono);
@@ -774,7 +774,7 @@ const TOPOLOGY_CSS = `
   background: currentColor; opacity: .14;
 }
 .shape.round  { border-radius: 50%; }
-.shape.square { border-radius: 8px; }
+.shape.square { border-radius: 10px; }
 .gnode:hover .shape { filter: brightness(1.18); }
 
 .glyph {
@@ -782,7 +782,7 @@ const TOPOLOGY_CSS = `
   color: currentColor; z-index: 1; letter-spacing: .03em;
   display: grid; place-items: center;
 }
-.glyph.lg { font-size: 18px; font-weight: 700; }
+.glyph.lg { font-size: 18px; font-weight: 500; }
 .shape .glyph svg.icon { width: 20px; height: 20px; color: currentColor; fill: currentColor; display: block; }
 .shape.hex .glyph svg.icon { width: 18px; height: 18px; }
 
@@ -806,10 +806,10 @@ const TOPOLOGY_CSS = `
 
 .badge {
   position: absolute;
-  width: 13px; height: 13px; border-radius: 4px;
+  width: 13px; height: 13px; border-radius: 6px;
   background: var(--bg-1);
   display: grid; place-items: center;
-  font-family: var(--mono); font-size: 9px; color: var(--ink-1);
+  font-family: var(--mono); font-size: 11px; color: var(--ink-1);
   border: 1px solid var(--line-2);
 }
 .badge.stat {
@@ -833,13 +833,13 @@ const TOPOLOGY_CSS = `
 .t-actor      { color: var(--actor-default); } /* overridden per data-actor-class below */
 
 .node-label {
-  font-family: var(--mono); font-size: 10.5px;
+  font-family: var(--mono); font-size: 11px;
   color: var(--ink-0);
   text-shadow: 0 1px 3px rgba(0,0,0,.7);
   white-space: nowrap;
   text-align: center;
 }
-.node-label .role { color: var(--ink-3); font-size: 9.5px; margin-left: 4px; }
+.node-label .role { color: var(--ink-3); font-size: 11px; margin-left: 4px; }
 
 /* hidden marker the test asserts — keeps topo-daemon-disc reachable */
 .topo-daemon-disc {
@@ -855,7 +855,7 @@ const TOPOLOGY_CSS = `
 }
 .palette-door button {
   width: 32px; height: 32px;
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--bg-glass);
   border: 1px solid var(--line-2);
   color: var(--ink-1);
@@ -871,14 +871,14 @@ const TOPOLOGY_CSS = `
   content: "v0.7";
   position: absolute; bottom: -3px; right: -3px;
   background: var(--rust); color: white;
-  font-family: var(--mono); font-size: 8px;
-  padding: 0 3px; border-radius: 3px;
+  font-family: var(--mono); font-size: 11px;
+  padding: 0 3px; border-radius: 6px;
 }
 .palette-door .tip {
   position: absolute; right: 38px; top: 50%; transform: translateY(-50%);
   background: var(--bg-popover); color: var(--ink-1);
-  padding: 4px 8px; border-radius: 4px;
-  font-family: var(--mono); font-size: 10px;
+  padding: 4px 8px; border-radius: 6px;
+  font-family: var(--mono); font-size: 11px;
   border: 1px solid var(--line-2);
   white-space: nowrap;
   opacity: 0; pointer-events: none;
@@ -895,13 +895,13 @@ const TOPOLOGY_CSS = `
   max-width: 180px;
 }
 .topo-legend .lh {
-  font-family: var(--mono); font-size: 9px;
+  font-family: var(--mono); font-size: 11px;
   text-transform: uppercase; letter-spacing: .15em;
   color: var(--ink-3); margin-bottom: 4px;
 }
 .topo-legend .lr {
   display: flex; align-items: center; gap: 8px; padding: 2px 0;
-  font-family: var(--mono); font-size: 10px; color: var(--ink-2);
+  font-family: var(--mono); font-size: 11px; color: var(--ink-2);
 }
 .topo-legend .lr .sw { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .topo-legend .lr .sw.t-core       { background: var(--t-core); }
@@ -948,7 +948,7 @@ const TOPOLOGY_CSS = `
   position: fixed; top: 70px; bottom: 18px; right: -480px;
   width: 440px; max-width: 92vw;
   background: linear-gradient(180deg, rgba(20,22,31,.94), rgba(15,16,24,.94));
-  border: 1px solid var(--line-2); border-radius: 14px;
+  border: 1px solid var(--line-2); border-radius: 12px;
   backdrop-filter: blur(28px);
   box-shadow: -16px 0 40px rgba(0,0,0,.55);
   display: flex; flex-direction: column;
@@ -965,8 +965,8 @@ const TOPOLOGY_CSS = `
   width: 36px; height: 36px;
   background: var(--surface-2); color: var(--rust);
   display: grid; place-items: center;
-  border-radius: 9px;
-  font-family: var(--mono); font-size: 14px; font-weight: 700;
+  border-radius: 10px;
+  font-family: var(--mono); font-size: 14px; font-weight: 500;
   border: 1px solid currentColor;
 }
 .drawer-head .type-mark svg.icon { width: 20px; height: 20px; }
@@ -976,7 +976,7 @@ const TOPOLOGY_CSS = `
   font-family: var(--mono); font-size: 13px; color: var(--ink-0);
 }
 .drawer-head .pill-type, .drawer-head .pill-stat {
-  font-size: 9.5px; padding: 1px 7px; border-radius: 999px;
+  font-size: 11px; padding: 1px 7px; border-radius: 999px;
   background: var(--surface-2); color: var(--ink-1);
   border: 1px solid var(--line-2);
   letter-spacing: .04em; text-transform: uppercase;
@@ -985,7 +985,7 @@ const TOPOLOGY_CSS = `
 .drawer-head .pill-stat.warn { background: rgba(226,169,66,.18);  color: var(--warn); border-color: var(--warn); }
 .drawer-head .pill-stat.crit { background: rgba(239,90,111,.18);  color: var(--crit); border-color: var(--crit); }
 .drawer-head .id .row2 {
-  font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
+  font-family: var(--mono); font-size: 11px; color: var(--ink-2);
   margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .drawer-head .close {
@@ -997,14 +997,14 @@ const TOPOLOGY_CSS = `
   padding: 6px 14px;
   background: rgba(184,84,42,.06);
   border-bottom: 1px solid var(--line);
-  font-family: var(--mono); font-size: 10px;
+  font-family: var(--mono); font-size: 11px;
   color: var(--ink-3); letter-spacing: .12em; text-transform: uppercase;
   display: flex; gap: 8px; align-items: center;
 }
 .parked-pill {
   background: var(--rust); color: white;
-  font-family: var(--mono); font-size: 8px;
-  padding: 1px 4px; border-radius: 3px;
+  font-family: var(--mono); font-size: 11px;
+  padding: 1px 4px; border-radius: 6px;
 }
 .drawer-tabs {
   display: flex; gap: 0; padding: 10px 14px 0;
@@ -1025,7 +1025,7 @@ const TOPOLOGY_CSS = `
 .dt-window button {
   background: var(--bg-glass); border: 1px solid var(--line-2);
   color: var(--ink-2); padding: 3px 9px; border-radius: 999px;
-  font-family: var(--mono); font-size: 10px; cursor: pointer;
+  font-family: var(--mono); font-size: 11px; cursor: pointer;
 }
 .dt-window button[aria-pressed="true"] { background: var(--rust-soft); color: #ffd9c4; border-color: var(--rust); }
 .dt-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -1035,7 +1035,7 @@ const TOPOLOGY_CSS = `
   display: flex; flex-direction: column; gap: 4px;
 }
 .dt-chart .dt-k {
-  font-family: var(--mono); font-size: 9.5px;
+  font-family: var(--mono); font-size: 11px;
   letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
 }
 .dt-chart svg { width: 100%; height: 30px; }
@@ -1050,7 +1050,7 @@ const TOPOLOGY_CSS = `
 }
 .dt-kv {
   background: var(--bg-0); border: 1px solid var(--line);
-  border-radius: 8px; padding: 10px 12px;
+  border-radius: 10px; padding: 10px 12px;
   font-family: var(--mono); font-size: 11px;
   color: var(--ink-1); white-space: pre-wrap; word-break: break-word;
   margin: 0;
@@ -1062,7 +1062,7 @@ const TOPOLOGY_CSS = `
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--rust-soft); color: #ffd9c4;
   border: 1px solid var(--rust);
-  padding: 6px 12px; border-radius: 8px;
+  padding: 6px 12px; border-radius: 10px;
   margin-right: 6px; margin-bottom: 6px;
   font-family: var(--mono); font-size: 11px;
   cursor: pointer;

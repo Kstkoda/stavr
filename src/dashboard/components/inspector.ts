@@ -48,7 +48,7 @@ export const INSPECTOR_CSS = `
 }
 .inspector-title {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
