@@ -687,6 +687,36 @@ const TOPOLOGY_CSS = `
 .topo-frame-solo { grid-template-columns: 1fr; }
 
 /* canvas */
+/* v0.6.12 Phase 9 — empty-state overlay for the 0-node case. */
+.topo-empty-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 10px; padding: 28px;
+  background: rgba(15,16,24,0.40);
+  pointer-events: auto;
+  text-align: center;
+}
+.topo-empty-title {
+  font-size: 16px; font-weight: 500;
+  color: var(--ink-0);
+}
+.topo-empty-body {
+  font-family: var(--mono); font-size: 12px;
+  color: var(--ink-2); line-height: 1.55;
+  max-width: 480px;
+}
+.topo-empty-actions { display: flex; gap: 10px; }
+.topo-empty-cta {
+  padding: 6px 12px; border-radius: 6px;
+  background: var(--rust-soft);
+  border: 1px solid var(--rust);
+  color: #ffd9c4;
+  font-family: var(--mono); font-size: 11px;
+  text-decoration: none;
+}
+.topo-empty-cta:hover { background: rgba(184,84,42,0.20); }
 .topo-canvas {
   position: relative;
   background: var(--bg-glass);
@@ -1380,7 +1410,7 @@ const TOPOLOGY_JS = `
       overlay.className = 'topo-search-overlay';
       overlay.setAttribute('data-role', 'topo-search-overlay');
       overlay.innerHTML =
-        '<input type="search" class="topo-search-input" placeholder="search nodes by id…" autocomplete="off" />'
+        '<input type="search" class="topo-search-input" placeholder="search nodes by id… (press /)" autocomplete="off" />'
         + '<div class="topo-search-matches" data-role="topo-search-matches"></div>';
       document.body.appendChild(overlay);
       const input = overlay.querySelector('input');
@@ -1599,6 +1629,19 @@ export function renderTopologyPage(data?: TopologyData): string {
     // flowing under the nodes.
     renderFlowParticleSurface(),
     `<div class="topo-nodes">${nodesHtml}</div>`,
+    // v0.6.12 Phase 9 — empty-state overlay when 0 nodes. Without this
+    // the canvas shows the empty cluster blobs + nothing else and the
+    // operator can't tell whether the page is loading or actually empty.
+    allNodes.length <= 1 ? [
+      `<div class="topo-empty-overlay">`,
+      `<div class="topo-empty-title">No nodes on the map yet</div>`,
+      `<div class="topo-empty-body">Connect an MCP server or spawn a worker to populate the constellation. The canvas auto-updates as the daemon registers new entries.</div>`,
+      `<div class="topo-empty-actions">`,
+      `<a class="topo-empty-cta" href="/dashboard/mcps">Browse MCPs →</a>`,
+      `<a class="topo-empty-cta" href="/dashboard/streams">Live streams →</a>`,
+      `</div>`,
+      `</div>`,
+    ].join('') : '',
     `</div>`,
     legend,
     timelineHtml,

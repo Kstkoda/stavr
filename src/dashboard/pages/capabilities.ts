@@ -499,13 +499,17 @@ const CAP_V8_JS = `
       ev.stopPropagation();
       const cell = b.getAttribute('data-cell') || '';
       const parts = cell.split('|');
+      // v0.6.12 Phase 10 — honesty relabel. Save flow not wired yet —
+      // the popover used to say "v0.5" but never landed; relabel
+      // honestly so the operator knows clicking this is read-only.
       fi.openAt(b, {
         icon: 'C',
         title: parts[0] + ' · ' + parts[1],
-        sub: 'Pick model · v0.4 read-only (save flow is v0.5)',
+        sub: 'Read-only · pick lands in v0.7 (ADR-032 Steward dispatch)',
         sections: [
           { label: 'Current', value: b.textContent.trim() },
-          { label: 'Available', value: candidates.join('\\n') },
+          { label: 'Candidates (not persisted)', value: candidates.join('\\n') },
+          { label: 'How to set today', value: 'Edit the profile in src/capabilities/profiles.ts or swap the active profile from /dashboard/settings.' },
         ],
       });
     });
@@ -544,7 +548,7 @@ export function renderCapabilitiesPage(data?: CapabilitiesData): string {
     toggle,
     baseplate,
     budgets,
-    `<div class="read-only-note">v0.4 surfaces the matrix view + Ollama model list; persisting picks lands in v0.5 (ADR-032). Swap the active profile from <a href="/dashboard/settings" style="color:var(--accent-mcp);">Settings</a>.</div>`,
+    `<div class="read-only-note">Read-only · v0.6.12. Picks are not persisted — the per-cell dropdown shows candidates only. Swap the active profile from <a href="/dashboard/settings" style="color:var(--accent-mcp);">Settings</a>, or edit profiles directly in <code>src/capabilities/profiles.ts</code>. Save-flow lands in v0.7 alongside the Steward dispatch loop.</div>`,
     `<script id="cap-profiles" type="application/json">${JSON.stringify(profiles)}</script>`,
     `<script id="cap-ollama"   type="application/json">${JSON.stringify(ollamaModels)}</script>`,
   ].join('');
