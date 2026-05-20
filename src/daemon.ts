@@ -35,6 +35,11 @@ import { resolveRetentionOpts } from './observability/retention.js';
 import { resolveWorkerRetentionOpts, hardDeleteCutoffIso } from './observability/worker-retention.js';
 import { startOtel, type StartedOtel } from './observability/otel.js';
 import { startEventLoopMonitor, type EventLoopMonitorStop } from './observability/event-loop.js';
+import {
+  startHostHeadroomPoller,
+  type HostHeadroomMonitor,
+  type HostHeadroomPollerHandle,
+} from './observability/host-headroom-poller.js';
 
 export interface DaemonOptions {
   port: number;
@@ -356,6 +361,28 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
+  // host-resource-ceiling Phase 2 — host-level headroom poller. Reads
+  // node:os totalmem/freemem/cpus every 2s, emits daemon_host_headroom,
+  // and exposes a current() snapshot for admission control + load-shedding
+  // (Phases 3 + 5). Always runs (even when host_ceiling.enabled=false) so
+  // the operator still gets the observability signal.
+  let hostHeadroomHandle: HostHeadroomPollerHandle | undefined;
+  let hostHeadroomMonitor: HostHeadroomMonitor | undefined;
+  try {
+    const cfg = loadConfig();
+    hostHeadroomHandle = startHostHeadroomPoller({
+      ceiling: cfg.config.host_ceiling,
+      broker,
+    });
+    hostHeadroomMonitor = hostHeadroomHandle;
+  } catch (err) {
+    logger.error('failed to start host-headroom poller; daemon continues without it', {
+      error: (err as Error).message,
+    });
+  }
+  // Mark as used so unused-var doesn't fail typecheck before Phase 3 wires it.
+  void hostHeadroomMonitor;
+
   // bom-oom-leak-hunt C2.1 — events table retention. Run once at boot
   // (covers daemons restarted after long downtime) and then every hour.
   // The pruneEvents call is best-effort: any DB hiccup is caught inside
@@ -498,6 +525,9 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     }
     if (eventLoopMonitorStop) {
       try { eventLoopMonitorStop(); } catch { /* best effort */ }
+    }
+    if (hostHeadroomHandle) {
+      try { hostHeadroomHandle.stop(); } catch { /* best effort */ }
     }
     try { clearInterval(retentionHandle); } catch { /* best effort */ }
     if (v02) {
