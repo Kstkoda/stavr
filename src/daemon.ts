@@ -12,7 +12,11 @@ import { getLogger } from './log.js';
 import { STEWARD_MEMORY_ROOT } from './steward/tools.js';
 import { loadMasterKey } from './credentials/vault.js';
 import { CredentialStore } from './credentials/store.js';
-import { setCredentialStore, setHostCeilingContext } from './server.js';
+import {
+  getOrchestrator,
+  setCredentialStore,
+  setHostCeilingContext,
+} from './server.js';
 import { loadStewardConfig } from './steward/config.js';
 import { makeAnthropicProvider } from './steward/providers/anthropic.js';
 import { makeClaudeCodeProvider } from './steward/providers/claude-code.js';
@@ -41,6 +45,7 @@ import {
   type HostHeadroomPollerHandle,
 } from './observability/host-headroom-poller.js';
 import { installOsCap } from './governor/os-cap.js';
+import { startLoadShedder, type LoadShedderStop } from './governor/load-shedder.js';
 import { totalmem as osTotalmem } from 'node:os';
 
 export interface DaemonOptions {
@@ -370,6 +375,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
   // the operator still gets the observability signal.
   let hostHeadroomHandle: HostHeadroomPollerHandle | undefined;
   let hostHeadroomMonitor: HostHeadroomMonitor | undefined;
+  let loadShedderStop: LoadShedderStop | undefined;
   try {
     const cfg = loadConfig();
     hostHeadroomHandle = startHostHeadroomPoller({
@@ -385,6 +391,31 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
       monitor: hostHeadroomMonitor,
     });
 
+    // host-resource-ceiling Phase 5 — load-shedding. Polls the headroom
+    // monitor every 5s; when ram_used_pct_ewma >= shed_threshold_pct OR
+    // ram_free_gb < shed_min_free_ram_gb, terminates the most-recent live
+    // worker via orchestrator.shedWorker(). Lazy orchestrator lookup so we
+    // don't force eager orchestrator construction at boot.
+    try {
+      loadShedderStop = startLoadShedder({
+        ceiling: cfg.config.host_ceiling,
+        monitor: hostHeadroomMonitor,
+        orchestrator: {
+          liveCount: () => getOrchestrator(broker)?.liveCount() ?? 0,
+          liveWorkerIdsInSpawnOrder: () =>
+            getOrchestrator(broker)?.liveWorkerIdsInSpawnOrder() ?? [],
+          shedWorker: async (id, reason) => {
+            const orch = getOrchestrator(broker);
+            if (!orch) return {};
+            return orch.shedWorker(id, reason);
+          },
+        },
+      });
+    } catch (err) {
+      logger.error('failed to start load-shedder; daemon continues without it', {
+        error: (err as Error).message,
+      });
+    }
     // host-resource-ceiling Phase 4 — OS-level hard cap. Best-effort:
     // attempts cgroup-v2 on Linux when a delegated subtree is available;
     // returns kind='none' on Windows / macOS where it's an opt-in operator
@@ -569,6 +600,9 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     }
     if (hostHeadroomHandle) {
       try { hostHeadroomHandle.stop(); } catch { /* best effort */ }
+    }
+    if (loadShedderStop) {
+      try { loadShedderStop(); } catch { /* best effort */ }
     }
     try { clearInterval(retentionHandle); } catch { /* best effort */ }
     if (v02) {

@@ -202,6 +202,33 @@ describe('WorkerOrchestrator admission control', () => {
     await expect(orch.spawn('mock', 'w2', {})).rejects.toMatchObject({ code: 'headroom_exceeded' });
   });
 
+  it('shedWorker bypasses the tier gate and emits host_ceiling_shed', async () => {
+    const orch = new WorkerOrchestrator({
+      broker,
+      store,
+      idleAfterMs: null,
+      // confirm tier would normally gate terminate(); shedWorker should skip.
+      tierGate: async () => 'reject',
+    });
+    orch.register(mockSpawner());
+    const { worker } = await orch.spawn('mock', 'w1', {});
+    expect(orch.liveCount()).toBe(1);
+    const result = await orch.shedWorker(worker.id, 'synthetic-test');
+    expect(result).toBeDefined();
+    const shedEvents = store.getEvents({ kinds: ['host_ceiling_shed'] }).events;
+    expect(shedEvents).toHaveLength(1);
+    expect((shedEvents[0].payload as { worker_id: string }).worker_id).toBe(worker.id);
+  });
+
+  it('liveWorkerIdsInSpawnOrder returns ids in the order workers were spawned', async () => {
+    const orch = new WorkerOrchestrator({ broker, store, idleAfterMs: null });
+    orch.register(mockSpawner());
+    const a = (await orch.spawn('mock', 'a', {})).worker.id;
+    const b = (await orch.spawn('mock', 'b', {})).worker.id;
+    const c = (await orch.spawn('mock', 'c', {})).worker.id;
+    expect(orch.liveWorkerIdsInSpawnOrder()).toEqual([a, b, c]);
+  });
+
   it('getCeilingStatus returns the wired ceiling + snapshot + live count', async () => {
     const snap = snapshot({ ram_free_gb: 6 });
     const orch = new WorkerOrchestrator({

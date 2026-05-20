@@ -247,6 +247,17 @@ export function getHostCeilingContext(
 }
 
 /**
+ * Read-only accessor for an already-constructed orchestrator. Returns
+ * undefined when no MCP session has triggered orchestrator creation yet —
+ * Phase 5 load-shedding uses this so the watchdog can become live the
+ * moment the orchestrator does, without forcing eager construction at
+ * daemon boot (which would change the broker startup semantics).
+ */
+export function getOrchestrator(broker: Broker): WorkerOrchestrator | undefined {
+  return orchestratorsByBroker.get(broker);
+}
+
+/**
  * Initialize the v0.6 notification fabric for a broker. Idempotent — second
  * call returns the existing notifier without re-registering channels. Returns
  * undefined when STAVR_NOTIFY_SECRET is unset (fabric is opt-in by design;

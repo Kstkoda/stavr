@@ -429,6 +429,43 @@ export class WorkerOrchestrator {
     return result;
   }
 
+  /**
+   * Phase 5 (load-shedding): terminate a worker without going through the
+   * tier gate. The gate exists to prevent accidental operator kills; shed is
+   * a system-level decision driven by host headroom, not the operator.
+   *
+   * Emits `host_ceiling_shed` with the victim worker's id + name + reason,
+   * then delegates to the live instance's terminate() which fires the usual
+   * `worker_terminated` event.
+   *
+   * Caller (load-shedder) picks the victim. This method does NOT pick.
+   */
+  async shedWorker(workerId: string, reason: string): Promise<{ exitCode?: number }> {
+    const rec = this.store.getWorker(workerId);
+    if (!rec) throw new OrchestratorError('not_found', `no worker: ${workerId}`);
+    const live = this.live.get(workerId);
+    if (!live) {
+      // Already terminated; idempotent.
+      return { exitCode: rec.exit_code };
+    }
+    await this.broker.publish({
+      kind: 'host_ceiling_shed',
+      at: new Date().toISOString(),
+      source_agent: 'stavr-workers',
+      payload: {
+        worker_id: rec.id,
+        worker_name: rec.name,
+        worker_type: rec.type,
+        reason,
+      },
+    });
+    const result = await live.instance.terminate(true);
+    if (!this.store.getWorker(rec.id)?.ended_at) {
+      this.store.markWorkerTerminated(rec.id, 'terminated_by_user', result.exitCode);
+    }
+    return result;
+  }
+
   async shutdownAll(): Promise<void> {
     const live = Array.from(this.live.values());
     await Promise.all(
