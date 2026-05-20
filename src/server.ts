@@ -12,6 +12,8 @@ import { registerDecisionTools } from './tools/decisions.js';
 import { registerGithubTools } from './adapters/github.js';
 import { registerGithubWriteTools } from './adapters/github-writes.js';
 import { WorkerOrchestrator } from './workers/orchestrator.js';
+import type { HostHeadroomMonitor } from './observability/host-headroom-poller.js';
+import type { HostCeiling } from './types/host-ceiling.js';
 import { builtInSpawners, resolveAllSpawners } from './workers/spawners-registry.js';
 import { ManifestError } from './workers/mcp-workers-config.js';
 import { registerWorkerTools } from './workers/tools.js';
@@ -58,6 +60,10 @@ const orchestratorsByBroker = new WeakMap<Broker, WorkerOrchestrator>();
 const trustStoresByBroker = new WeakMap<Broker, TrustStore>();
 const stewardStoresByBroker = new WeakMap<Broker, StewardStore>();
 const credentialStoresByBroker = new WeakMap<Broker, CredentialStore>();
+const hostCeilingContextByBroker = new WeakMap<
+  Broker,
+  { ceiling: HostCeiling; monitor: HostHeadroomMonitor }
+>();
 const notifiersByBroker = new WeakMap<Broker, Notifier>();
 const digestSchedulersByBroker = new WeakMap<Broker, DigestScheduler>();
 const toolRegistriesByBroker = new WeakMap<Broker, ToolRegistry>();
@@ -153,7 +159,14 @@ export function getOrCreateFederation(broker: Broker): FederationSubsystem {
 function getOrCreateOrchestrator(broker: Broker, trustStore: TrustStore): WorkerOrchestrator {
   const existing = orchestratorsByBroker.get(broker);
   if (existing) return existing;
-  const orch = new WorkerOrchestrator({ broker, store: broker.store, trustStore });
+  const ceilingCtx = hostCeilingContextByBroker.get(broker);
+  const orch = new WorkerOrchestrator({
+    broker,
+    store: broker.store,
+    trustStore,
+    ceiling: ceilingCtx?.ceiling,
+    headroomMonitor: ceilingCtx?.monitor,
+  });
   // ADR-042 Decision 5 — register built-in in-process spawners + any
   // MCP-backed worker types from `~/.stavr/worker-mcp-servers.yaml`. A
   // manifest parse error is operator-visible: log + fall back to built-ins
@@ -206,6 +219,31 @@ export function setCredentialStore(broker: Broker, store: CredentialStore): void
 
 export function getCredentialStore(broker: Broker): CredentialStore | undefined {
   return credentialStoresByBroker.get(broker);
+}
+
+/**
+ * Wire the host-resource-ceiling context onto this broker so any
+ * WorkerOrchestrator created later (lazily, on first MCP connection) gets
+ * admission control + Phase 5 load-shedding. The daemon calls this after the
+ * host-headroom poller starts.
+ *
+ * Idempotent: re-calling replaces the context. If an orchestrator has already
+ * been constructed for this broker, its ceiling context is updated too —
+ * otherwise the late-spawned orchestrator picks it up at construction time.
+ */
+export function setHostCeilingContext(
+  broker: Broker,
+  ctx: { ceiling: HostCeiling; monitor: HostHeadroomMonitor },
+): void {
+  hostCeilingContextByBroker.set(broker, ctx);
+  const orch = orchestratorsByBroker.get(broker);
+  if (orch) orch.setHostCeilingContext(ctx);
+}
+
+export function getHostCeilingContext(
+  broker: Broker,
+): { ceiling: HostCeiling; monitor: HostHeadroomMonitor } | undefined {
+  return hostCeilingContextByBroker.get(broker);
 }
 
 /**

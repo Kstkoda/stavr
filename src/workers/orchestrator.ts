@@ -4,6 +4,11 @@ import type { EventStore, WorkerRecord } from '../persistence.js';
 import { DecisionTimeoutError } from '../persistence.js';
 import type { EventKindT } from '../event-types.js';
 import type { TrustStore } from '../trust/store.js';
+import type { HostCeiling } from '../types/host-ceiling.js';
+import type {
+  HeadroomSnapshot,
+  HostHeadroomMonitor,
+} from '../observability/host-headroom-poller.js';
 import {
   DispatchNotSupportedError,
   type WorkerInstance,
@@ -31,6 +36,15 @@ export interface OrchestratorOptions {
    * covering active scope and auto-approve in-scope calls without opening a
    * decision_request. See spec 46. */
   trustStore?: TrustStore;
+  /**
+   * Host-resource ceiling (Phase 3 of host-resource-ceiling BOM). When both
+   * `ceiling` and `headroomMonitor` are provided AND ceiling.enabled is true,
+   * `spawn()` refuses with OrchestratorError('headroom_exceeded') if admitting
+   * the spawn would breach the ceiling. The check is fail-open: a null monitor
+   * snapshot (boot, transient os error) is treated as "no data, allow".
+   */
+  ceiling?: HostCeiling;
+  headroomMonitor?: HostHeadroomMonitor;
 }
 
 export interface TierGateRequest {
@@ -65,6 +79,8 @@ export class WorkerOrchestrator {
   private readonly tierGate?: OrchestratorOptions['tierGate'];
   private readonly idleAfterMs: number | null;
   private readonly trustStore?: TrustStore;
+  private ceiling: HostCeiling | undefined;
+  private headroomMonitor: HostHeadroomMonitor | undefined;
 
   constructor(opts: OrchestratorOptions) {
     this.broker = opts.broker;
@@ -72,6 +88,31 @@ export class WorkerOrchestrator {
     this.tierGate = opts.tierGate;
     this.idleAfterMs = opts.idleAfterMs === undefined ? IDLE_AFTER_MS : opts.idleAfterMs;
     this.trustStore = opts.trustStore;
+    this.ceiling = opts.ceiling;
+    this.headroomMonitor = opts.headroomMonitor;
+  }
+
+  /**
+   * Late-bind the ceiling + headroom monitor. The daemon constructs the poller
+   * after the broker is up; the orchestrator is created lazily on the first
+   * MCP connection. This setter lets the daemon attach the monitor on boot
+   * without requiring orchestrator construction to wait for it.
+   */
+  setHostCeilingContext(ctx: { ceiling: HostCeiling; monitor: HostHeadroomMonitor }): void {
+    this.ceiling = ctx.ceiling;
+    this.headroomMonitor = ctx.monitor;
+  }
+
+  /** Count of in-process live worker handles — readers (load-shedding, tests) use this
+   * to count "currently running" without re-querying the persistence layer. */
+  liveCount(): number {
+    return this.live.size;
+  }
+
+  /** Snapshot of live worker IDs in spawn order. Phase 5 picks the most-recent
+   * as the shed victim. */
+  liveWorkerIdsInSpawnOrder(): string[] {
+    return Array.from(this.live.keys());
   }
 
   register(spawner: WorkerSpawner): void {
@@ -122,6 +163,30 @@ export class WorkerOrchestrator {
       );
     }
     const validated = parsed.data;
+
+    // host-resource-ceiling Phase 3 — admission control.
+    // Runs BEFORE the tier gate: refusing on resource grounds is not the
+    // operator's decision to override (they didn't ask for this resource
+    // overrun). If the operator wants to spawn anyway they can disable the
+    // ceiling in stavr.yaml or terminate other workers.
+    const admission = this.checkAdmission();
+    if (admission) {
+      await this.broker.publish({
+        kind: 'host_ceiling_refused',
+        at: new Date().toISOString(),
+        source_agent: 'stavr-workers',
+        payload: {
+          tool: 'worker_spawn',
+          type,
+          worker_name: name,
+          reason: admission.reason,
+          knob: admission.knob,
+          current: admission.current,
+          limit: admission.limit,
+        },
+      });
+      throw new OrchestratorError('headroom_exceeded', admission.message);
+    }
 
     const spawnReq: TierGateRequest = {
       tool: 'worker_spawn',
@@ -512,6 +577,105 @@ export class WorkerOrchestrator {
       live.idleTimer = undefined;
     }
   }
+
+  /**
+   * Returns an admission refusal object when admitting a new worker would
+   * breach the configured host ceiling. Returns undefined to allow.
+   *
+   * Fail-open semantics:
+   *  - No ceiling or ceiling.enabled=false → allow.
+   *  - No headroomMonitor wired → allow (caller didn't opt in).
+   *  - monitor.current() returns null (cold start) → allow.
+   *  - sustained CPU EWMA is null (one sample so far) → skip the CPU branch;
+   *    don't refuse on a single-tick sample.
+   *
+   * Checks in order so the most actionable refusal wins:
+   *   1. max_concurrent_workers — the knob the 2026-05-20 incident violated.
+   *   2. min_free_ram_gb       — hard floor.
+   *   3. max_host_ram_pct      — pct ceiling.
+   *   4. max_sustained_cpu_pct — only against EWMA, never raw spike.
+   */
+  private checkAdmission(): AdmissionRefusal | undefined {
+    const c = this.ceiling;
+    if (!c || !c.enabled) return undefined;
+
+    // (1) Worker count cap. This is the only check that doesn't need a
+    // headroom snapshot — counts come from the in-process map.
+    if (c.max_concurrent_workers > 0 && this.live.size >= c.max_concurrent_workers) {
+      return {
+        reason: 'max_concurrent_workers',
+        knob: 'max_concurrent_workers',
+        current: this.live.size,
+        limit: c.max_concurrent_workers,
+        message: `worker spawn refused: ${this.live.size} live workers already, limit is ${c.max_concurrent_workers}`,
+      };
+    }
+
+    const monitor = this.headroomMonitor;
+    if (!monitor) return undefined;
+    const snap = monitor.current();
+    if (!snap) return undefined;
+
+    // (2) Free-RAM floor.
+    if (snap.ram_free_gb < c.min_free_ram_gb) {
+      return {
+        reason: 'min_free_ram_gb',
+        knob: 'min_free_ram_gb',
+        current: snap.ram_free_gb,
+        limit: c.min_free_ram_gb,
+        message: `worker spawn refused: ${snap.ram_free_gb.toFixed(2)} GB free RAM, floor is ${c.min_free_ram_gb} GB`,
+      };
+    }
+
+    // (3) RAM pct ceiling — compare EWMA so a 200ms spike doesn't refuse.
+    if (snap.ram_used_pct_ewma >= c.max_host_ram_pct) {
+      return {
+        reason: 'max_host_ram_pct',
+        knob: 'max_host_ram_pct',
+        current: snap.ram_used_pct_ewma,
+        limit: c.max_host_ram_pct,
+        message: `worker spawn refused: host RAM ${(snap.ram_used_pct_ewma * 100).toFixed(1)}% in use, ceiling is ${(c.max_host_ram_pct * 100).toFixed(0)}%`,
+      };
+    }
+
+    // (4) Sustained CPU. Only refuse against the EWMA (sustained signal).
+    if (snap.cpu_busy_pct_ewma !== null && snap.cpu_busy_pct_ewma >= c.max_sustained_cpu_pct) {
+      return {
+        reason: 'max_sustained_cpu_pct',
+        knob: 'max_sustained_cpu_pct',
+        current: snap.cpu_busy_pct_ewma,
+        limit: c.max_sustained_cpu_pct,
+        message: `worker spawn refused: host CPU ${(snap.cpu_busy_pct_ewma * 100).toFixed(1)}% sustained, ceiling is ${(c.max_sustained_cpu_pct * 100).toFixed(0)}%`,
+      };
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Read-only accessor used by Phase 6 (dashboard) — returns the ceiling, the
+   * latest snapshot, and the live worker count in one shot so the data
+   * fetcher doesn't have to know about the monitor.
+   */
+  getCeilingStatus(): {
+    ceiling: HostCeiling | null;
+    snapshot: HeadroomSnapshot | null;
+    live_workers: number;
+  } {
+    return {
+      ceiling: this.ceiling ?? null,
+      snapshot: this.headroomMonitor?.current() ?? null,
+      live_workers: this.live.size,
+    };
+  }
+}
+
+interface AdmissionRefusal {
+  reason: string;
+  knob: string;
+  current: number;
+  limit: number;
+  message: string;
 }
 
 export class OrchestratorError extends Error {

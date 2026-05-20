@@ -12,7 +12,7 @@ import { getLogger } from './log.js';
 import { STEWARD_MEMORY_ROOT } from './steward/tools.js';
 import { loadMasterKey } from './credentials/vault.js';
 import { CredentialStore } from './credentials/store.js';
-import { setCredentialStore } from './server.js';
+import { setCredentialStore, setHostCeilingContext } from './server.js';
 import { loadStewardConfig } from './steward/config.js';
 import { makeAnthropicProvider } from './steward/providers/anthropic.js';
 import { makeClaudeCodeProvider } from './steward/providers/claude-code.js';
@@ -375,13 +375,18 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
       broker,
     });
     hostHeadroomMonitor = hostHeadroomHandle;
+    // host-resource-ceiling Phase 3 — wire admission control onto the
+    // broker so the orchestrator (created lazily on first MCP connection)
+    // picks up the ceiling + monitor at construction. Idempotent.
+    setHostCeilingContext(broker, {
+      ceiling: cfg.config.host_ceiling,
+      monitor: hostHeadroomMonitor,
+    });
   } catch (err) {
     logger.error('failed to start host-headroom poller; daemon continues without it', {
       error: (err as Error).message,
     });
   }
-  // Mark as used so unused-var doesn't fail typecheck before Phase 3 wires it.
-  void hostHeadroomMonitor;
 
   // bom-oom-leak-hunt C2.1 — events table retention. Run once at boot
   // (covers daemons restarted after long downtime) and then every hour.
