@@ -1,6 +1,6 @@
 # ADR 001 — stdio + SSE dual transport
 
-**Status**: Accepted
+**Status**: Superseded (SSE half) by [ADR-044](./044-streamable-http-transport-migration.md). The dual-transport decision still holds, but the remote transport migrated from HTTP+SSE to Streamable HTTP. The stdio half of this ADR is unaffected; the SSE references below are historical.
 **Date**: 2026-05-12
 
 ## Context

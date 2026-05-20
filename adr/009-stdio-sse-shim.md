@@ -1,6 +1,6 @@
 # ADR 009 — Stdio→SSE shim for clients that don't recognize remote MCP
 
-**Status**: Superseded by [ADR-019](./019-exponential-backoff-reconnect-in-shim.md) (reconnect policy section). The shim itself remains; only the "3 consecutive errors → exit" rule from the Consequences section is replaced by exponential backoff.
+**Status**: Superseded by [ADR-019](./019-exponential-backoff-reconnect-in-shim.md) (reconnect policy section) and partially by [ADR-044](./044-streamable-http-transport-migration.md) (transport). The shim itself remains; the "3 consecutive errors → exit" rule is replaced by exponential backoff (ADR-019); and the SSE references below — `SSEClientTransport`, `/mcp/sse`, the `type: "sse"` config — are historical: the daemon's remote transport is now Streamable HTTP at `/mcp` (ADR-044).
 **Date**: 2026-05-12
 
 ## Context
