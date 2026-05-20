@@ -14,6 +14,7 @@ import { homedir, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
+import { HostCeilingSchema, validateHostCeilingCoherence } from './types/host-ceiling.js';
 
 const networkSchema = z
   .object({
@@ -41,10 +42,21 @@ export const StavrConfigSchema = z
   .object({
     network: networkSchema,
     experimental: experimentalSchema,
+    host_ceiling: HostCeilingSchema,
   })
   .default({
     network: { bind: 'localhost', require_auth_when_non_local: true },
     experimental: { planner: false },
+    host_ceiling: {
+      max_host_ram_pct: 0.75,
+      min_free_ram_gb: 2.0,
+      max_sustained_cpu_pct: 0.85,
+      max_concurrent_workers: 4,
+      headroom_window_ms: 10_000,
+      shed_threshold_pct: 0.95,
+      shed_min_free_ram_gb: 0.5,
+      enabled: true,
+    },
   });
 
 export type StavrConfig = z.infer<typeof StavrConfigSchema>;
@@ -52,6 +64,16 @@ export type StavrConfig = z.infer<typeof StavrConfigSchema>;
 export const DEFAULT_CONFIG: StavrConfig = {
   network: { bind: 'localhost', require_auth_when_non_local: true },
   experimental: { planner: false },
+  host_ceiling: {
+    max_host_ram_pct: 0.75,
+    min_free_ram_gb: 2.0,
+    max_sustained_cpu_pct: 0.85,
+    max_concurrent_workers: 4,
+    headroom_window_ms: 10_000,
+    shed_threshold_pct: 0.95,
+    shed_min_free_ram_gb: 0.5,
+    enabled: true,
+  },
 };
 
 export function stavrHome(): string {
@@ -91,6 +113,12 @@ export function loadConfig(path?: string): LoadConfigResult {
       .map((i) => `  - ${i.path.join('.') || '<root>'}: ${i.message}`)
       .join('\n');
     throw new Error(`stavr config: invalid config in ${resolved}\n${issues}`);
+  }
+  const coherenceErrs = validateHostCeilingCoherence(result.data.host_ceiling);
+  if (coherenceErrs.length > 0) {
+    throw new Error(
+      `stavr config: invalid host_ceiling in ${resolved}\n${coherenceErrs.map((e) => `  - ${e}`).join('\n')}`,
+    );
   }
   return { config: result.data, source: 'file', path: resolved };
 }
