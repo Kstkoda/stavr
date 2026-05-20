@@ -40,6 +40,8 @@ import {
   type HostHeadroomMonitor,
   type HostHeadroomPollerHandle,
 } from './observability/host-headroom-poller.js';
+import { installOsCap } from './governor/os-cap.js';
+import { totalmem as osTotalmem } from 'node:os';
 
 export interface DaemonOptions {
   port: number;
@@ -382,6 +384,40 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
       ceiling: cfg.config.host_ceiling,
       monitor: hostHeadroomMonitor,
     });
+
+    // host-resource-ceiling Phase 4 — OS-level hard cap. Best-effort:
+    // attempts cgroup-v2 on Linux when a delegated subtree is available;
+    // returns kind='none' on Windows / macOS where it's an opt-in operator
+    // wrapper instead. Always emits host_ceiling_os_cap so the dashboard
+    // can show the result.
+    try {
+      const capResult = installOsCap({
+        ceiling: cfg.config.host_ceiling,
+        hostTotalRamBytes: osTotalmem(),
+      });
+      await broker.publish({
+        kind: 'host_ceiling_os_cap',
+        at: new Date().toISOString(),
+        source_agent: 'stavr-daemon',
+        payload: capResult,
+      });
+      if (capResult.installed) {
+        logger.info('os-level host ceiling installed', {
+          kind: capResult.kind,
+          memory_max_bytes: capResult.memory_max_bytes,
+        });
+      } else {
+        logger.info('os-level host ceiling not installed', {
+          kind: capResult.kind,
+          reason: capResult.reason,
+        });
+      }
+    } catch (err) {
+      // installOsCap is supposed to never throw, but belt-and-braces.
+      logger.error('os-cap install threw; admission control + load-shedding remain', {
+        error: (err as Error).message,
+      });
+    }
   } catch (err) {
     logger.error('failed to start host-headroom poller; daemon continues without it', {
       error: (err as Error).message,
