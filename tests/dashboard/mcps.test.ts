@@ -61,9 +61,16 @@ describe('MCPs page', () => {
     expect(html).toContain('Auth-needed · 1');
   });
 
-  it('Install button surfaces the v0.4 "paste into manifest.yaml" workaround as a tooltip', () => {
+  it('v0.6.12 Phase 10 — Install button is honestly relabeled as a Preview', () => {
     const html = renderMcpsPage({ installed: [] });
-    expect(html).toContain('Coming soon — paste URL in ~/.stavr/bricks/manifest.yaml for now');
+    // Button text + tooltip say "Preview · v0.7" / "lands in v0.7"
+    expect(html).toContain('Preview · v0.7');
+    expect(html).toContain('install lands in v0.7');
+    // Manifest.yaml hint still surfaces in the tooltip (for the operator
+    // who wants to install today via the manual workaround).
+    expect(html).toContain('~/.stavr/bricks/manifest.yaml');
+    // Button carries the preview style class so it reads as non-primary.
+    expect(html).toContain('mcp-install-preview');
   });
 
   it('highlights the mcps tab in the top nav', () => {

@@ -72,9 +72,13 @@ function renderCard(e: MCPServerEntry): string {
     `<footer class="mcp-card-foot">`,
     `<span class="mcp-tag mcp-tag-cat">${escapeHtml(CATEGORY_LABELS[e.category])}</span>`,
     `<a class="mcp-link" href="${escapeHtml(e.install_url)}" target="_blank" rel="noopener noreferrer">repo →</a>`,
-    `<button type="button" class="mcp-install"`,
-    ` title="Coming soon — paste URL in ~/.stavr/bricks/manifest.yaml for now"`,
-    ` aria-label="Install ${escapeHtml(e.name)}">Install</button>`,
+    // v0.6.12 Phase 10 — honesty relabel. The install flow lands in v0.7
+    // alongside ADR-035 OAuth 2.1 RI bricks; today the button only opens
+    // a placeholder popover. Relabel as Preview + style as non-primary so
+    // the operator isn't tricked into clicking it expecting an install.
+    `<button type="button" class="mcp-install mcp-install-preview"`,
+    ` title="Preview — install lands in v0.7 (ADR-035). For now paste the repo URL into ~/.stavr/bricks/manifest.yaml."`,
+    ` aria-label="Preview install for ${escapeHtml(e.name)} (lands in v0.7)">Preview · v0.7</button>`,
     `</footer>`,
     `</article>`,
   ].join('');
@@ -202,6 +206,17 @@ const MCPS_CSS = `
   color: var(--accent-mcp);
   text-decoration: underline;
 }
+.mcp-install-preview {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--line-2);
+  color: var(--ink-2);
+  cursor: help;
+}
+.mcp-install-preview:hover {
+  background: rgba(255,255,255,0.04);
+  border-color: var(--ink-2);
+  color: var(--ink-1);
+}
 .mcp-install {
   margin-left: auto;
   padding: 5px 12px;
@@ -297,19 +312,21 @@ const MCPS_JS = `
     });
   });
 
+  // v0.6.12 Phase 10 — honesty relabel + freeze fix. The previous
+  // implementation opened a 4-section floating inspector and the operator
+  // reported the renderer freezing for ~45 seconds on click. The cause was
+  // the floating-inspector positioning loop racing with a re-render. Drop
+  // the floating-inspector call entirely; the button's title= surfaces the
+  // manifest.yaml hint, and a small native alert serves the same role
+  // without touching the renderer.
   document.querySelectorAll('.mcp-install').forEach(function(b) {
-    b.addEventListener('click', function() {
-      if (window.__stavrFloatingInspector) {
-        window.__stavrFloatingInspector.openAt(b, {
-          icon: '!',
-          title: 'Install — coming soon',
-          sub: 'v0.4 placeholder',
-          sections: [
-            { label: 'For now', value: 'Paste the repo URL into ~/.stavr/bricks/manifest.yaml.' },
-            { label: 'Real flow', value: 'OAuth 2.1 + Resource Indicators install — v0.6, ADR-035 phase 1.' },
-          ],
-        });
-      }
+    b.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      const name = (b.getAttribute('aria-label') || '').replace(/^Preview install for /, '').replace(/ \\(lands in v0\\.7\\)$/, '');
+      alert(
+        'Install for "' + name + '" lands in v0.7 (ADR-035 — OAuth 2.1 + Resource Indicators).\\n\\n' +
+        'Until then: paste the repo URL into ~/.stavr/bricks/manifest.yaml and restart the daemon.'
+      );
     });
   });
 })();

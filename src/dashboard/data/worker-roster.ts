@@ -46,7 +46,19 @@ export interface RosterOptions {
   maxAgeMs?: number;
 }
 
-const DEFAULT_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h
+// v0.6.12 Phase 5 — worker retention policy. Default window is 4h
+// (env-overridable via STAVR_WORKER_RETENTION_HOURS). The "Show archived"
+// toggle on Streams + Topology passes a larger maxAgeMs to reveal older
+// entries up to the hard-delete cutoff (30 days default).
+function defaultHistoryWindowMs(): number {
+  const raw = process.env.STAVR_WORKER_RETENTION_HOURS;
+  const hours = raw && Number.isFinite(Number(raw)) && Number(raw) > 0 ? Number(raw) : 4;
+  return hours * 60 * 60 * 1000;
+}
+const DEFAULT_HISTORY_WINDOW_MS = defaultHistoryWindowMs();
+/** Toggle target — when the operator clicks "Show archived" the page passes
+ *  this larger window (30 days) so archived workers come back into view. */
+export const ARCHIVED_HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 function entryAgeMs(w: WorkerRecord, now: number): number {
   const ts = w.ended_at ?? w.last_activity_at ?? w.started_at;
