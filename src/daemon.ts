@@ -38,6 +38,7 @@ import { startEventLoopMonitor, type EventLoopMonitorStop } from './observabilit
 import { startSloPoller, type SloPollerStop } from './observability/slo.js';
 import { startTelemetryPipelineMonitor, type TelemetryPipelinePollerStop } from './observability/telemetry-pipeline.js';
 import { startHostMetricsPoller, type HostMetricsPollerStop } from './observability/host-metrics.js';
+import { startDcgmPoller, type DcgmPollerStop } from './observability/gpu-metrics.js';
 
 export interface DaemonOptions {
   port: number;
@@ -391,6 +392,18 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
+  // observability-instrumentation BOM Wave 4 — DCGM exporter scrape. No-op
+  // when STAVR_DCGM_EXPORTER_URL is unset (returns null), so the daemon
+  // runs unchanged on machines without NVIDIA GPUs.
+  let dcgmPollerStop: DcgmPollerStop | undefined;
+  try {
+    dcgmPollerStop = startDcgmPoller() ?? undefined;
+  } catch (err) {
+    logger.error('failed to start DCGM poller; daemon continues without GPU metrics', {
+      error: (err as Error).message,
+    });
+  }
+
   // bom-oom-leak-hunt C2.1 — events table retention. Run once at boot
   // (covers daemons restarted after long downtime) and then every hour.
   // The pruneEvents call is best-effort: any DB hiccup is caught inside
@@ -542,6 +555,9 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     }
     if (hostMetricsStop) {
       try { hostMetricsStop(); } catch { /* best effort */ }
+    }
+    if (dcgmPollerStop) {
+      try { dcgmPollerStop(); } catch { /* best effort */ }
     }
     try { clearInterval(retentionHandle); } catch { /* best effort */ }
     if (v02) {

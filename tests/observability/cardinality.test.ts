@@ -25,6 +25,7 @@ import '../../src/observability/telemetry-pipeline.js';
 import '../../src/observability/mcp-metrics.js';
 import '../../src/observability/host-metrics.js';
 import '../../src/observability/llm-metrics.js';
+import '../../src/observability/gpu-metrics.js';
 
 const FORBIDDEN_LABEL_NAMES = new Set([
   'request_id',
