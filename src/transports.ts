@@ -37,6 +37,7 @@ import {
   setSseSessionsGauge,
   stavrHttpRequestDuration,
 } from './observability/metrics.js';
+import { recordSloSample, SLO_DEFS } from './observability/slo.js';
 import { logContext } from './observability/logger.js';
 import { mountDebugEndpoints } from './observability/debug-endpoints.js';
 import { mountWebAuthnRoutes } from './security/webauthn-routes.js';
@@ -222,9 +223,17 @@ export async function mountTransports(
       const route = normalizeRoute(req.path);
       const t0 = performance.now();
       res.on('finish', () => {
+        const elapsedMs = performance.now() - t0;
         endTimer({ route, status: String(res.statusCode) });
         try {
-          recordPerf(`http:${req.method} ${route}`, performance.now() - t0, res.statusCode < 500);
+          recordPerf(`http:${req.method} ${route}`, elapsedMs, res.statusCode < 500);
+        } catch { /* metrics never fail the request */ }
+        try {
+          // BOM Wave 0 — feed gateway SLOs. Availability: any non-5xx counts.
+          // Latency: elapsed within the configured threshold counts.
+          recordSloSample('gateway_availability', res.statusCode < 500);
+          const fast = elapsedMs / 1000 <= (SLO_DEFS.gateway_latency_p95.latencyThresholdSeconds ?? 0.5);
+          recordSloSample('gateway_latency_p95', fast);
         } catch { /* metrics never fail the request */ }
       });
       next();

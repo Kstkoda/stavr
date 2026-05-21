@@ -35,6 +35,8 @@ import { resolveRetentionOpts } from './observability/retention.js';
 import { resolveWorkerRetentionOpts, hardDeleteCutoffIso } from './observability/worker-retention.js';
 import { startOtel, type StartedOtel } from './observability/otel.js';
 import { startEventLoopMonitor, type EventLoopMonitorStop } from './observability/event-loop.js';
+import { startSloPoller, type SloPollerStop } from './observability/slo.js';
+import { startTelemetryPipelineMonitor, type TelemetryPipelinePollerStop } from './observability/telemetry-pipeline.js';
 
 export interface DaemonOptions {
   port: number;
@@ -356,6 +358,26 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
+  // observability-instrumentation BOM Wave 0 — SLO burn-rate poller +
+  // telemetry-pipeline self-monitoring (tsdb.active_series). Both interval
+  // handles are unref'd inside their start fns.
+  let sloPollerStop: SloPollerStop | undefined;
+  try {
+    sloPollerStop = startSloPoller();
+  } catch (err) {
+    logger.error('failed to start SLO poller; daemon continues without burn-rate gauges', {
+      error: (err as Error).message,
+    });
+  }
+  let telemetryPipelineStop: TelemetryPipelinePollerStop | undefined;
+  try {
+    telemetryPipelineStop = startTelemetryPipelineMonitor();
+  } catch (err) {
+    logger.error('failed to start telemetry-pipeline monitor; daemon continues without it', {
+      error: (err as Error).message,
+    });
+  }
+
   // bom-oom-leak-hunt C2.1 — events table retention. Run once at boot
   // (covers daemons restarted after long downtime) and then every hour.
   // The pruneEvents call is best-effort: any DB hiccup is caught inside
@@ -498,6 +520,12 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     }
     if (eventLoopMonitorStop) {
       try { eventLoopMonitorStop(); } catch { /* best effort */ }
+    }
+    if (sloPollerStop) {
+      try { sloPollerStop(); } catch { /* best effort */ }
+    }
+    if (telemetryPipelineStop) {
+      try { telemetryPipelineStop(); } catch { /* best effort */ }
     }
     try { clearInterval(retentionHandle); } catch { /* best effort */ }
     if (v02) {

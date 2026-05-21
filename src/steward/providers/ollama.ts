@@ -24,6 +24,7 @@ import {
   recordProviderRequest,
   recordProviderLatency,
 } from '../../observability/metrics.js';
+import { recordSloSample } from '../../observability/slo.js';
 
 export interface OllamaProviderOpts {
   /** Default `http://127.0.0.1:11434`. The Ollama daemon binds loopback by
@@ -204,6 +205,8 @@ async function* runOllamaChat(opts: RunOpts): AsyncGenerator<StewardEvent> {
     const elapsed = (Date.now() - start) / 1000;
     recordProviderRequest('ollama', opts.model, status);
     recordProviderLatency('ollama', opts.model, elapsed);
+    // BOM Wave 0 — llm_provider_availability SLO sample.
+    recordSloSample('llm_provider_availability', status === 'ok');
   }
 }
 
