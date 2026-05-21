@@ -31,6 +31,12 @@ import {
   RANGE_PICKER_JS,
   type RangePreset,
 } from '../components/range-picker.js';
+import {
+  renderHistoryDrawerShell,
+  HISTORY_DRAWER_CSS,
+  HISTORY_DRAWER_JS,
+} from '../components/history-drawer.js';
+import { SOURCE_LINK_CSS } from '../components/source-link.js';
 import type { HistoryItem, HistoryKind } from '../data/history/types.js';
 
 export interface HistoryData {
@@ -325,14 +331,15 @@ export function renderHistoryPage(data?: HistoryData): string {
       ? `<div class="hist-pruned">Earlier history pruned — retention is ${escapeHtml(String(30))} days per ADR-030.</div>`
       : '',
     `</section>`,
+    renderHistoryDrawerShell(),
   ].join('');
 
-  const head = `<style>${HISTORY_CSS}\n${TIMELINE_ROW_CSS}\n${RANGE_PICKER_CSS}</style>`;
+  const head = `<style>${HISTORY_CSS}\n${TIMELINE_ROW_CSS}\n${RANGE_PICKER_CSS}\n${HISTORY_DRAWER_CSS}\n${SOURCE_LINK_CSS}</style>`;
   return renderShell({
     title: 'Stavr — History',
     activePage: 'history',
     body,
     head,
-    script: `${RANGE_PICKER_JS}\n${HISTORY_JS}`,
+    script: `${RANGE_PICKER_JS}\n${HISTORY_JS}\n${HISTORY_DRAWER_JS}`,
   });
 }

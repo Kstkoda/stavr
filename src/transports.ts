@@ -29,6 +29,7 @@ import { fetchBomsHistory } from './dashboard/data/history/boms.js';
 import { fetchCommitsHistory } from './dashboard/data/history/commits.js';
 import { mergeTimeline } from './dashboard/data/history/timeline.js';
 import { renderHistoryRow } from './dashboard/components/timeline-row.js';
+import { renderHistoryDetail } from './dashboard/data/history/detail.js';
 import { TIERS, defaultTierFor, type Tier } from './tools/categories.js';
 import {
   applyPolicyToActor,
@@ -1608,6 +1609,30 @@ export function mountDashboardRoutes(
   });
   for (const method of ['post', 'put', 'patch', 'delete'] as const) {
     app[method]('/dashboard/api/history', (_req, res) => {
+      res.status(405).json({ error: 'history is read-only' });
+    });
+  }
+
+  // P3 — per-row detail endpoint backing the side drawer. Same read-only
+  // posture; missing rows return 200 with `missing: true` so the drawer
+  // can render the BOM-no-longer-on-disk placeholder rather than a 404
+  // (BOM Footgun #4).
+  app.get('/dashboard/api/history/:kind/:id', (req, res) => {
+    const kind = String(req.params.kind || '');
+    const id = String(req.params.id || '');
+    if (!kind || !id) {
+      res.status(400).json({ error: 'kind + id required' });
+      return;
+    }
+    const detail = renderHistoryDetail(kind, id, {
+      db: broker.store.rawDb,
+      bomsDir: process.env.STAVR_BOMS_DIR ?? 'proposed',
+      githubRepo: process.env.STAVR_GITHUB_REPO,
+    });
+    res.json(detail);
+  });
+  for (const method of ['post', 'put', 'patch', 'delete'] as const) {
+    app[method]('/dashboard/api/history/:kind/:id', (_req, res) => {
       res.status(405).json({ error: 'history is read-only' });
     });
   }
