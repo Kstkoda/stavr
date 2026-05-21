@@ -46,6 +46,7 @@ export type DashboardPageId =
   | 'home'
   | 'topology'
   | 'streams'
+  | 'history'
   | 'plans'
   | 'decide'
   | 'toolkit'
@@ -68,6 +69,12 @@ export const NAV_ENTRIES: NavEntry[] = [
   { id: 'helm',         label: 'Helm',         href: '/dashboard/helm' },
   { id: 'topology',     label: 'Topology',     href: '/dashboard/topology' },
   { id: 'streams',      label: 'Streams',      href: '/dashboard/streams' },
+  // v0.8 — audit history dashboard. Sits between Streams (live tail) and
+  // Decide (gate UI) so the operator's "what happened?" question lands
+  // right next to "what's happening now?" and "what needs me?". The
+  // surface is server-rendered + read-only; pages don't write through
+  // this route.
+  { id: 'history',      label: 'History',      href: '/dashboard/history' },
   { id: 'plans',        label: 'Plans',        href: '/dashboard/plans' },
   { id: 'decide',       label: 'Decide',       href: '/dashboard/decide' },
   { id: 'toolkit',      label: 'Toolkit',      href: '/dashboard/toolkit' },
