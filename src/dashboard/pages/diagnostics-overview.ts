@@ -237,7 +237,7 @@ export function renderDiagnosticsOverview(data?: DiagnosticsOverviewData): strin
     id: 'workers',
     title: 'Workers',
     big: `${workerCounters.active} active`,
-    sub: `${workerCounters.total} lifetime · ${workerCrashed} crashed · last-4h shown by default on Streams + Topology`,
+    sub: `${workerCounters.total} lifetime · ${workerCrashed} crashed · last-4h shown by default on Workers + Topology`,
     statusLabel: workerCrashed > 0 ? `${workerCrashed} crashed` : workerCounters.active > 0 ? 'running' : 'idle',
     status: workersStatus,
     drillHref: '/dashboard/diagnostics/workers',

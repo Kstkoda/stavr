@@ -14,7 +14,7 @@
  *   §1 retention: 30d per ADR-030; if the operator picks a deeper
  *      Custom range with no rows we render the pruned-history hint.
  *   §3 federation: local-only; sourceAgent filter shipped in P5.
- *   §4 live mode: explicit NOT in v0.8 — `/streams` is the live surface.
+ *   §4 live mode: explicit NOT in v0.8 — `/workers` is the live surface.
  *   §5 internal events: filtered out by default at the page boundary.
  *   §6 access: operator-only, existing auth model.
  */

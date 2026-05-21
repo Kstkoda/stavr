@@ -45,7 +45,7 @@ export type DashboardPageId =
   | 'helm'
   | 'home'
   | 'topology'
-  | 'streams'
+  | 'workers'
   | 'history'
   | 'plans'
   | 'decide'
@@ -68,8 +68,8 @@ export interface NavEntry {
 export const NAV_ENTRIES: NavEntry[] = [
   { id: 'helm',         label: 'Helm',         href: '/dashboard/helm' },
   { id: 'topology',     label: 'Topology',     href: '/dashboard/topology' },
-  { id: 'streams',      label: 'Streams',      href: '/dashboard/streams' },
-  // v0.8 — audit history dashboard. Sits between Streams (live tail) and
+  { id: 'workers',      label: 'Workers',      href: '/dashboard/workers' },
+  // v0.8 — audit history dashboard. Sits between Workers (live tail) and
   // Decide (gate UI) so the operator's "what happened?" question lands
   // right next to "what's happening now?" and "what needs me?". The
   // surface is server-rendered + read-only; pages don't write through
@@ -97,6 +97,11 @@ export const LEGACY_NAV_ENTRIES: NavEntry[] = [
   // v0.7 Phase 6 — about page is reachable but not in the primary nav.
   // It's linked from family-mode and from the settings page's intro.
   { id: 'about', label: 'About stavR', href: '/dashboard/about' },
+  // chore/streams-to-workers — the page was renamed from "Streams" to
+  // "Workers". The legacy /dashboard/streams URL keeps serving the same
+  // page so bookmarks, helm cross-links, and operator muscle memory
+  // don't break.
+  { id: 'workers', label: 'Streams (legacy)', href: '/dashboard/streams' },
 ];
 
 export interface RenderShellInput {

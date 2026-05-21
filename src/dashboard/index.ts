@@ -4,8 +4,10 @@
  *
  * /dashboard       → 302 /dashboard/helm (v0.4 primary, was /dashboard/home)
  * /dashboard/home  → legacy alias kept for v0.3 bookmarks + integration tests
- * /dashboard/helm, /topology, /streams, /plans, /decide, /toolkit,
+ * /dashboard/helm, /topology, /workers, /plans, /decide, /toolkit,
  * /mcps, /capabilities, /settings → server-rendered shell + page body.
+ * /dashboard/streams → legacy alias for /dashboard/workers (renamed
+ * chore/streams-to-workers); both serve the same renderer.
  *
  * Page snapshots are pull-based: pages that need data (Helm/Home, Plans,
  * Topology, …) declare a getter on the DashboardPageDeps bag so
@@ -17,7 +19,7 @@ import { NAV_ENTRIES, LEGACY_NAV_ENTRIES, type DashboardPageId } from './shell.j
 import { renderHelmPage, type HelmData } from './pages/helm.js';
 import { renderHomePage, type HomeData } from './pages/home.js';
 import { renderTopologyPage, type TopologyData } from './pages/topology.js';
-import { renderStreamsPage, type StreamsData } from './pages/streams.js';
+import { renderWorkersPage, type WorkersData } from './pages/workers.js';
 import { renderHistoryPage, type HistoryData } from './pages/history.js';
 import { renderPlansPage, type PlansData } from './pages/plans.js';
 import { renderDecidePage, type DecideData } from './pages/decide.js';
@@ -51,8 +53,8 @@ export interface DashboardPageDeps {
   decideData?: () => DecideData;
   /** Snapshot used for Topology server-side initial paint (C5). */
   topologyData?: () => TopologyData;
-  /** Snapshot used for Streams server-side initial paint (C6). */
-  streamsData?: () => StreamsData;
+  /** Snapshot used for Workers server-side initial paint (C6). */
+  workersData?: () => WorkersData;
   /** Snapshot used for History server-side initial paint (v0.8). */
   historyData?: () => HistoryData;
   /** Snapshot used for Toolkit server-side initial paint (C7). */
@@ -96,7 +98,7 @@ export function mountDashboardPages(
     helm:         () => renderHelmPage(deps.helmData?.()),
     home:         () => renderHomePage(deps.homeData?.()),
     topology:     () => renderTopologyPage(deps.topologyData?.()),
-    streams:      () => renderStreamsPage(deps.streamsData?.()),
+    workers:      () => renderWorkersPage(deps.workersData?.()),
     history:      () => renderHistoryPage(deps.historyData?.()),
     plans:        () => renderPlansPage(deps.plansData?.()),
     decide:       () => renderDecidePage(deps.decideData?.()),

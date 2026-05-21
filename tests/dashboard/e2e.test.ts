@@ -102,8 +102,11 @@ describe('Dashboard e2e — every page reachable + shell intact', () => {
     expect(decide).toContain('merge?');
     const topology = await (await fetch(`${base}/dashboard/topology`)).text();
     expect(topology).toContain('cc-e2e');
-    const streams = await (await fetch(`${base}/dashboard/streams`)).text();
-    expect(streams).toContain('cc-e2e');
+    const workers = await (await fetch(`${base}/dashboard/workers`)).text();
+    expect(workers).toContain('cc-e2e');
+    // legacy /dashboard/streams alias still serves the same page
+    const streamsLegacy = await (await fetch(`${base}/dashboard/streams`)).text();
+    expect(streamsLegacy).toContain('cc-e2e');
   });
 
   it('shell carries ARIA landmarks on every page', async () => {

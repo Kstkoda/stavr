@@ -1,15 +1,21 @@
 /**
- * Streams page — multi-pane terminal view for live worker output.
+ * Workers page — multi-pane terminal view for live worker output.
  *
  * One pane per running worker, up to 20, in a 4-wide responsive grid.
  * Each pane shows the worker name + type + status pill and tails the
  * last few events. Top bar carries filters (type / status / scope) and
  * a search box that substring-filters across panes.
  *
- * Live updates: every event on /dashboard/stream is appended to the
+ * Live updates: every event on /dashboard/stream (the SSE event-stream
+ * endpoint — distinct concept from this page) is appended to the
  * matching pane (matched on correlation_id == worker.id OR
  * event.payload.id == worker.id). Workers with no output in N minutes
  * fade to half opacity.
+ *
+ * Historic split: non-active workers fall into a collapsed details
+ * section, bounded to the last 24h. Older runs live in the audit log;
+ * the Workers page is the 24h live view. A link in the historic
+ * section deep-links into /dashboard/history for the rest.
  */
 import type { WorkerRecord, StoredEvent } from '../../persistence.js';
 import { renderShell } from '../shell.js';
@@ -21,7 +27,7 @@ import {
   type LifecycleState,
 } from '../../workers/lifecycle.js';
 
-export interface StreamsData {
+export interface WorkersData {
   workers: WorkerRecord[];
   /** Map of workerId → last N events (most recent last). */
   recent: Record<string, StoredEvent[]>;
@@ -54,11 +60,11 @@ const WORKER_LIFECYCLE_PILL: Record<LifecycleState, PillVariant> = {
 /**
  * v0.6.10 Task 2 — Worker roster table, lifted from the Topology page.
  * Renders one row per worker with name + type + lifecycle pill. Sits
- * below the streams grid as the canonical "list of workers" surface.
+ * below the workers grid as the canonical "list of workers" surface.
  */
 function renderWorkerRoster(workers: WorkerRecord[], now: number = Date.now()): string {
   if (workers.length === 0) {
-    return `<div class="streams-roster-empty">No workers running.</div>`;
+    return `<div class="workers-roster-empty">No workers running.</div>`;
   }
   return workers.map((w) => {
     const lifecycle = deriveLifecycleState(w, now);
@@ -125,15 +131,15 @@ function renderPane(w: WorkerRecord, events: StoredEvent[]): string {
   ].join('');
 }
 
-const STREAMS_CSS = `
-.streams-toolbar {
+const WORKERS_CSS = `
+.workers-toolbar {
   display: flex;
   gap: 12px;
   align-items: center;
   margin-bottom: 14px;
   flex-wrap: wrap;
 }
-.streams-search {
+.workers-search {
   flex: 1;
   min-width: 220px;
   padding: 7px 11px;
@@ -144,7 +150,7 @@ const STREAMS_CSS = `
   color: var(--text-primary);
   font-family: inherit;
 }
-.streams-search:focus { outline: 2px solid var(--accent-mcp); outline-offset: 1px; }
+.workers-search:focus { outline: 2px solid var(--accent-mcp); outline-offset: 1px; }
 .filter-select {
   padding: 6px 10px;
   font-size: 12px;
@@ -154,14 +160,14 @@ const STREAMS_CSS = `
   color: var(--text-primary);
   font-family: inherit;
 }
-.streams-count {
+.workers-count {
   font-size: 11px;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
-.streams-grid {
+.workers-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 12px;
@@ -234,7 +240,7 @@ const STREAMS_CSS = `
 }
 .pane-expand:hover { color: var(--text-primary); }
 
-.streams-empty {
+.workers-empty {
   padding: 60px 24px;
   text-align: center;
   color: var(--ink-2);
@@ -243,6 +249,19 @@ const STREAMS_CSS = `
   border: 1px dashed var(--line-2);
   backdrop-filter: blur(14px) saturate(140%);
 }
+
+.workers-history { margin-top: 14px; }
+.workers-history-foot {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.workers-history-link {
+  color: var(--sky, var(--accent-mcp));
+  text-decoration: none;
+  border-bottom: 1px dashed currentColor;
+}
+.workers-history-link:hover { color: var(--ink-0); }
 
 .fullscreen-tail {
   position: fixed;
@@ -275,7 +294,7 @@ const STREAMS_CSS = `
 }
 
 /* v0.6.10 Task 2 — Worker roster table lifted from Topology. */
-.streams-roster {
+.workers-roster {
   margin-top: 18px;
   padding: 14px;
   background: var(--bg-glass);
@@ -284,9 +303,9 @@ const STREAMS_CSS = `
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
 }
-.streams-roster h2 { margin: 0 0 8px 0; }
-.streams-roster ul { list-style: none; padding: 0; margin: 0; }
-.streams-roster .roster-row {
+.workers-roster h2 { margin: 0 0 8px 0; }
+.workers-roster ul { list-style: none; padding: 0; margin: 0; }
+.workers-roster .roster-row {
   display: grid;
   grid-template-columns: 1fr auto auto;
   gap: 10px;
@@ -295,14 +314,14 @@ const STREAMS_CSS = `
   padding: 6px 0;
   border-bottom: 1px solid var(--line);
 }
-.streams-roster .roster-row:last-child { border-bottom: 0; }
-.streams-roster .roster-name { color: var(--ink-0); }
-.streams-roster .roster-type {
+.workers-roster .roster-row:last-child { border-bottom: 0; }
+.workers-roster .roster-name { color: var(--ink-0); }
+.workers-roster .roster-type {
   color: var(--ink-3);
   font-family: var(--mono);
   font-size: 11px;
 }
-.streams-roster-empty {
+.workers-roster-empty {
   color: var(--ink-3);
   font-style: italic;
   font-size: 12px;
@@ -312,9 +331,9 @@ const STREAMS_CSS = `
 
 const QUIET_THRESHOLD_MS = 2 * 60 * 1000; // 2 min idle = quiet pane
 
-const STREAMS_JS = `
+const WORKERS_JS = `
 (function() {
-  const grid = document.querySelector('[data-role="streams-grid"]');
+  const grid = document.querySelector('[data-role="workers-grid"]');
   if (!grid) return;
 
   const search    = document.querySelector('[data-role="search"]');
@@ -409,20 +428,51 @@ const STREAMS_JS = `
 })();
 `;
 
-export function renderStreamsPage(data?: StreamsData): string {
-  const snapshot: StreamsData = data ?? { workers: [], recent: {} };
+/**
+ * 24h cutoff for the historic section. Older runs drop off the page;
+ * the audit-history dashboard is the canonical surface for anything
+ * past this window.
+ */
+const HISTORIC_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Most recent timestamp on a non-active worker record. Falls back
+ * through `ended_at → last_activity_at → started_at`. Returns NaN
+ * when no parseable timestamp exists (caller decides whether NaN
+ * means "drop" or "keep" — here we drop).
+ */
+function historicTimestampMs(w: WorkerRecord): number {
+  const raw = w.ended_at ?? w.last_activity_at ?? w.started_at;
+  if (!raw) return NaN;
+  return Date.parse(raw);
+}
+
+export function renderWorkersPage(data?: WorkersData): string {
+  const snapshot: WorkersData = data ?? { workers: [], recent: {} };
 
   // BOM v0.6.6 P3 — primary view shows ONLY currently-active worker panes.
   // Historic panes (completed / crashed / killed) move to a collapsible
   // section below the grid, so the operator still has the audit thread
   // but the live view stops being polluted by May-15 zombies.
+  //
+  // chore/streams-to-workers — historic panes are further filtered to a
+  // 24h window. Older workers drop off this page entirely and live on
+  // /dashboard/history (it's all in the audit log anyway; the Workers
+  // page is the 24h live view, not the archive).
   const now = Date.now();
+  const cutoffMs = now - HISTORIC_WINDOW_MS;
   const active: WorkerRecord[] = [];
   const historic: WorkerRecord[] = [];
   for (const w of snapshot.workers) {
     const state = deriveLifecycleState(w, now);
-    if (isCurrentlyActive(state)) active.push(w);
-    else historic.push(w);
+    if (isCurrentlyActive(state)) {
+      active.push(w);
+      continue;
+    }
+    const ts = historicTimestampMs(w);
+    if (Number.isFinite(ts) && ts >= cutoffMs) historic.push(w);
+    // else: older than 24h or undatable — drop. Operator finds it on
+    // /dashboard/history.
   }
 
   // Cap visible (active) workers at 20 — beyond that the grid is unusable.
@@ -431,18 +481,21 @@ export function renderStreamsPage(data?: StreamsData): string {
   const statuses: WorkerRecord['status'][] = ['running', 'idle', 'starting', 'crashed', 'terminated'];
 
   const panes = visible.length === 0
-    ? `<div class="streams-empty">No workers running. Streams will appear here once stavr spawns a worker.</div>`
+    ? `<div class="workers-empty">No workers running. Worker panes will appear here once stavr spawns a worker.</div>`
     : visible.map((w) => renderPane(w, snapshot.recent[w.id] ?? [])).join('');
 
   // Historic section — collapsed by default. Renders the same pane shape
   // so a click still inspects the row, but the grid doesn't fight for
-  // attention with the active panes.
+  // attention with the active panes. Bounded to the last 24h; the
+  // history-dashboard link below covers older runs.
+  const historyLink = `<a class="workers-history-link" href="/dashboard/history">Older runs → /dashboard/history</a>`;
   const historicPanes = historic.length === 0
     ? ''
     : [
-        `<details class="streams-history" data-role="streams-history">`,
-        `<summary>History · ${historic.length} pane${historic.length === 1 ? '' : 's'}</summary>`,
-        `<div class="streams-grid">${historic.slice(0, 40).map((w) => renderPane(w, snapshot.recent[w.id] ?? [])).join('')}</div>`,
+        `<details class="workers-history" data-role="workers-history">`,
+        `<summary>History · last 24h · ${historic.length} pane${historic.length === 1 ? '' : 's'}</summary>`,
+        `<div class="workers-grid">${historic.slice(0, 40).map((w) => renderPane(w, snapshot.recent[w.id] ?? [])).join('')}</div>`,
+        `<div class="workers-history-foot">${historyLink}</div>`,
         `</details>`,
       ].join('');
 
@@ -455,33 +508,36 @@ export function renderStreamsPage(data?: StreamsData): string {
 
   const body = [
     `<div class="page-head">`,
-    `<h1 class="page-title">Streams</h1>`,
-    `<span class="page-sub" data-role="streams-header">${visible.length} active pane${visible.length === 1 ? '' : 's'}${active.length > 20 ? ` · capped at 20 of ${active.length}` : ''}${historic.length > 0 ? ` · ${historic.length} historic` : ''}</span>`,
+    `<h1 class="page-title">Workers</h1>`,
+    `<span class="page-sub" data-role="workers-header">${visible.length} active pane${visible.length === 1 ? '' : 's'}${active.length > 20 ? ` · capped at 20 of ${active.length}` : ''}${historic.length > 0 ? ` · ${historic.length} historic (24h)` : ''}</span>`,
     `</div>`,
-    `<div class="streams-toolbar">`,
-    `<input class="streams-search" data-role="search" type="search" placeholder="Search across panes…" aria-label="Search worker output" />`,
+    `<div class="workers-toolbar">`,
+    `<input class="workers-search" data-role="search" type="search" placeholder="Search across panes…" aria-label="Search worker output" />`,
     `<select class="filter-select" data-role="filter-type" aria-label="Filter by type">${typeOptions}</select>`,
     `<select class="filter-select" data-role="filter-status" aria-label="Filter by status">${statusOptions}</select>`,
-    `<span class="streams-count" data-role="visible-count">${visible.length} visible</span>`,
+    `<span class="workers-count" data-role="visible-count">${visible.length} visible</span>`,
     `</div>`,
-    `<div class="streams-grid" data-role="streams-grid">${panes}</div>`,
+    `<div class="workers-grid" data-role="workers-grid">${panes}</div>`,
     historicPanes,
     // v0.6.10 Task 2 — Worker roster table lifted from Topology. Shows
-    // the full list (including historic) as a compact alternative view
-    // for operators who'd rather scan rows than panes.
-    `<section class="streams-roster glass" data-role="streams-roster">`,
+    // the active + 24h-historic list as a compact alternative view for
+    // operators who'd rather scan rows than panes. Workers outside the
+    // 24h window are NOT included here either (chore/streams-to-workers
+    // — they drop off the page entirely; the audit log on /dashboard/history
+    // is the canonical surface for older runs).
+    `<section class="workers-roster glass" data-role="workers-roster">`,
     `<h2 class="card-title">Worker roster</h2>`,
     `<ul>`,
-    renderWorkerRoster(snapshot.workers, now),
+    renderWorkerRoster([...active, ...historic], now),
     `</ul>`,
     `</section>`,
   ].join('');
 
   return renderShell({
-    title: 'Stavr — Streams',
-    activePage: 'streams',
+    title: 'Stavr — Workers',
+    activePage: 'workers',
     body,
-    head: `<style>${STREAMS_CSS}</style>`,
-    script: STREAMS_JS,
+    head: `<style>${WORKERS_CSS}</style>`,
+    script: WORKERS_JS,
   });
 }

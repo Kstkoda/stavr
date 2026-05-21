@@ -222,7 +222,7 @@ export function renderWorkersDetail(workers: WorkerRecord[] = []): string {
   }).join('');
   const body = [
     `<div class="diag-detail">`,
-    renderHeader({ id: 'workers', title: 'Workers', sub: 'Active + last-4h workers (per Phase 5 retention). Per-worker output lives on the Streams page.' }),
+    renderHeader({ id: 'workers', title: 'Workers', sub: 'Active + last-4h workers (per Phase 5 retention). Per-worker output lives on the Workers page.' }),
     `<div class="diag-summary">`,
     summary.map((s) => {
       const tip = metricTooltip(s.l.toLowerCase()) ?? '';
@@ -237,7 +237,7 @@ export function renderWorkersDetail(workers: WorkerRecord[] = []): string {
       : `<table><thead><tr><th>Name</th><th>Type</th><th>cwd</th><th>State</th><th>Started</th></tr></thead><tbody>${rows}</tbody></table>`,
     `</div>`,
     `<div class="diag-related">`,
-    `<a href="/dashboard/streams">live streams →</a>`,
+    `<a href="/dashboard/workers">live workers →</a>`,
     `<a href="/dashboard/topology">topology →</a>`,
     `</div>`,
     `</div>`,

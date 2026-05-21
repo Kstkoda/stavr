@@ -74,7 +74,9 @@ describe('Spec 40 Phase 3 — dashboard HTTP', () => {
     expect(Array.isArray(j.scopes)).toBe(true);
   });
 
-  it('GET /dashboard/workers lists workers from the store', async () => {
+  it('GET /dashboard/workers/data lists workers from the store', async () => {
+    // chore/streams-to-workers — moved off the bare `/dashboard/workers`
+    // path so that URL can serve the renamed (was Streams) HTML page.
     h.store.upsertWorker({
       id: 'w-1',
       name: 'cc-feat-x',
@@ -85,7 +87,7 @@ describe('Spec 40 Phase 3 — dashboard HTTP', () => {
       metadata: { branch: 'feat/x' },
       spawn_params_hash: 'h1',
     });
-    const r = await fetch(`${h.base}/dashboard/workers`);
+    const r = await fetch(`${h.base}/dashboard/workers/data`);
     expect(r.status).toBe(200);
     const j = await r.json();
     expect(j.workers).toHaveLength(1);

@@ -13,7 +13,7 @@ import type { WorkerRecord } from '../../src/persistence.js';
 import { renderHelmPage } from '../../src/dashboard/pages/helm.js';
 import { renderTopologyPage } from '../../src/dashboard/pages/topology.js';
 import { renderDiagnosticsPage } from '../../src/dashboard/pages/diagnostics.js';
-import { renderStreamsPage } from '../../src/dashboard/pages/streams.js';
+import { renderWorkersPage } from '../../src/dashboard/pages/workers.js';
 import {
   fetchWorkerCounters,
   fetchActiveWorkerCount,
@@ -151,16 +151,22 @@ describe('cross-page agreement on active count (BOM v0.6.6 P3 acceptance)', () =
     expect(diagHtml).toMatch(/1 active/);
   });
 
-  it('Streams primary view filters historic panes to a History details section', () => {
-    const html = renderStreamsPage({
+  it('Workers primary view filters historic panes to a 24h History details section', () => {
+    const html = renderWorkersPage({
       workers: E2E_WORKERS,
       recent: {},
     });
     // No active workers => primary grid shows the empty-state copy.
     expect(html).toMatch(/No workers running/);
-    // Historic panes get a collapsible block.
-    expect(html).toMatch(/streams-history/);
-    expect(html).toMatch(/History · 6 panes/);
+    // Historic panes get a collapsible block. The two May-15 zombies are
+    // outside the 24h window (NOW = 2026-05-17T22:00:00Z) so they fall
+    // off the Workers page; only the four recently-ended e2e-* runs remain.
+    expect(html).toMatch(/workers-history/);
+    expect(html).toMatch(/History · last 24h · 4 panes/);
+    expect(html).not.toMatch(/oom-leak-hunt-2026-05-15/);
+    expect(html).not.toMatch(/leak-hunt-retry-a/);
+    // The "older runs" link to /dashboard/history covers the dropped ones.
+    expect(html).toContain('/dashboard/history');
   });
 
   it('Topology canvas hides historic workers older than 24h + surfaces a Show terminated toggle', () => {
@@ -174,7 +180,7 @@ describe('cross-page agreement on active count (BOM v0.6.6 P3 acceptance)', () =
       inFlightBoms: [],
     });
     // v0.6.10 Task 2 — Topology is canvas-only now (the right rail
-    // moved to /plans + /streams). The zombie absence is asserted by
+    // moved to /plans + /workers). The zombie absence is asserted by
     // verifying their data-id strings don't appear on the topology page
     // at all; the operator's primary view doesn't see them.
     expect(html).not.toContain('data-id="oom-leak-hunt-2026-05-15"');
@@ -183,11 +189,11 @@ describe('cross-page agreement on active count (BOM v0.6.6 P3 acceptance)', () =
     expect(html).toMatch(/Show terminated \(2\)/);
   });
 
-  it('Streams roster pill text reads the lifecycle label (operator-kill is distinct from crashed)', () => {
-    // v0.6.10 Task 2 — Worker roster moved from Topology to Streams.
+  it('Workers roster pill text reads the lifecycle label (operator-kill is distinct from crashed)', () => {
+    // v0.6.10 Task 2 — Worker roster moved from Topology to Workers.
     // The lifecycle-distinction assertion follows the table to its new
     // owning page (per CLAUDE.md §1 — tests are derivative of the spec).
-    const html = renderStreamsPage({
+    const html = renderWorkersPage({
       workers: [
         makeWorker({
           id: 'op-killed',

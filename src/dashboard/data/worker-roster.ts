@@ -4,7 +4,7 @@
  * Per-page-shaped roster slicing on top of WorkerRecord[]. Every page that
  * needs a list of workers (not just a count) reads through this module so
  * "what shows up" is consistent across Helm chips, Topology graph nodes,
- * Streams panes, and Diagnostics tables.
+ * Workers panes, and Diagnostics tables.
  *
  * BOM v0.6.6 hard rule #4 (single source) + #5 (lifetime vs current
  * distinction) + #7 (no chips for items >24h old in primary view).
@@ -33,7 +33,7 @@ export interface RosterOptions {
   now?: number;
   /**
    * Cap on the total entries returned. Helm's L2 row shows 6 chips; the
-   * Streams pane grid maxes at 20 before it gets unusable. Pages pass
+   * Workers pane grid maxes at 20 before it gets unusable. Pages pass
    * their own cap.
    */
   limit?: number;
@@ -48,7 +48,7 @@ export interface RosterOptions {
 
 // v0.6.12 Phase 5 — worker retention policy. Default window is 4h
 // (env-overridable via STAVR_WORKER_RETENTION_HOURS). The "Show archived"
-// toggle on Streams + Topology passes a larger maxAgeMs to reveal older
+// toggle on Workers + Topology passes a larger maxAgeMs to reveal older
 // entries up to the hard-delete cutoff (30 days default).
 function defaultHistoryWindowMs(): number {
   const raw = process.env.STAVR_WORKER_RETENTION_HOURS;
@@ -92,7 +92,7 @@ export function fetchActiveWorkers(
 
 /**
  * Workers that ended within the recent history window (default 24h).
- * Used by the "View history" expansion + the Streams page's collapsed
+ * Used by the "View history" expansion + the Workers page's collapsed
  * historic section.
  */
 export function fetchHistoricWorkers(
@@ -134,7 +134,7 @@ export function fetchStaleWorkers(
 
 /**
  * Combined view: active first, then stale (so operator sees what needs
- * attention), then historic up to maxAgeMs. Used by the Streams page's
+ * attention), then historic up to maxAgeMs. Used by the Workers page's
  * full roster + Diagnostics' Workers panel.
  */
 export function fetchFullRoster(

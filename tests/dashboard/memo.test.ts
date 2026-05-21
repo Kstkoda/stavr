@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { memoize, resolveDashboardCacheMs, resolveStreamsMaxEvents } from '../../src/dashboard/memo.js';
+import { memoize, resolveDashboardCacheMs, resolveWorkersMaxEvents } from '../../src/dashboard/memo.js';
 
 describe('memoize', () => {
   it('returns cached value within ttl, refreshes after', () => {
@@ -67,25 +67,25 @@ describe('resolveDashboardCacheMs', () => {
   });
 });
 
-describe('resolveStreamsMaxEvents', () => {
+describe('resolveWorkersMaxEvents', () => {
   it('uses fallback when env unset', () => {
-    delete process.env.STAVR_STREAMS_MAX_EVENTS;
-    expect(resolveStreamsMaxEvents(100)).toBe(100);
+    delete process.env.STAVR_WORKERS_MAX_EVENTS;
+    expect(resolveWorkersMaxEvents(100)).toBe(100);
   });
   it('reads numeric env override', () => {
-    process.env.STAVR_STREAMS_MAX_EVENTS = '50';
+    process.env.STAVR_WORKERS_MAX_EVENTS = '50';
     try {
-      expect(resolveStreamsMaxEvents(100)).toBe(50);
+      expect(resolveWorkersMaxEvents(100)).toBe(50);
     } finally {
-      delete process.env.STAVR_STREAMS_MAX_EVENTS;
+      delete process.env.STAVR_WORKERS_MAX_EVENTS;
     }
   });
   it('rejects zero / negative env values, falls back', () => {
-    process.env.STAVR_STREAMS_MAX_EVENTS = '0';
+    process.env.STAVR_WORKERS_MAX_EVENTS = '0';
     try {
-      expect(resolveStreamsMaxEvents(100)).toBe(100);
+      expect(resolveWorkersMaxEvents(100)).toBe(100);
     } finally {
-      delete process.env.STAVR_STREAMS_MAX_EVENTS;
+      delete process.env.STAVR_WORKERS_MAX_EVENTS;
     }
   });
 });
