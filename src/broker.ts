@@ -15,6 +15,31 @@ interface Subscription {
 
 export const EVENT_NOTIFICATION_METHOD = 'notifications/event/published';
 
+/** Per-subscriber delivery budget in fanout(). A subscriber that cannot accept
+ *  a notification within this window is treated as gone and dropped. */
+const NOTIFY_TIMEOUT_MS = 5_000;
+
+/**
+ * Resolve/reject with `p`, but reject after `ms` if `p` has not settled. The
+ * timer is `unref`'d so a pending delivery cannot keep the process alive.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('notification timeout')), ms);
+    timer.unref?.();
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 export type EventTap = (event: StoredEvent) => void;
 
 export class Broker {
@@ -155,19 +180,30 @@ export class Broker {
         // Dashboard listener errors must never break MCP fanout.
       }
     }
+    // Deliver to every matching subscriber concurrently, each bounded by a
+    // timeout. The previous sequential `await` loop meant one stalled
+    // subscriber (a dead socket whose TCP teardown has not surfaced yet)
+    // blocked delivery to every other subscriber — and fanout() is awaited
+    // inside publish(), which the daemon awaits on the request hot path. A
+    // subscriber that times out or throws is assumed gone and dropped.
+    const deliveries: Promise<void>[] = [];
     for (const sub of this.subscribers.values()) {
       if (sub.kinds.has(stored.kind) || sub.kinds.has('*')) {
-        try {
-          await sub.server.server.notification({
-            method: EVENT_NOTIFICATION_METHOD,
-            params: payload as unknown as Record<string, unknown>,
-          });
-        } catch {
-          // Connection probably gone; clean up on next emit.
-          this.subscribers.delete(sub.sessionId);
-        }
+        deliveries.push(
+          withTimeout(
+            sub.server.server.notification({
+              method: EVENT_NOTIFICATION_METHOD,
+              params: payload as unknown as Record<string, unknown>,
+            }),
+            NOTIFY_TIMEOUT_MS,
+          ).catch(() => {
+            // Connection gone or wedged; drop the subscriber.
+            this.subscribers.delete(sub.sessionId);
+          }),
+        );
       }
     }
+    await Promise.allSettled(deliveries);
   }
 
   async replayTo(sessionId: string, sinceEventId: string, kinds?: string[]): Promise<number> {
