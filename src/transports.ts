@@ -1041,13 +1041,19 @@ export async function mountTransports(
 
     httpServer = await new Promise<HttpServer | undefined>((resolve, reject) => {
       const s = app.listen(opts.port!, bindHost, () => {
-        log(`HTTP/SSE listening on ${bindHost}:${opts.port}`);
+        // bonjour-service (mDNS) rejects port 0; when opts.port was 0 (tests
+        // use the ephemeral-port path), read the actual bound port from
+        // s.address() instead of forwarding the literal 0 into federation.
+        const addr = s.address();
+        const boundPort =
+          addr && typeof addr === 'object' ? addr.port : (opts.port ?? 0);
+        log(`HTTP/SSE listening on ${bindHost}:${boundPort}`);
         // v0.7 Phase 2-trimmed — start federation subsystem now that the HTTP
         // surface other peers will dial is actually up. mDNS errors are
         // non-fatal; federation degrades to peers.yaml-only when multicast
         // is blocked or unavailable (Docker, Hyper-V container, etc.).
         federation
-          .start({ port: opts.port!, startedAt: daemonStartedAt })
+          .start({ port: boundPort, startedAt: daemonStartedAt })
           .catch((err) => {
             log(`federation start failed: ${(err as Error).message}; continuing without it`);
           });

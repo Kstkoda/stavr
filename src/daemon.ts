@@ -520,6 +520,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
             deleted_operational: result.deletedOperational,
             deleted_audit: result.deletedAudit,
             unknown_preserved: result.unknownPreserved,
+            unknown_kinds: result.unknownKinds,
             before_count: result.beforeCount,
             after_count: result.afterCount,
             duration_ms: result.duration_ms,

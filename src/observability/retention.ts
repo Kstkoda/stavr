@@ -167,6 +167,12 @@ export interface RetentionResult {
   deletedAudit: number;
   deletedUnknown: number;
   unknownPreserved: number;
+  /**
+   * Per-kind counts for the unknown bucket — the operator needs the names to
+   * extend OPERATIONAL_KINDS / AUDIT_KINDS. Sorted by count descending. Empty
+   * when unknownPreserved === 0.
+   */
+  unknownKinds: Array<{ kind: string; count: number }>;
   duration_ms: number;
   beforeCount: number;
   afterCount: number;

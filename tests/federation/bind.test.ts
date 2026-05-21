@@ -27,6 +27,7 @@ import { resolve, join } from 'node:path';
 
 const projectRoot = resolve(__dirname, '..', '..');
 const cliEntry = resolve(projectRoot, 'src', 'cli.ts');
+const tsxCli = resolve(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 
 const isWindows = process.platform === 'win32';
 
@@ -38,10 +39,13 @@ interface SpawnedDaemon {
 }
 
 function spawnCli(args: string[], env: NodeJS.ProcessEnv): SpawnedDaemon {
-  const child = spawn('npx', ['tsx', cliEntry, ...args], {
+  // Invoke tsx via node directly, NOT through `npx tsx`. The npx route forces
+  // shell:true on Windows (npx.cmd), and shell:true + args-array trips
+  // DEP0190 on Node 22+. node + the resolved tsx CLI file works identically
+  // on every platform with shell:false.
+  const child = spawn(process.execPath, [tsxCli, cliEntry, ...args], {
     cwd: projectRoot,
     env: { ...process.env, ...env },
-    shell: isWindows, // npx.cmd needs the shell on Windows
   });
   const stdout: string[] = [];
   const stderr: string[] = [];
