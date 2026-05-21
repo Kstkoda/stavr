@@ -30,6 +30,7 @@ import { fetchCommitsHistory } from './dashboard/data/history/commits.js';
 import { mergeTimeline } from './dashboard/data/history/timeline.js';
 import { renderHistoryRow } from './dashboard/components/timeline-row.js';
 import { renderHistoryDetail } from './dashboard/data/history/detail.js';
+import { walkCorrelation, renderTraceHtml } from './dashboard/data/history/correlation.js';
 import { TIERS, defaultTierFor, type Tier } from './tools/categories.js';
 import {
   applyPolicyToActor,
@@ -1633,6 +1634,34 @@ export function mountDashboardRoutes(
   });
   for (const method of ['post', 'put', 'patch', 'delete'] as const) {
     app[method]('/dashboard/api/history/:kind/:id', (_req, res) => {
+      res.status(405).json({ error: 'history is read-only' });
+    });
+  }
+
+  // P4 — correlation trace endpoint. Returns the walked chain shaped
+  // for the trace-drawer renderer. The direction defaults to 'forward'
+  // for non-notification rows and 'backward' for notification rows
+  // (P4 acceptance criterion). Operator can flip it with ?direction=.
+  app.get('/dashboard/api/history/:kind/:id/trace', (req, res) => {
+    const kind = String(req.params.kind || '');
+    const id = String(req.params.id || '');
+    const q = req.query as Record<string, string | undefined>;
+    const defaultDir: 'forward' | 'backward' = kind === 'notification' ? 'backward' : 'forward';
+    const direction: 'forward' | 'backward' = q.direction === 'backward' || q.direction === 'forward'
+      ? q.direction
+      : defaultDir;
+    const trace = walkCorrelation({ db: broker.store.rawDb }, { kind, id }, direction);
+    res.json({
+      direction: trace.direction,
+      correlation_id: trace.correlation_id,
+      hop_depth: trace.hop_depth,
+      origin: trace.origin,
+      nodes: trace.nodes,
+      html: renderTraceHtml(trace),
+    });
+  });
+  for (const method of ['post', 'put', 'patch', 'delete'] as const) {
+    app[method]('/dashboard/api/history/:kind/:id/trace', (_req, res) => {
       res.status(405).json({ error: 'history is read-only' });
     });
   }

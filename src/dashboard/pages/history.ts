@@ -37,6 +37,10 @@ import {
   HISTORY_DRAWER_JS,
 } from '../components/history-drawer.js';
 import { SOURCE_LINK_CSS } from '../components/source-link.js';
+import {
+  CORRELATION_THREAD_CSS,
+  CORRELATION_THREAD_JS,
+} from '../components/correlation-thread.js';
 import type { HistoryItem, HistoryKind } from '../data/history/types.js';
 
 export interface HistoryData {
@@ -334,12 +338,12 @@ export function renderHistoryPage(data?: HistoryData): string {
     renderHistoryDrawerShell(),
   ].join('');
 
-  const head = `<style>${HISTORY_CSS}\n${TIMELINE_ROW_CSS}\n${RANGE_PICKER_CSS}\n${HISTORY_DRAWER_CSS}\n${SOURCE_LINK_CSS}</style>`;
+  const head = `<style>${HISTORY_CSS}\n${TIMELINE_ROW_CSS}\n${RANGE_PICKER_CSS}\n${HISTORY_DRAWER_CSS}\n${SOURCE_LINK_CSS}\n${CORRELATION_THREAD_CSS}</style>`;
   return renderShell({
     title: 'Stavr — History',
     activePage: 'history',
     body,
     head,
-    script: `${RANGE_PICKER_JS}\n${HISTORY_JS}\n${HISTORY_DRAWER_JS}`,
+    script: `${RANGE_PICKER_JS}\n${HISTORY_JS}\n${HISTORY_DRAWER_JS}\n${CORRELATION_THREAD_JS}`,
   });
 }
