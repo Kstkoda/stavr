@@ -12,7 +12,11 @@ import { getLogger } from './log.js';
 import { STEWARD_MEMORY_ROOT } from './steward/tools.js';
 import { loadMasterKey } from './credentials/vault.js';
 import { CredentialStore } from './credentials/store.js';
-import { setCredentialStore } from './server.js';
+import {
+  getOrchestrator,
+  setCredentialStore,
+  setHostCeilingContext,
+} from './server.js';
 import { loadStewardConfig } from './steward/config.js';
 import { makeAnthropicProvider } from './steward/providers/anthropic.js';
 import { makeClaudeCodeProvider } from './steward/providers/claude-code.js';
@@ -35,6 +39,14 @@ import { resolveRetentionOpts } from './observability/retention.js';
 import { resolveWorkerRetentionOpts, hardDeleteCutoffIso } from './observability/worker-retention.js';
 import { startOtel, type StartedOtel } from './observability/otel.js';
 import { startEventLoopMonitor, type EventLoopMonitorStop } from './observability/event-loop.js';
+import {
+  startHostHeadroomPoller,
+  type HostHeadroomMonitor,
+  type HostHeadroomPollerHandle,
+} from './observability/host-headroom-poller.js';
+import { installOsCap } from './governor/os-cap.js';
+import { startLoadShedder, type LoadShedderStop } from './governor/load-shedder.js';
+import { totalmem as osTotalmem } from 'node:os';
 
 export interface DaemonOptions {
   port: number;
@@ -356,6 +368,93 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
+  // host-resource-ceiling Phase 2 — host-level headroom poller. Reads
+  // node:os totalmem/freemem/cpus every 2s, emits daemon_host_headroom,
+  // and exposes a current() snapshot for admission control + load-shedding
+  // (Phases 3 + 5). Always runs (even when host_ceiling.enabled=false) so
+  // the operator still gets the observability signal.
+  let hostHeadroomHandle: HostHeadroomPollerHandle | undefined;
+  let hostHeadroomMonitor: HostHeadroomMonitor | undefined;
+  let loadShedderStop: LoadShedderStop | undefined;
+  try {
+    const cfg = loadConfig();
+    hostHeadroomHandle = startHostHeadroomPoller({
+      ceiling: cfg.config.host_ceiling,
+      broker,
+    });
+    hostHeadroomMonitor = hostHeadroomHandle;
+    // host-resource-ceiling Phase 3 — wire admission control onto the
+    // broker so the orchestrator (created lazily on first MCP connection)
+    // picks up the ceiling + monitor at construction. Idempotent.
+    setHostCeilingContext(broker, {
+      ceiling: cfg.config.host_ceiling,
+      monitor: hostHeadroomMonitor,
+    });
+
+    // host-resource-ceiling Phase 5 — load-shedding. Polls the headroom
+    // monitor every 5s; when ram_used_pct_ewma >= shed_threshold_pct OR
+    // ram_free_gb < shed_min_free_ram_gb, terminates the most-recent live
+    // worker via orchestrator.shedWorker(). Lazy orchestrator lookup so we
+    // don't force eager orchestrator construction at boot.
+    try {
+      loadShedderStop = startLoadShedder({
+        ceiling: cfg.config.host_ceiling,
+        monitor: hostHeadroomMonitor,
+        orchestrator: {
+          liveCount: () => getOrchestrator(broker)?.liveCount() ?? 0,
+          liveWorkerIdsInSpawnOrder: () =>
+            getOrchestrator(broker)?.liveWorkerIdsInSpawnOrder() ?? [],
+          shedWorker: async (id, reason) => {
+            const orch = getOrchestrator(broker);
+            if (!orch) return {};
+            return orch.shedWorker(id, reason);
+          },
+        },
+      });
+    } catch (err) {
+      logger.error('failed to start load-shedder; daemon continues without it', {
+        error: (err as Error).message,
+      });
+    }
+    // host-resource-ceiling Phase 4 — OS-level hard cap. Best-effort:
+    // attempts cgroup-v2 on Linux when a delegated subtree is available;
+    // returns kind='none' on Windows / macOS where it's an opt-in operator
+    // wrapper instead. Always emits host_ceiling_os_cap so the dashboard
+    // can show the result.
+    try {
+      const capResult = installOsCap({
+        ceiling: cfg.config.host_ceiling,
+        hostTotalRamBytes: osTotalmem(),
+      });
+      await broker.publish({
+        kind: 'host_ceiling_os_cap',
+        at: new Date().toISOString(),
+        source_agent: 'stavr-daemon',
+        payload: capResult,
+      });
+      if (capResult.installed) {
+        logger.info('os-level host ceiling installed', {
+          kind: capResult.kind,
+          memory_max_bytes: capResult.memory_max_bytes,
+        });
+      } else {
+        logger.info('os-level host ceiling not installed', {
+          kind: capResult.kind,
+          reason: capResult.reason,
+        });
+      }
+    } catch (err) {
+      // installOsCap is supposed to never throw, but belt-and-braces.
+      logger.error('os-cap install threw; admission control + load-shedding remain', {
+        error: (err as Error).message,
+      });
+    }
+  } catch (err) {
+    logger.error('failed to start host-headroom poller; daemon continues without it', {
+      error: (err as Error).message,
+    });
+  }
+
   // bom-oom-leak-hunt C2.1 — events table retention. Run once at boot
   // (covers daemons restarted after long downtime) and then every hour.
   // The pruneEvents call is best-effort: any DB hiccup is caught inside
@@ -498,6 +597,12 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     }
     if (eventLoopMonitorStop) {
       try { eventLoopMonitorStop(); } catch { /* best effort */ }
+    }
+    if (hostHeadroomHandle) {
+      try { hostHeadroomHandle.stop(); } catch { /* best effort */ }
+    }
+    if (loadShedderStop) {
+      try { loadShedderStop(); } catch { /* best effort */ }
     }
     try { clearInterval(retentionHandle); } catch { /* best effort */ }
     if (v02) {

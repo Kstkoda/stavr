@@ -26,6 +26,11 @@ import {
   type BuildVersions,
 } from '../data/build-versions.js';
 import { metricTooltip } from '../components/tooltips.js';
+import {
+  formatHostCeilingHeadline,
+  hostCeilingStatusClass,
+  type HostCeilingDashboardData,
+} from '../data/host-ceiling.js';
 
 export interface DiagnosticsData {
   bricks?: InstalledBrickLite[];
@@ -54,6 +59,12 @@ export interface DiagnosticsData {
    * deterministic.
    */
   versions?: BuildVersions;
+  /**
+   * Host-resource ceiling snapshot — populated by fetchHostCeilingData
+   * (Phase 6 of host-resource-ceiling BOM). When omitted, the panel
+   * renders an "unwired" placeholder.
+   */
+  hostCeiling?: HostCeilingDashboardData;
 }
 
 function escapeHtml(s: string): string {
@@ -1318,6 +1329,7 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
 
   // ----- v0.5 P6: Steward subprocess panel (additive) -----
   const stewardPanel = renderStewardPanel(data?.steward);
+  const hostCeilingPanel = renderHostCeilingPanel(data?.hostCeiling);
 
   // ----- Bottom row -----
   const healPanel = [
@@ -1383,6 +1395,7 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     `<section id="health" class="diag-anchor">`,
     `<h2 class="diag-anchor-title">Health</h2>`,
     buildVersionsSection,
+    hostCeilingPanel,
     perfSection,
     `</section>`,
     `<section id="storage" class="diag-anchor">`,
@@ -1407,7 +1420,7 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     title: 'Stavr — Diagnostics',
     activePage: 'diagnostics',
     body,
-    head: `<style>${DIAGNOSTICS_CSS}${STEWARD_PANEL_CSS}${BUILD_VERSIONS_CSS}</style>`,
+    head: `<style>${DIAGNOSTICS_CSS}${STEWARD_PANEL_CSS}${BUILD_VERSIONS_CSS}${HOST_CEILING_CSS}</style>`,
     script: DIAGNOSTICS_JS,
   });
 }
@@ -1611,6 +1624,89 @@ const STEWARD_PANEL_CSS = `
 .steward-mode-chip.reactive  { background: rgba(199,108,73,.16);  color: #d68a6a; border:1px solid rgba(199,108,73,.30); }
 .steward-mode-chip.scheduled { background: rgba(76,140,196,.16);  color: #7ebbdf; border:1px solid rgba(76,140,196,.30); }
 .steward-mode-chip.proactive { background: rgba(226,169,66,.16);  color: var(--warn); border:1px solid rgba(226,169,66,.30); }
+`;
+
+// ===================== Host-resource ceiling panel =====================
+// Additive panel for Phase 6 of host-resource-ceiling BOM. Surfaces the
+// configured ceiling, the most-recent headroom snapshot, the OS-cap install
+// result, and refusal/shed counts in the last hour.
+function renderHostCeilingPanel(d?: HostCeilingDashboardData): string {
+  const headline = d ? formatHostCeilingHeadline(d) : 'host ceiling: not wired';
+  const cls = d ? hostCeilingStatusClass(d) : 'idle';
+  const tiles: Array<{ l: string; v: string }> = [];
+  if (d?.ceiling) {
+    tiles.push({ l: 'Enabled', v: d.ceiling.enabled ? 'yes' : 'no' });
+    tiles.push({
+      l: 'Max RAM %',
+      v: `${(d.ceiling.max_host_ram_pct * 100).toFixed(0)}%`,
+    });
+    tiles.push({ l: 'Min free RAM', v: `${d.ceiling.min_free_ram_gb} GB` });
+    tiles.push({
+      l: 'Max sustained CPU',
+      v: `${(d.ceiling.max_sustained_cpu_pct * 100).toFixed(0)}%`,
+    });
+    tiles.push({
+      l: 'Max workers',
+      v: d.ceiling.max_concurrent_workers === 0 ? '∞' : String(d.ceiling.max_concurrent_workers),
+    });
+  }
+  if (d?.snapshot) {
+    tiles.push({
+      l: 'RAM in use (ewma)',
+      v: `${(d.snapshot.ram_used_pct_ewma * 100).toFixed(1)}%`,
+    });
+    tiles.push({ l: 'RAM free', v: `${d.snapshot.ram_free_gb.toFixed(2)} GB` });
+    tiles.push({
+      l: 'CPU sustained',
+      v:
+        d.snapshot.cpu_busy_pct_ewma === null
+          ? '—'
+          : `${(d.snapshot.cpu_busy_pct_ewma * 100).toFixed(1)}%`,
+    });
+  }
+  if (d?.os_cap) {
+    tiles.push({
+      l: 'OS cap',
+      v: d.os_cap.installed ? `${d.os_cap.kind} (installed)` : `${d.os_cap.kind} (not installed)`,
+    });
+  }
+  if (d) {
+    tiles.push({ l: 'Refused (1h)', v: String(d.refused_recent) });
+    tiles.push({ l: 'Shed (1h)', v: String(d.shed_recent) });
+  }
+  const tilesHtml = tiles
+    .map(
+      (t) =>
+        `<div class="hc-tile"><div class="l">${escapeHtml(t.l)}</div><div class="v mono">${escapeHtml(t.v)}</div></div>`,
+    )
+    .join('');
+
+  return [
+    `<div class="glass hc-panel" data-status="${cls}">`,
+    `<div class="hc-head"><span class="hc-dot"></span><strong>${escapeHtml(headline)}</strong></div>`,
+    `<div class="hc-grid">${tilesHtml}</div>`,
+    `</div>`,
+  ].join('');
+}
+
+const HOST_CEILING_CSS = `
+.hc-panel { padding: 12px 14px; margin: 10px 0; }
+.hc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.hc-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--ink-3); }
+.hc-panel[data-status="ok"]   .hc-dot { background: var(--green); }
+.hc-panel[data-status="warn"] .hc-dot { background: var(--amber); }
+.hc-panel[data-status="crit"] .hc-dot { background: var(--red); }
+.hc-grid {
+  display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+.hc-tile {
+  background: rgba(20,22,31,.55); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 9px;
+}
+.hc-tile .l { color: var(--ink-3); font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; }
+.hc-tile .v { color: var(--ink-1); font-size: 13px; margin-top: 2px; }
+.hc-tile .v.mono { font-family: var(--mono); }
 `;
 
 function renderStewardPanel(steward: DiagnosticsData['steward']): string {
