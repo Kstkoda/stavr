@@ -39,6 +39,10 @@ import { resolveRetentionOpts } from './observability/retention.js';
 import { resolveWorkerRetentionOpts, hardDeleteCutoffIso } from './observability/worker-retention.js';
 import { startOtel, type StartedOtel } from './observability/otel.js';
 import { startEventLoopMonitor, type EventLoopMonitorStop } from './observability/event-loop.js';
+import { startSloPoller, type SloPollerStop } from './observability/slo.js';
+import { startTelemetryPipelineMonitor, type TelemetryPipelinePollerStop } from './observability/telemetry-pipeline.js';
+import { startHostMetricsPoller, type HostMetricsPollerStop } from './observability/host-metrics.js';
+import { startDcgmPoller, type DcgmPollerStop } from './observability/gpu-metrics.js';
 import {
   startHostHeadroomPoller,
   type HostHeadroomMonitor,
@@ -368,6 +372,50 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
+  // observability-instrumentation BOM Wave 0 — SLO burn-rate poller +
+  // telemetry-pipeline self-monitoring (tsdb.active_series). Both interval
+  // handles are unref'd inside their start fns.
+  let sloPollerStop: SloPollerStop | undefined;
+  try {
+    sloPollerStop = startSloPoller();
+  } catch (err) {
+    logger.error('failed to start SLO poller; daemon continues without burn-rate gauges', {
+      error: (err as Error).message,
+    });
+  }
+  let telemetryPipelineStop: TelemetryPipelinePollerStop | undefined;
+  try {
+    telemetryPipelineStop = startTelemetryPipelineMonitor();
+  } catch (err) {
+    logger.error('failed to start telemetry-pipeline monitor; daemon continues without it', {
+      error: (err as Error).message,
+    });
+  }
+
+  // observability-instrumentation BOM Wave 2 — Layer 1 host USE poller.
+  // Reads os.cpus / os.freemem / os.loadavg / os.uptime every 10s and
+  // writes the host_* gauges. Interval handle is unref'd inside.
+  let hostMetricsStop: HostMetricsPollerStop | undefined;
+  try {
+    hostMetricsStop = startHostMetricsPoller();
+  } catch (err) {
+    logger.error('failed to start host-metrics poller; daemon continues without host gauges', {
+      error: (err as Error).message,
+    });
+  }
+
+  // observability-instrumentation BOM Wave 4 — DCGM exporter scrape. No-op
+  // when STAVR_DCGM_EXPORTER_URL is unset (returns null), so the daemon
+  // runs unchanged on machines without NVIDIA GPUs.
+  let dcgmPollerStop: DcgmPollerStop | undefined;
+  try {
+    dcgmPollerStop = startDcgmPoller() ?? undefined;
+  } catch (err) {
+    logger.error('failed to start DCGM poller; daemon continues without GPU metrics', {
+      error: (err as Error).message,
+    });
+  }
+
   // host-resource-ceiling Phase 2 — host-level headroom poller. Reads
   // node:os totalmem/freemem/cpus every 2s, emits daemon_host_headroom,
   // and exposes a current() snapshot for admission control + load-shedding
@@ -597,6 +645,18 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     }
     if (eventLoopMonitorStop) {
       try { eventLoopMonitorStop(); } catch { /* best effort */ }
+    }
+    if (sloPollerStop) {
+      try { sloPollerStop(); } catch { /* best effort */ }
+    }
+    if (telemetryPipelineStop) {
+      try { telemetryPipelineStop(); } catch { /* best effort */ }
+    }
+    if (hostMetricsStop) {
+      try { hostMetricsStop(); } catch { /* best effort */ }
+    }
+    if (dcgmPollerStop) {
+      try { dcgmPollerStop(); } catch { /* best effort */ }
     }
     if (hostHeadroomHandle) {
       try { hostHeadroomHandle.stop(); } catch { /* best effort */ }

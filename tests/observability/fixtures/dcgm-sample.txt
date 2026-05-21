@@ -1,0 +1,25 @@
+# HELP DCGM_FI_DEV_GPU_UTIL GPU utilization (in %).
+# TYPE DCGM_FI_DEV_GPU_UTIL gauge
+DCGM_FI_DEV_GPU_UTIL{gpu="0",host="vault"} 73
+DCGM_FI_DEV_GPU_UTIL{gpu="1",host="vault"} 12
+# HELP DCGM_FI_PROF_SM_ACTIVE SM active ratio.
+# TYPE DCGM_FI_PROF_SM_ACTIVE gauge
+DCGM_FI_PROF_SM_ACTIVE{gpu="0"} 0.81
+DCGM_FI_PROF_SM_ACTIVE{gpu="1"} 0.02
+# HELP DCGM_FI_DEV_FB_USED Frame-buffer used MiB.
+# TYPE DCGM_FI_DEV_FB_USED gauge
+DCGM_FI_DEV_FB_USED{gpu="0"} 14336
+DCGM_FI_DEV_FB_USED{gpu="1"} 512
+DCGM_FI_DEV_FB_FREE{gpu="0"} 9000
+DCGM_FI_DEV_FB_FREE{gpu="1"} 23000
+DCGM_FI_DEV_GPU_TEMP{gpu="0"} 71
+DCGM_FI_DEV_GPU_TEMP{gpu="1"} 44
+DCGM_FI_DEV_POWER_USAGE{gpu="0"} 312.5
+DCGM_FI_DEV_POWER_USAGE{gpu="1"} 39.1
+DCGM_FI_DEV_ECC_DBE_VOL_TOTAL{gpu="0"} 0
+DCGM_FI_PROF_NVLINK_TX_BYTES{gpu="0",link="0"} 9876543210
+DCGM_FI_PROF_NVLINK_RX_BYTES{gpu="0",link="0"} 8765432109
+# Unknown DCGM metric — should be silently dropped.
+DCGM_FI_DEV_UNKNOWN{gpu="0"} 42
+# Process-attributed line — must NOT leak into a registered gauge.
+DCGM_FI_DEV_GPU_UTIL{gpu="0",host="vault",pid="12345"} 99

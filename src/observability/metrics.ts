@@ -123,7 +123,7 @@ export function recordProviderLatency(provider: string, model: string, seconds: 
 /** Keep model label cardinality bounded — strip a `:tag` suffix on local
  *  models (e.g. `llama3.2:3b` → `llama3.2:3b` stays as-is; very long names
  *  truncate). */
-function normalizeModelLabel(model: string): string {
+export function normalizeModelLabel(model: string): string {
   if (!model) return 'unknown';
   if (model.length > 48) return model.slice(0, 48);
   return model;
