@@ -25,6 +25,7 @@ import {
   recordProviderLatency,
 } from '../../observability/metrics.js';
 import { recordSloSample } from '../../observability/slo.js';
+import { recordLlmCall } from '../../observability/llm-metrics.js';
 
 export interface OllamaProviderOpts {
   /** Default `http://127.0.0.1:11434`. The Ollama daemon binds loopback by
@@ -152,6 +153,11 @@ interface RunOpts {
 async function* runOllamaChat(opts: RunOpts): AsyncGenerator<StewardEvent> {
   const start = Date.now();
   let status: 'ok' | 'error' | 'timeout' = 'ok';
+  // BOM Wave 3 — track token counts + finish reason in outer scope so the
+  // finally block can emit gen_ai.client.token.usage + llm_finish_reason_total.
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let finishReason: string | undefined;
   const ctl = new AbortController();
   const to = setTimeout(() => {
     status = 'timeout';
@@ -188,15 +194,18 @@ async function* runOllamaChat(opts: RunOpts): AsyncGenerator<StewardEvent> {
       yield { kind: 'tool_call', call };
     }
 
+    promptTokens = json.prompt_eval_count ?? 0;
+    completionTokens = json.eval_count ?? 0;
+    finishReason = json.done_reason ?? 'stop';
     yield {
       kind: 'usage',
       usage: {
-        input_tokens: json.prompt_eval_count ?? 0,
-        output_tokens: json.eval_count ?? 0,
+        input_tokens: promptTokens,
+        output_tokens: completionTokens,
         cost_usd: 0, // local inference has no per-token cost
       },
     };
-    yield { kind: 'done', stop_reason: json.done_reason ?? 'stop' };
+    yield { kind: 'done', stop_reason: finishReason };
   } catch (err) {
     if (status === 'ok') status = 'error';
     throw err;
@@ -207,6 +216,21 @@ async function* runOllamaChat(opts: RunOpts): AsyncGenerator<StewardEvent> {
     recordProviderLatency('ollama', opts.model, elapsed);
     // BOM Wave 0 — llm_provider_availability SLO sample.
     recordSloSample('llm_provider_availability', status === 'ok');
+    // BOM Wave 3 — emit OTel GenAI + L4 catalog alongside the stavr_provider_*
+    // names (dual-emit during deprecation).
+    recordLlmCall({
+      model: opts.model,
+      operation: 'chat',
+      durationSeconds: elapsed,
+      success: status === 'ok',
+      errorType: (status as string) === 'timeout' ? 'timeout' : (status as string) === 'error' ? 'upstream' : undefined,
+      promptTokens,
+      completionTokens,
+      finishReason,
+      tenant: 'local',
+      feature: 'steward',
+      costUsd: 0,
+    });
   }
 }
 
