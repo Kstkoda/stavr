@@ -143,6 +143,19 @@ export const EventKind = z.enum([
   // WebAuthn coordinator on every successful Tier 3 verification so
   // forensic review can correlate assertions to the actions they gated.
   'tier3_assertion_recorded',
+  // Host-resource ceiling (proposed/host-resource-ceiling-bom.md).
+  // daemon_host_headroom: per-tick host RAM/CPU sample from the headroom
+  //   poller (Phase 2).
+  // host_ceiling_refused: a worker_spawn (or other admission-controlled op)
+  //   was refused because admitting it would breach the ceiling (Phase 3).
+  // host_ceiling_shed: load-shedding terminated a worker because runtime
+  //   headroom dropped under the shed thresholds (Phase 5).
+  // host_ceiling_os_cap: emitted once at boot describing the OS-level cap
+  //   installation result (kind: 'cgroup-v2' | 'job-object' | 'none') (Phase 4).
+  'daemon_host_headroom',
+  'host_ceiling_refused',
+  'host_ceiling_shed',
+  'host_ceiling_os_cap',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 

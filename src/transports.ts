@@ -16,6 +16,7 @@ import {
 import { loadChannelStatuses } from './dashboard/data/channels.js';
 import { fetchToolsData } from './dashboard/data/tools-data.js';
 import { fetchWorkerCounters } from './dashboard/data/worker-counters.js';
+import { fetchHostCeilingData } from './dashboard/data/host-ceiling.js';
 import { fetchTopologyExtras } from './dashboard/data/topology-data.js';
 import { deriveLifecycleState } from './workers/lifecycle.js';
 import { fetchPermissionsData } from './dashboard/data/permissions-data.js';
@@ -665,6 +666,7 @@ export async function mountTransports(
       const incomingSid = req.header('mcp-session-id');
       let session = incomingSid ? sseSessions.get(incomingSid) : undefined;
       let isNew = false;
+      try {
 
       // bom-diagnostics-2026 C2.3 — attach OTel GenAI MCP semconv attributes
       // to the auto-instrumented http server span. Best-effort: when no OTel
@@ -815,6 +817,32 @@ export async function mountTransports(
         }
         refreshSseGauge();
         oneshotCleanup.tick();
+      }
+      } catch (err) {
+        // A throw during session setup or handleRequest leaves a half-built
+        // session that nothing will ever clean up — the transport's `onclose`
+        // only fires for sessions that fully connected. Tear it down here so a
+        // failed init cannot leak an McpServer + transport object graph, which
+        // is exactly the v0.6.x heap-growth failure mode.
+        log(`/mcp handler error: ${(err as Error).message}`);
+        if (isNew && session) {
+          const tid = session.transport.sessionId;
+          if (tid) sseSessions.delete(tid);
+          broker.removeSession(session.handle.sessionId);
+          try {
+            await session.transport.close?.();
+          } catch {
+            /* socket likely already gone */
+          }
+          refreshSseGauge();
+        }
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: '2.0',
+            error: { code: -32603, message: 'internal error' },
+            id: (req.body as { id?: unknown } | undefined)?.id ?? null,
+          });
+        }
       }
     });
 
@@ -1045,8 +1073,16 @@ export async function mountTransports(
     } catch {
       /* federation teardown best-effort; mDNS sockets close on process exit anyway */
     }
-    if (httpServer) await new Promise<void>((r) => httpServer!.close(() => r()));
+    // Close MCP transports BEFORE the HTTP server. `httpServer.close()` waits
+    // for in-flight connections to drain; an open SSE stream never drains on
+    // its own, so closing the server first hangs shutdown indefinitely. Close
+    // the transports (which ends their streams), force any stragglers, then
+    // close the listener.
     for (const s of sseSessions.values()) await s.transport.close().catch(() => {});
+    if (httpServer) {
+      httpServer.closeAllConnections?.();
+      await new Promise<void>((r) => httpServer!.close(() => r()));
+    }
     broker.store.close();
   };
 
@@ -1506,6 +1542,7 @@ export function mountDashboardRoutes(
         kind: b.kind,
         enabled: b.enabled,
       })),
+      hostCeiling: fetchHostCeilingData(broker),
     };
   }
 
