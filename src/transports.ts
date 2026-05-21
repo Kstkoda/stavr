@@ -20,6 +20,15 @@ import { fetchHostCeilingData } from './dashboard/data/host-ceiling.js';
 import { fetchTopologyExtras } from './dashboard/data/topology-data.js';
 import { deriveLifecycleState } from './workers/lifecycle.js';
 import { fetchPermissionsData } from './dashboard/data/permissions-data.js';
+import { fetchDecisionsHistory } from './dashboard/data/history/decisions.js';
+import { fetchScopesHistory } from './dashboard/data/history/scopes.js';
+import { fetchPlansHistory } from './dashboard/data/history/plans.js';
+import { fetchHostExecHistory } from './dashboard/data/history/host-exec.js';
+import { fetchNotificationsHistory } from './dashboard/data/history/notifications.js';
+import { fetchBomsHistory } from './dashboard/data/history/boms.js';
+import { fetchCommitsHistory } from './dashboard/data/history/commits.js';
+import { mergeTimeline } from './dashboard/data/history/timeline.js';
+import { renderHistoryRow } from './dashboard/components/timeline-row.js';
 import { TIERS, defaultTierFor, type Tier } from './tools/categories.js';
 import {
   applyPolicyToActor,
@@ -1269,6 +1278,36 @@ export function mountDashboardRoutes(
   // per render, vs 150 kB with the old cap — manageable even under 5s
   // polling. Operators who want more can bump the env or hit `stavr events`
   // directly.
+  // v0.8 — History page initial snapshot. Default range = last 24h,
+  // tab = All. Fans out across decisions / scopes / boms (DB) / plans
+  // (DB) / host-exec (events) / commits (git log) / notifications.
+  // BOM-files (proposed/*.md) + CI runs are NOT fanned out here — they
+  // depend on the working tree path and on a future GitHub-Actions
+  // cache that doesn't exist yet. The page renders without them at
+  // first paint; they appear via the `/dashboard/api/history` XHR
+  // endpoint when the operator switches tabs.
+  function historyData(): import('./dashboard/pages/history.js').HistoryData {
+    const until = new Date().toISOString();
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const q = { since, until, limit: 100 };
+    const db = broker.store.rawDb;
+    // Each fetcher is read-only + bounded; we wrap in try so a schema
+    // skew on any single source can't take the page down.
+    const pages: import('./dashboard/data/history/types.js').HistoryPage[] = [];
+    try { pages.push(fetchDecisionsHistory({ db }, q)); } catch { /* empty */ }
+    try { pages.push(fetchScopesHistory({ db }, q)); } catch { /* empty */ }
+    try { pages.push(fetchPlansHistory({ db }, q)); } catch { /* empty */ }
+    try { pages.push(fetchHostExecHistory({ db }, q)); } catch { /* empty */ }
+    try { pages.push(fetchNotificationsHistory({ db }, q)); } catch { /* empty */ }
+    const merged = mergeTimeline({ pages }, q);
+    return {
+      items: merged.items,
+      total_estimate: merged.total_estimate,
+      range: '24h',
+      has_more: merged.next_cursor !== null,
+    };
+  }
+
   function streamsDataRaw() {
     const workers = broker.store.listWorkers();
     const recent: Record<string, StoredEvent[]> = {};
@@ -1536,7 +1575,42 @@ export function mountDashboardRoutes(
     };
   }
 
-  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, toolkitData, mcpsData, toolsData, permissionsData, capabilitiesData, settingsData, diagnosticsData, familyModeData });
+  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, historyData, toolkitData, mcpsData, toolsData, permissionsData, capabilitiesData, settingsData, diagnosticsData, familyModeData });
+
+  // v0.8 — XHR endpoint backing the History page's "Load more" + range
+  // re-fetch. Same data sources as historyData() but with caller-supplied
+  // range/limit/offset. Read-only — POST/PUT/DELETE return 405.
+  //
+  // The endpoint returns serialized HTML for each row so the page can
+  // `innerHTML +=` without round-tripping the renderer. The full
+  // HistoryItem is available via the row's data-* attributes if the
+  // page needs to introspect.
+  app.get('/dashboard/api/history', (req, res) => {
+    const q = req.query as Record<string, string | undefined>;
+    const since = typeof q.since === 'string' ? q.since : undefined;
+    const until = typeof q.until === 'string' ? q.until : undefined;
+    const limit = Math.max(1, Math.min(500, Number(q.limit) || 100));
+    const offset = Math.max(0, Math.min(1000, Number(q.offset) || 0));
+    const query = { since, until, limit, offset };
+    const db = broker.store.rawDb;
+    const pages: import('./dashboard/data/history/types.js').HistoryPage[] = [];
+    try { pages.push(fetchDecisionsHistory({ db }, query)); } catch { /* empty */ }
+    try { pages.push(fetchScopesHistory({ db }, query)); } catch { /* empty */ }
+    try { pages.push(fetchPlansHistory({ db }, query)); } catch { /* empty */ }
+    try { pages.push(fetchHostExecHistory({ db }, query)); } catch { /* empty */ }
+    try { pages.push(fetchNotificationsHistory({ db }, query)); } catch { /* empty */ }
+    const merged = mergeTimeline({ pages }, query);
+    res.json({
+      items: merged.items.map((item) => ({ ...item, html: renderHistoryRow(item) })),
+      next_cursor: merged.next_cursor,
+      total_estimate: merged.total_estimate,
+    });
+  });
+  for (const method of ['post', 'put', 'patch', 'delete'] as const) {
+    app[method]('/dashboard/api/history', (_req, res) => {
+      res.status(405).json({ error: 'history is read-only' });
+    });
+  }
 
   // v0.6.9 PR #2 — Permissions API endpoints. Operator-only path; the
   // dashboard session is implicitly trusted via the existing

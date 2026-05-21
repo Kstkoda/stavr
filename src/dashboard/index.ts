@@ -18,6 +18,7 @@ import { renderHelmPage, type HelmData } from './pages/helm.js';
 import { renderHomePage, type HomeData } from './pages/home.js';
 import { renderTopologyPage, type TopologyData } from './pages/topology.js';
 import { renderStreamsPage, type StreamsData } from './pages/streams.js';
+import { renderHistoryPage, type HistoryData } from './pages/history.js';
 import { renderPlansPage, type PlansData } from './pages/plans.js';
 import { renderDecidePage, type DecideData } from './pages/decide.js';
 import { renderToolkitPage, type ToolkitData } from './pages/toolkit.js';
@@ -52,6 +53,8 @@ export interface DashboardPageDeps {
   topologyData?: () => TopologyData;
   /** Snapshot used for Streams server-side initial paint (C6). */
   streamsData?: () => StreamsData;
+  /** Snapshot used for History server-side initial paint (v0.8). */
+  historyData?: () => HistoryData;
   /** Snapshot used for Toolkit server-side initial paint (C7). */
   toolkitData?: () => ToolkitData;
   /** Snapshot used for MCPs server-side initial paint (v0.4). */
@@ -94,6 +97,7 @@ export function mountDashboardPages(
     home:         () => renderHomePage(deps.homeData?.()),
     topology:     () => renderTopologyPage(deps.topologyData?.()),
     streams:      () => renderStreamsPage(deps.streamsData?.()),
+    history:      () => renderHistoryPage(deps.historyData?.()),
     plans:        () => renderPlansPage(deps.plansData?.()),
     decide:       () => renderDecidePage(deps.decideData?.()),
     toolkit:      () => renderToolkitPage(deps.toolkitData?.()),
