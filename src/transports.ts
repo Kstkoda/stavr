@@ -38,6 +38,11 @@ import {
   stavrHttpRequestDuration,
 } from './observability/metrics.js';
 import { recordSloSample, SLO_DEFS } from './observability/slo.js';
+import {
+  recordGatewayRequest,
+  setMcpServerSessionsActive,
+  recordJsonRpcError,
+} from './observability/mcp-metrics.js';
 import { logContext } from './observability/logger.js';
 import { mountDebugEndpoints } from './observability/debug-endpoints.js';
 import { mountWebAuthnRoutes } from './security/webauthn-routes.js';
@@ -142,7 +147,13 @@ export async function mountTransports(
     handle: ReturnType<typeof createSwitchServer>;
   };
   const sseSessions = new Map<string, McpSession>();
-  const refreshSseGauge = (): void => setSseSessionsGauge(sseSessions.size);
+  const refreshSseGauge = (): void => {
+    setSseSessionsGauge(sseSessions.size);
+    // BOM Wave 1 — dual-emit. Old stavr_sse_sessions stays for the
+    // deprecation window; new mcp.server.sessions.active is the canonical
+    // L5 name.
+    setMcpServerSessionsActive(sseSessions.size);
+  };
   refreshSseGauge();
 
   // v0.6.x memory-leak fix — visibility for the stateless-/mcp cleanup path
@@ -222,8 +233,13 @@ export async function mountTransports(
       const endTimer = stavrHttpRequestDuration.startTimer({ method: req.method });
       const route = normalizeRoute(req.path);
       const t0 = performance.now();
+      // BOM Wave 1 — preserve a peek at the JSON-RPC body so the post-finish
+      // hook can label the gateway histogram by tool. Express has already
+      // parsed body when this fires (json() middleware is mounted earlier).
+      const rpcBody = (req.body ?? {}) as { method?: string; params?: { name?: string }; id?: unknown };
       res.on('finish', () => {
         const elapsedMs = performance.now() - t0;
+        const elapsedSec = elapsedMs / 1000;
         endTimer({ route, status: String(res.statusCode) });
         try {
           recordPerf(`http:${req.method} ${route}`, elapsedMs, res.statusCode < 500);
@@ -232,8 +248,37 @@ export async function mountTransports(
           // BOM Wave 0 — feed gateway SLOs. Availability: any non-5xx counts.
           // Latency: elapsed within the configured threshold counts.
           recordSloSample('gateway_availability', res.statusCode < 500);
-          const fast = elapsedMs / 1000 <= (SLO_DEFS.gateway_latency_p95.latencyThresholdSeconds ?? 0.5);
+          const fast = elapsedSec <= (SLO_DEFS.gateway_latency_p95.latencyThresholdSeconds ?? 0.5);
           recordSloSample('gateway_latency_p95', fast);
+        } catch { /* metrics never fail the request */ }
+        try {
+          // BOM Wave 1 — mcp.gateway.* dual-emit. Scope to the /mcp route;
+          // other HTTP routes (dashboard, /healthz, debug) are NOT MCP
+          // gateway traffic and should not pollute the L5 histogram.
+          if (req.path === '/mcp') {
+            const success = res.statusCode < 400;
+            recordGatewayRequest({
+              upstream: 'self',
+              method: typeof rpcBody.method === 'string' ? rpcBody.method : undefined,
+              toolName: typeof rpcBody.params?.name === 'string' ? rpcBody.params.name : undefined,
+              durationSeconds: elapsedSec,
+              success,
+              errorType:
+                !success
+                  ? res.statusCode >= 500
+                    ? 'internal'
+                    : res.statusCode === 401 || res.statusCode === 403
+                      ? 'auth'
+                      : res.statusCode === 408 || res.statusCode === 504
+                        ? 'timeout'
+                        : 'protocol'
+                  : undefined,
+            });
+            if (!success) {
+              // Use JSON-RPC error-code shape when we can — HTTP 4xx ≈ -326xx range.
+              recordJsonRpcError(res.statusCode >= 500 ? -32603 : -32600);
+            }
+          }
         } catch { /* metrics never fail the request */ }
       });
       next();
