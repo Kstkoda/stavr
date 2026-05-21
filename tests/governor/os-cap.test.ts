@@ -123,6 +123,7 @@ describe('installOsCap', () => {
       cgroupRootOverride: '/sys/fs/cgroup',
       fs,
       pid: 4242,
+      cpuCountOverride: 8,
     });
     expect(r.kind).toBe('cgroup-v2');
     expect(r.installed).toBe(true);
@@ -139,7 +140,7 @@ describe('installOsCap', () => {
     const procsWrite = writes.find((c) => c.path.endsWith('cgroup.procs'));
     expect(procsWrite!.data).toBe('4242');
     const cpuWrite = writes.find((c) => c.path.endsWith('cpu.max'));
-    expect(cpuWrite!.data).toBe('85000 100000');
+    expect(cpuWrite!.data).toBe('680000 100000'); // 0.85 * 100000 * 8 cores
   });
 
   it('linux: returns installed=false with a reason when memory.max write fails (EPERM)', () => {
@@ -160,19 +161,41 @@ describe('installOsCap', () => {
     expect(r.reason).toMatch(/memory\.max/);
   });
 
-  it('cpu.max quota uses max_sustained_cpu_pct', () => {
-    const { fs, calls } = makeFakeFs({
-      existing: new Set(['/sys/fs/cgroup/cgroup.controllers']),
-      controllers: 'cpu memory',
-    });
-    installOsCap({
-      ceiling: { ...DEFAULT_HOST_CEILING, max_sustained_cpu_pct: 0.5 },
-      hostTotalRamBytes: 16 * 1024 ** 3,
-      platformOverride: 'linux',
-      cgroupRootOverride: '/sys/fs/cgroup',
-      fs,
-    });
-    const cpuWrite = calls.find((c) => c.op === 'write' && c.path.endsWith('cpu.max'));
-    expect(cpuWrite!.data).toBe('50000 100000');
+  it('cpu.max quota scales with max_sustained_cpu_pct and host core count', () => {
+    // 4 cores at 50% → 0.5 * 100000 * 4 = 200000
+    {
+      const { fs, calls } = makeFakeFs({
+        existing: new Set(['/sys/fs/cgroup/cgroup.controllers']),
+        controllers: 'cpu memory',
+      });
+      installOsCap({
+        ceiling: { ...DEFAULT_HOST_CEILING, max_sustained_cpu_pct: 0.5 },
+        hostTotalRamBytes: 16 * 1024 ** 3,
+        platformOverride: 'linux',
+        cgroupRootOverride: '/sys/fs/cgroup',
+        fs,
+        cpuCountOverride: 4,
+      });
+      const cpuWrite = calls.find((c) => c.op === 'write' && c.path.endsWith('cpu.max'));
+      expect(cpuWrite!.data).toBe('200000 100000');
+    }
+    // 32 cores at 85% → 0.85 * 100000 * 32 = 2720000 — must NOT be the
+    // single-core 85000 (the pre-fix bug throttled the whole tree to <1 core).
+    {
+      const { fs, calls } = makeFakeFs({
+        existing: new Set(['/sys/fs/cgroup/cgroup.controllers']),
+        controllers: 'cpu memory',
+      });
+      installOsCap({
+        ceiling: DEFAULT_HOST_CEILING,
+        hostTotalRamBytes: 16 * 1024 ** 3,
+        platformOverride: 'linux',
+        cgroupRootOverride: '/sys/fs/cgroup',
+        fs,
+        cpuCountOverride: 32,
+      });
+      const cpuWrite = calls.find((c) => c.op === 'write' && c.path.endsWith('cpu.max'));
+      expect(cpuWrite!.data).toBe('2720000 100000');
+    }
   });
 });

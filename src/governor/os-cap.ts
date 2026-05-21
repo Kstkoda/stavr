@@ -26,7 +26,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { posix as posixPath } from 'node:path';
-import { platform } from 'node:os';
+import { cpus, platform } from 'node:os';
 
 // cgroup paths are always POSIX even when tests run on Windows.
 const cgroupJoin = posixPath.join;
@@ -64,6 +64,11 @@ export interface InstallOsCapOpts {
   platformOverride?: NodeJS.Platform;
   /** Override the cgroup root path (tests). */
   cgroupRootOverride?: string;
+  /**
+   * Override the host logical-CPU count used for the cpu.max quota (tests).
+   * Defaults to `os.cpus().length`.
+   */
+  cpuCountOverride?: number;
   /** Filesystem seam for tests. */
   fs?: {
     existsSync: (p: string) => boolean;
@@ -187,12 +192,18 @@ function installCgroupV2(opts: InstallOsCapOpts): OsCapResult {
     }
   }
 
-  // cpu.max format: "<quota> <period>" — quota=max disables; for a 85% cap
-  // on a 100ms period that's "85000 100000". Per-host (kernel sums across
-  // cores; v2 has cpu.max separate from cpu.weight).
+  // cpu.max format: "<quota> <period>" in microseconds. cgroup v2 quota is
+  // per-period CPU time and is NOT summed across cores by the kernel — to
+  // allow N cores' worth of CPU you must write quota = N * period. So an
+  // 85% cap on an 8-core host is 0.85 * 8 * 100000. Without the core-count
+  // factor the cap throttles stavR's whole process tree to under one core.
   if (hasCpu) {
     const period = 100_000;
-    const quota = Math.max(1_000, Math.floor(opts.ceiling.max_sustained_cpu_pct * period));
+    const cpuCount = Math.max(1, opts.cpuCountOverride ?? cpus().length);
+    const quota = Math.max(
+      1_000,
+      Math.floor(opts.ceiling.max_sustained_cpu_pct * period * cpuCount),
+    );
     try {
       fs.writeFileSync(cgroupJoin(scopePath, 'cpu.max'), `${quota} ${period}`);
     } catch (err) {
