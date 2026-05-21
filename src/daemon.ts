@@ -37,6 +37,7 @@ import { startOtel, type StartedOtel } from './observability/otel.js';
 import { startEventLoopMonitor, type EventLoopMonitorStop } from './observability/event-loop.js';
 import { startSloPoller, type SloPollerStop } from './observability/slo.js';
 import { startTelemetryPipelineMonitor, type TelemetryPipelinePollerStop } from './observability/telemetry-pipeline.js';
+import { startHostMetricsPoller, type HostMetricsPollerStop } from './observability/host-metrics.js';
 
 export interface DaemonOptions {
   port: number;
@@ -378,6 +379,18 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
+  // observability-instrumentation BOM Wave 2 — Layer 1 host USE poller.
+  // Reads os.cpus / os.freemem / os.loadavg / os.uptime every 10s and
+  // writes the host_* gauges. Interval handle is unref'd inside.
+  let hostMetricsStop: HostMetricsPollerStop | undefined;
+  try {
+    hostMetricsStop = startHostMetricsPoller();
+  } catch (err) {
+    logger.error('failed to start host-metrics poller; daemon continues without host gauges', {
+      error: (err as Error).message,
+    });
+  }
+
   // bom-oom-leak-hunt C2.1 — events table retention. Run once at boot
   // (covers daemons restarted after long downtime) and then every hour.
   // The pruneEvents call is best-effort: any DB hiccup is caught inside
@@ -526,6 +539,9 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     }
     if (telemetryPipelineStop) {
       try { telemetryPipelineStop(); } catch { /* best effort */ }
+    }
+    if (hostMetricsStop) {
+      try { hostMetricsStop(); } catch { /* best effort */ }
     }
     try { clearInterval(retentionHandle); } catch { /* best effort */ }
     if (v02) {

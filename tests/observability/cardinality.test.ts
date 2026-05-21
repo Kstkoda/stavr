@@ -22,6 +22,8 @@ import { registry } from '../../src/observability/metrics.js';
 import '../../src/observability/event-loop.js';
 import '../../src/observability/slo.js';
 import '../../src/observability/telemetry-pipeline.js';
+import '../../src/observability/mcp-metrics.js';
+import '../../src/observability/host-metrics.js';
 
 const FORBIDDEN_LABEL_NAMES = new Set([
   'request_id',
