@@ -47,3 +47,4 @@ Copy [`000-template.md`](./000-template.md) and rename to `NNN-short-kebab-title
 - [ADR-022](./022-trust-scopes-supersede-per-action-confirm.md) — Trust scopes supersede per-action CONFIRM for the common case
 - [ADR-023](./023-param-constraint-matching-syntax.md) — Param-constraint matching syntax (exact + `^`-prefix regex)
 - [ADR-024](./024-reporting-cadences-and-channels.md) — Reporting cadences and channels for trust scopes
+- [ADR-025](./025-shared-memory-on-stavr-daemon.md) — Shared memory layer on the Stavr daemon (renumbered from 023 in the 2026-05-21 hygiene-sweep)

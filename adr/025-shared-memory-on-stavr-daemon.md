@@ -1,7 +1,9 @@
-# ADR 023 — Shared memory layer on the Stavr daemon
+# ADR 025 — Shared memory layer on the Stavr daemon
 
 **Status**: Proposed
 **Date**: 2026-05-14
+
+> **Note on numbering (2026-05-21):** this ADR was originally created as `adr/023-shared-memory-on-stavr-daemon.md` and collided with the existing `adr/023-param-constraint-matching-syntax.md`. Renumbered to 025 by the hygiene-sweep (first free slot in the 020s). Same proposal — only the file name and this heading have changed.
 
 ## Context
 

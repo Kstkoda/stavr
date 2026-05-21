@@ -2,7 +2,7 @@
 
 **Status:** Proposed
 **Date:** 2026-05-16
-**Related:** ADR-022 (trust scopes), ADR-023 (shared memory), ADR-030 (event retention), ADR-031 (observability), `proposed/v0.4-scheduler-bom.md`
+**Related:** ADR-022 (trust scopes), ADR-025 (shared memory; renumbered from 023 in the 2026-05-21 hygiene-sweep), ADR-030 (event retention), ADR-031 (observability), `proposed/v0.4-scheduler-bom.md`
 
 > **Note on numbering:** Originally drafted as ADR-030 in the 2026-05-16 design session; renumbered to 032 after the parallel observability arc claimed 030 (event retention) and 031 (observability stack).
 

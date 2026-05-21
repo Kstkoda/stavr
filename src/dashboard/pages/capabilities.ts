@@ -348,10 +348,10 @@ function renderStewardCard(activeMode: ProfileMode, profiles: Record<ProfileMode
     `<div class="steward-name">Steward</div>`,
     `<div class="steward-sub">Brain · <code>${escapeHtml(brain)}</code></div>`,
     `</div>`,
-    `<label class="steward-pick">Model`,
-    `<select data-role="steward-model" aria-label="Steward brain model">${options}</select>`,
+    `<label class="steward-pick" data-parked="v0.7" title="Read-only — picks aren't persisted until the v0.7 save endpoint lands">Model`,
+    `<select data-role="steward-model" aria-label="Steward brain model (read-only until v0.7)" disabled>${options}</select>`,
     `</label>`,
-    `<label class="steward-pin"><input type="checkbox" data-role="steward-pin" /> 🔒 Pin across profiles</label>`,
+    `<label class="steward-pin" data-parked="v0.7" title="Pin persistence ships with the v0.7 save endpoint"><input type="checkbox" data-role="steward-pin" disabled /> 🔒 Pin across profiles</label>`,
     `</section>`,
   ].join('');
 }

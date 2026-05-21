@@ -37,4 +37,4 @@ Impact, sustained 3+ days from 2026-05-16: ~36 MB/min heap growth, the daemon OO
 - `.mcp.json` updated from `type: "sse"` / `/mcp/sse` to `type: "http"` / `/mcp` — it was pointing at a route that no longer exists.
 - ADR-001 marked Superseded (SSE half); ADR-009's transport reference annotated.
 - The `sseSessions` identifier and other `sse`-prefixed names still pepper `src/transports.ts` while holding `StreamableHTTPServerTransport` objects — stale vocabulary. The rename is folded into the Family-mode cycle Phase 1 (which already opens `transports.ts`), to avoid double-churning a hot file.
-- The two-ADR-023 numbering collision is tracked separately in CC's hygiene-sweep.
+- The two-ADR-023 numbering collision was resolved in the 2026-05-21 hygiene-sweep: the shared-memory ADR moved to `adr/025-shared-memory-on-stavr-daemon.md`; `adr/023-param-constraint-matching-syntax.md` keeps the 023 slot.

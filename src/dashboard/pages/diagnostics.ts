@@ -881,8 +881,8 @@ const DIAGNOSTICS_JS = `
              + '<span class="heal-time">' + ts + '</span>'
              + '<span class="heal-icon ' + sev + '">●</span>'
              + '<span class="heal-msg">' + (h.message || h.kind || 'action') + '</span>'
-             + '<button class="heal-action" data-act="undo">undo</button>'
-             + '<button class="heal-action" data-act="deny">deny</button>'
+             + '<button class="heal-action" data-act="undo" data-parked="v0.7" disabled aria-disabled="true" title="Undo wiring lands in v0.7 — the heal-log read path is live, write-back is not">undo</button>'
+             + '<button class="heal-action" data-act="deny" data-parked="v0.7" disabled aria-disabled="true" title="Deny wiring lands in v0.7 — see audit/09-ui-substrate-gap.md">deny</button>'
              + '</div>';
       }).join('');
     } catch (_) {}
