@@ -126,6 +126,26 @@ const HISTORY_CSS = `
   font-family: inherit;
 }
 .hist-search:focus { outline: 2px solid var(--rust-soft); outline-offset: 1px; }
+.hist-actor-filter {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--bg-elevated, rgba(255,255,255,0.04));
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  color: var(--ink-0);
+  font-family: inherit;
+}
+.hist-reset {
+  padding: 6px 10px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--line-2);
+  color: var(--ink-2);
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.hist-reset:hover { color: var(--ink-0); border-color: var(--line); }
 
 .hist-panel {
   background: var(--bg-glass);
@@ -196,29 +216,58 @@ const HISTORY_JS = `
   const tabsEl = document.querySelector('[data-role="history-tabs"]');
   const rangeEl = document.querySelector('[data-role="range-picker"]');
   const searchEl = document.querySelector('[data-role="history-search"]');
+  const actorEl = document.querySelector('[data-role="history-actor-filter"]');
+  const resetEl = document.querySelector('[data-role="history-reset"]');
+
+  // P5 — localStorage-backed filter persistence. Reading is best-effort
+  // so a hard-locked Safari private mode doesn't crash the page.
+  const LS_KEYS = {
+    range: 'stavr.history.range',
+    tab: 'stavr.history.tab',
+    search: 'stavr.history.search',
+    actor: 'stavr.history.actor_filter',
+  };
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+  function lsRemove(k) { try { localStorage.removeItem(k); } catch (_) {} }
 
   const state = {
-    tab: 'all',
+    tab: lsGet(LS_KEYS.tab) || 'all',
     since: panel.getAttribute('data-since') || null,
     until: panel.getAttribute('data-until') || null,
-    search: '',
+    search: lsGet(LS_KEYS.search) || '',
+    actor: lsGet(LS_KEYS.actor) || '',
     offset: Number(panel.getAttribute('data-offset') || '0'),
     limit: Number(panel.getAttribute('data-limit') || '100'),
     nextCursor: panel.getAttribute('data-next-cursor') || null,
   };
 
+  // Restore tab UI to the saved state.
+  if (state.tab !== 'all' && tabsEl) {
+    const restoredBtn = tabsEl.querySelector('[data-tab="' + state.tab + '"]');
+    if (restoredBtn) {
+      tabsEl.querySelectorAll('.hist-tab').forEach(function(b) {
+        const on = b === restoredBtn;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+  }
+  if (searchEl && state.search) searchEl.value = state.search;
+  if (actorEl && state.actor) actorEl.value = state.actor;
+
   function applyClientFilter() {
-    // Tab + search filter is applied client-side on already-fetched rows
-    // for fast switching. A "Load more" or range change triggers a
-    // server-side refetch.
     const q = (state.search || '').toLowerCase();
+    const wantActor = state.actor || '';
     let visible = 0;
     list.querySelectorAll('.history-row').forEach(function(row) {
       const kind = row.getAttribute('data-kind');
       const text = (row.textContent || '').toLowerCase();
+      const actor = (row.querySelector('.row-source') ? (row.querySelector('.row-source').textContent || '').replace(/[\\[\\]]/g, '').trim() : '');
       const matchTab = state.tab === 'all' || kind === state.tab;
       const matchSearch = q === '' || text.indexOf(q) !== -1;
-      const show = matchTab && matchSearch;
+      const matchActor = wantActor === '' || (actor && actor === wantActor);
+      const show = matchTab && matchSearch && matchActor;
       row.hidden = !show;
       if (show) visible++;
     });
@@ -229,6 +278,7 @@ const HISTORY_JS = `
     const btn = ev.target.closest('[data-tab]');
     if (!btn) return;
     state.tab = btn.getAttribute('data-tab');
+    lsSet(LS_KEYS.tab, state.tab);
     tabsEl.querySelectorAll('.hist-tab').forEach(function(b) {
       const on = b === btn;
       b.classList.toggle('active', on);
@@ -241,14 +291,42 @@ const HISTORY_JS = `
     state.since = ev.detail.since;
     state.until = ev.detail.until;
     state.offset = 0;
+    lsSet(LS_KEYS.range, rangeEl.getAttribute('data-active') || '24h');
     refetch(/* replace */ true);
   });
 
   let searchTimer = null;
   searchEl && searchEl.addEventListener('input', function() {
     state.search = searchEl.value || '';
+    lsSet(LS_KEYS.search, state.search);
     if (searchTimer) clearTimeout(searchTimer);
     searchTimer = setTimeout(applyClientFilter, 200);
+  });
+
+  actorEl && actorEl.addEventListener('change', function() {
+    state.actor = actorEl.value || '';
+    lsSet(LS_KEYS.actor, state.actor);
+    applyClientFilter();
+  });
+
+  resetEl && resetEl.addEventListener('click', function() {
+    state.tab = 'all';
+    state.search = '';
+    state.actor = '';
+    lsRemove(LS_KEYS.tab);
+    lsRemove(LS_KEYS.search);
+    lsRemove(LS_KEYS.actor);
+    lsRemove(LS_KEYS.range);
+    if (searchEl) searchEl.value = '';
+    if (actorEl) actorEl.value = '';
+    if (tabsEl) {
+      tabsEl.querySelectorAll('.hist-tab').forEach(function(b) {
+        const on = b.getAttribute('data-tab') === 'all';
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    applyClientFilter();
   });
 
   loadMore && loadMore.addEventListener('click', function() {
@@ -256,6 +334,9 @@ const HISTORY_JS = `
     state.offset = Number(state.nextCursor);
     refetch(/* replace */ false);
   });
+
+  // Apply restored client filter once the page is wired.
+  applyClientFilter();
 
   function refetch(replace) {
     const params = new URLSearchParams();
@@ -315,6 +396,15 @@ export function renderHistoryPage(data?: HistoryData): string {
     renderTabStrip('all'),
     `<div class="hist-search-wrap">`,
     `<input class="hist-search" type="search" data-role="history-search" placeholder="Search title, command, BOM name…" aria-label="Search history" />`,
+    `<select class="hist-actor-filter" data-role="history-actor-filter" aria-label="Filter by actor">`,
+    `<option value="">all actors</option>`,
+    `<option value="operator">operator</option>`,
+    `<option value="cc">cc</option>`,
+    `<option value="steward-agent">steward-agent</option>`,
+    `<option value="cowork-claude">cowork-claude</option>`,
+    `<option value="dashboard">dashboard</option>`,
+    `</select>`,
+    `<button type="button" class="hist-reset" data-role="history-reset" aria-label="Reset filters">Reset</button>`,
     `</div>`,
     `</div>`,
     `<section class="hist-panel" data-role="history-panel"`,
