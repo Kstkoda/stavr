@@ -3,6 +3,8 @@ import { registry } from '../../src/observability/metrics.js';
 import {
   normalizeMcpMethod,
   normalizeMcpToolName,
+  _resetToolLabelsForTest,
+  MAX_TOOL_LABELS,
   recordGatewayRequest,
   setMcpServerSessionsActive,
   recordJsonRpcError,
@@ -64,12 +66,28 @@ describe('MCP label normalizers', () => {
     expect(normalizeMcpMethod(undefined)).toBe('unknown');
   });
 
-  it('normalizeMcpToolName truncates long names and rejects path-shaped values', () => {
+  it('normalizeMcpToolName rejects long, path-shaped, and whitespace values', () => {
     expect(normalizeMcpToolName(undefined)).toBe('(none)');
-    expect(normalizeMcpToolName('a'.repeat(70))).toHaveLength(64);
+    expect(normalizeMcpToolName('a'.repeat(70))).toBe('(invalid)');
     expect(normalizeMcpToolName('a tool with space')).toBe('(invalid)');
     expect(normalizeMcpToolName('../../../etc/passwd')).toBe('(invalid)');
     expect(normalizeMcpToolName('host_exec')).toBe('host_exec');
+  });
+});
+
+describe('normalizeMcpToolName cardinality cap', () => {
+  it('collapses tool names to "(other)" once MAX_TOOL_LABELS distinct names are seen', () => {
+    _resetToolLabelsForTest();
+    // The first MAX_TOOL_LABELS distinct names pass through verbatim.
+    for (let i = 0; i < MAX_TOOL_LABELS; i++) {
+      expect(normalizeMcpToolName(`tool_${i}`)).toBe(`tool_${i}`);
+    }
+    // Every distinct name after the cap collapses to the overflow sentinel.
+    expect(normalizeMcpToolName('tool_overflow')).toBe('(other)');
+    expect(normalizeMcpToolName('another_new_tool')).toBe('(other)');
+    // An already-seen name is still returned verbatim even after the cap.
+    expect(normalizeMcpToolName('tool_0')).toBe('tool_0');
+    _resetToolLabelsForTest();
   });
 });
 

@@ -27,7 +27,7 @@
 // bounded enum (chat / embedding / completion / tools).
 
 import { Counter, Gauge, Histogram } from 'prom-client';
-import { registry } from './metrics.js';
+import { registry, normalizeModelLabel } from './metrics.js';
 
 function makeCounter(name: string, help: string, labelNames: string[]): Counter<string> {
   const existing = registry.getSingleMetric(name);
@@ -287,39 +287,40 @@ export interface RecordLlmCallOpts {
 }
 
 export function recordLlmCall(opts: RecordLlmCallOpts): void {
+  const model = normalizeModelLabel(opts.model);
   const operation = normalizeOperation(opts.operation);
   const tenant = opts.tenant ?? 'local';
   const feature = opts.feature ?? 'default';
 
   // Counters
-  llmRequests.labels(opts.model).inc();
+  llmRequests.labels(model).inc();
 
   // Durations
-  genAiClientOperationDuration.labels(opts.model, operation).observe(opts.durationSeconds);
-  genAiServerRequestDuration.labels(opts.model).observe(opts.durationSeconds);
+  genAiClientOperationDuration.labels(model, operation).observe(opts.durationSeconds);
+  genAiServerRequestDuration.labels(model).observe(opts.durationSeconds);
 
   // Tokens (when available)
   if (typeof opts.promptTokens === 'number' && opts.promptTokens > 0) {
-    genAiClientTokenUsage.labels(opts.model, 'input').observe(opts.promptTokens);
+    genAiClientTokenUsage.labels(model, 'input').observe(opts.promptTokens);
   }
   if (typeof opts.completionTokens === 'number' && opts.completionTokens > 0) {
-    genAiClientTokenUsage.labels(opts.model, 'output').observe(opts.completionTokens);
+    genAiClientTokenUsage.labels(model, 'output').observe(opts.completionTokens);
   }
 
   // Outcome
   if (!opts.success) {
-    llmRequestErrors.labels(opts.model, opts.errorType ?? 'internal').inc();
+    llmRequestErrors.labels(model, opts.errorType ?? 'internal').inc();
   } else if (opts.finishReason) {
-    llmFinishReason.labels(opts.model, normalizeFinishReason(opts.finishReason)).inc();
+    llmFinishReason.labels(model, normalizeFinishReason(opts.finishReason)).inc();
     if (opts.finishReason === 'length') {
-      llmContextLengthExceeded.labels(opts.model).inc();
+      llmContextLengthExceeded.labels(model).inc();
     }
   }
 
   // Cost (always emit; local providers pass 0).
   const cost = typeof opts.costUsd === 'number' ? opts.costUsd : 0;
-  llmCostUsdPerRequest.labels(opts.model, tenant).observe(cost);
-  llmCostUsdTotal.labels(opts.model, tenant, feature).inc(cost);
+  llmCostUsdPerRequest.labels(model, tenant).observe(cost);
+  llmCostUsdTotal.labels(model, tenant, feature).inc(cost);
 }
 
 const KNOWN_FINISH_REASONS = new Set([

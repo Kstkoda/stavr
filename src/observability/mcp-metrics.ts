@@ -20,8 +20,9 @@
 // Cardinality discipline (BOM Rule 2)
 // ----------------------------------
 // Labels: `upstream` from a small registered set (today: "self"), `tool` from
-// the bounded MCP tool catalog (transports.normalizeMcpTool truncates
-// unknown names to "other"), `client` from the bounded peer roster, `error_type`
+// `normalizeMcpToolName` — a hard cap of MAX_TOOL_LABELS distinct names seen
+// first-come-first-served, with overflow and malformed values collapsing to
+// sentinels — `client` from the bounded peer roster, `error_type`
 // from a small enum, `server` from a small enum, `dependency` from
 // `connectors.yaml`, `code` from JSON-RPC error codes (bounded), `tenant`
 // from peer identity. None unbounded.
@@ -266,15 +267,38 @@ export function normalizeMcpMethod(method: string | undefined): string {
   return 'other';
 }
 
-/** Truncate user-supplied tool names (the `params.name` of a tools/call) to a
- *  bounded value. We DON'T pre-list every tool — the cardinality bound is the
- *  union of registered tool names, plus a "(invalid)" bucket. */
+/** Max distinct `tool` label values normalizeMcpToolName will ever emit.
+ *  Tool names arrive as the user-supplied `params.name` of a tools/call, so
+ *  without a hard cap a flood of unique names would blow up Prometheus label
+ *  cardinality. 256 comfortably covers any realistic connector catalog. */
+export const MAX_TOOL_LABELS = 256;
+
+/** Distinct tool names observed so far, first-come-first-served. Bounded by
+ *  MAX_TOOL_LABELS — see normalizeMcpToolName. */
+const seenToolLabels = new Set<string>();
+
+/** Normalize a user-supplied tool name (the `params.name` of a tools/call)
+ *  into a bounded label value. Cardinality is a hard bound: at most
+ *  MAX_TOOL_LABELS distinct names pass through verbatim (observed
+ *  first-come-first-served); every name after the cap collapses to
+ *  "(other)", and over-length / path / whitespace-shaped values collapse to
+ *  "(invalid)". So `tool` can never exceed MAX_TOOL_LABELS + 3 sentinels
+ *  regardless of input. */
 export function normalizeMcpToolName(name: string | undefined): string {
   if (!name) return '(none)';
-  if (name.length > 64) return name.slice(0, 64);
-  // Reject obviously path-like or identifier-like values
+  if (name.length > 64) return '(invalid)';
+  // Reject obviously path-like or whitespace-shaped values.
   if (/[\s\\\/]/.test(name)) return '(invalid)';
+  if (seenToolLabels.has(name)) return name;
+  if (seenToolLabels.size >= MAX_TOOL_LABELS) return '(other)';
+  seenToolLabels.add(name);
   return name;
+}
+
+/** Test seam: clear the observed-tool-label set so the cardinality-cap test
+ *  runs deterministically. Not used in production. */
+export function _resetToolLabelsForTest(): void {
+  seenToolLabels.clear();
 }
 
 // ---- Recorders ----
