@@ -42,7 +42,7 @@ const SUITE_DESC = SHOULD_RUN ? 'leak-soak' : 'leak-soak (skipped — set STAVR_
       process.env.STAVR_EVENTS_OP_RETENTION_DAYS = '7';
       process.env.STAVR_EVENTS_OP_MAX_ROWS = '5000';
       process.env.STAVR_DASHBOARD_CACHE_MS = '1000';
-      process.env.STAVR_STREAMS_MAX_EVENTS = '50';
+      process.env.STAVR_WORKERS_MAX_EVENTS = '50';
 
       const dbPath = join(stavrHome, 'soak.db');
       const store = new EventStore();
@@ -83,7 +83,7 @@ const SUITE_DESC = SHOULD_RUN ? 'leak-soak' : 'leak-soak (skipped — set STAVR_
       if (!addr || typeof addr === 'string') throw new Error('listen address unavailable');
       const base = `http://127.0.0.1:${addr.port}`;
       for (let i = 0; i < fetchTarget; i++) {
-        const path = i % 2 === 0 ? '/dashboard/home/data' : '/dashboard/streams';
+        const path = i % 2 === 0 ? '/dashboard/home/data' : '/dashboard/workers';
         const r = await fetch(base + path);
         await r.text();
         if (i % 50 === 0) maxRss = Math.max(maxRss, process.memoryUsage().rss);
@@ -110,6 +110,6 @@ const SUITE_DESC = SHOULD_RUN ? 'leak-soak' : 'leak-soak (skipped — set STAVR_
     delete process.env.STAVR_EVENTS_OP_RETENTION_DAYS;
     delete process.env.STAVR_EVENTS_OP_MAX_ROWS;
     delete process.env.STAVR_DASHBOARD_CACHE_MS;
-    delete process.env.STAVR_STREAMS_MAX_EVENTS;
+    delete process.env.STAVR_WORKERS_MAX_EVENTS;
   });
 });

@@ -420,7 +420,7 @@ function renderWorkersBand(d: HelmData): string {
   ).join('');
 
   const historyLink = counters.total > counters.active
-    ? ` · <a href="/dashboard/streams?status=all" style="color:var(--sky);">view ${counters.total - counters.active} historic →</a>`
+    ? ` · <a href="/dashboard/workers?status=all" style="color:var(--sky);">view ${counters.total - counters.active} historic →</a>`
     : '';
 
   return [
@@ -433,9 +433,9 @@ function renderWorkersBand(d: HelmData): string {
     `</div>`,
     `<div class="band-agg">`,
     `<div class="primary">${counters.active} active</div>`,
-    `<div class="secondary">${counters.crashed > 0 ? `<span class="crit">${counters.crashed} crashed</span> · ` : ''}<a href="/dashboard/streams" style="color:var(--sky);">streams →</a>${historyLink}</div>`,
+    `<div class="secondary">${counters.crashed > 0 ? `<span class="crit">${counters.crashed} crashed</span> · ` : ''}<a href="/dashboard/workers" style="color:var(--sky);">workers →</a>${historyLink}</div>`,
     `</div>`,
-    `<div class="band-arrow">› STREAMS</div>`,
+    `<div class="band-arrow">› WORKERS</div>`,
     `</div>`,
     `<div class="band-rich"><div class="l2-workers" data-role="workers-row">${cards}${padCards}</div></div>`,
     `</section>`,
@@ -949,7 +949,7 @@ const HELM_JS = `
           { label: 'Status', value: btn.getAttribute('data-state') || '—' },
           { label: 'Step',   value: btn.getAttribute('data-worker-step') || '—' },
         ],
-        actions: [{ label: 'Open Streams', onClick: "location.href='/dashboard/streams'" }],
+        actions: [{ label: 'Open Workers', onClick: "location.href='/dashboard/workers'" }],
       });
     });
   });
@@ -972,7 +972,7 @@ const HELM_JS = `
 
   // L3/L1 band-arrow click handlers — keep band-bodies clickable too
   document.querySelectorAll('.band[data-slot="plans"]   .band-arrow').forEach(function(b){ b.addEventListener('click', function(){ location.href='/dashboard/plans'; }); });
-  document.querySelectorAll('.band[data-slot="workers"] .band-arrow').forEach(function(b){ b.addEventListener('click', function(){ location.href='/dashboard/streams'; }); });
+  document.querySelectorAll('.band[data-slot="workers"] .band-arrow').forEach(function(b){ b.addEventListener('click', function(){ location.href='/dashboard/workers'; }); });
   document.querySelectorAll('.band[data-slot="tool-calls"] .band-arrow').forEach(function(b){ b.addEventListener('click', function(){ location.href='/dashboard/diagnostics'; }); });
   document.querySelectorAll('.band[data-slot="systems"] .band-arrow').forEach(function(b){ b.addEventListener('click', function(){ location.href='/dashboard/topology'; }); });
 

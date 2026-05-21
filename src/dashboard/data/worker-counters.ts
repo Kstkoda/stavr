@@ -1,7 +1,7 @@
 /**
  * src/dashboard/data/worker-counters.ts
  *
- * Single source of truth for worker counts across Helm, Topology, Streams,
+ * Single source of truth for worker counts across Helm, Topology, Workers,
  * and Diagnostics. Every page that wants to display a worker count MUST
  * read from `fetchWorkerCounters` here, not roll its own filter from
  * WorkerRecord[].

@@ -42,7 +42,7 @@ import type { StoredEvent } from './persistence.js';
 import { startupDecisionSweep } from './tools/decisions.js';
 import { getLogger } from './log.js';
 import { mountDashboardPages } from './dashboard/index.js';
-import { memoize, resolveDashboardCacheMs, resolveStreamsMaxEvents } from './dashboard/memo.js';
+import { memoize, resolveDashboardCacheMs, resolveWorkersMaxEvents } from './dashboard/memo.js';
 import {
   normalizeRoute,
   registry as metricsRegistry,
@@ -1179,12 +1179,12 @@ export function mountDashboardRoutes(
   const trustStore = getOrCreateTrustStore(broker);
 
   // bom-oom-leak-hunt C2.2 — memoize hot dashboard data builders. Home is
-  // hit by /dashboard/home/data every 5s from the page poll; Streams reads
+  // hit by /dashboard/home/data every 5s from the page poll; Workers reads
   // up to 100 events per render and joins them against the workers table.
   // Both were per-call leaky in the 2026-05-15 OOM. TTL is configurable via
   // STAVR_DASHBOARD_CACHE_MS (default 2000ms).
   const dashboardCacheMs = resolveDashboardCacheMs(2000);
-  const streamsMaxEvents = resolveStreamsMaxEvents(100);
+  const workersMaxEvents = resolveWorkersMaxEvents(100);
 
   // v0.3 dashboard Home aggregator — shared by the server-side initial
   // paint and the JSON endpoint that drives live refresh. The memoized
@@ -1265,7 +1265,7 @@ export function mountDashboardRoutes(
   }
 
   // v0.3 dashboard shell — /dashboard redirects to /dashboard/home; per-page
-  // routes (home, topology, streams, plans, decide, toolkit, capabilities,
+  // routes (home, topology, workers, plans, decide, toolkit, capabilities,
   // settings) render the shared shell. Must run BEFORE any /dashboard/<page>/*
   // JSON endpoints so Express dispatches the page route for bare GETs.
   // Topology page snapshot — current workers + installed bricks + in-flight
@@ -1323,12 +1323,12 @@ export function mountDashboardRoutes(
     };
   }
 
-  // Streams page snapshot — workers + last few events per worker.
+  // Workers page snapshot — workers + last few events per worker.
   // The page caps visible panes at 20 internally; we still hand it the
   // full list so a search match outside the cap can highlight which
   // worker isn't yet visible (future polish).
   //
-  // bom-oom-leak-hunt C2.3 — `limit` dropped from 500 to STAVR_STREAMS_MAX_EVENTS
+  // bom-oom-leak-hunt C2.3 — `limit` dropped from 500 to STAVR_WORKERS_MAX_EVENTS
   // (default 100). The recon flagged the 500-per-render allocation as a
   // dominant retainer growth. 100 events × ~300 bytes JSON parse is ~30 kB
   // per render, vs 150 kB with the old cap — manageable even under 5s
@@ -1364,11 +1364,11 @@ export function mountDashboardRoutes(
     };
   }
 
-  function streamsDataRaw() {
+  function workersDataRaw() {
     const workers = broker.store.listWorkers();
     const recent: Record<string, StoredEvent[]> = {};
     if (workers.length > 0) {
-      const allRecent = broker.store.getEvents({ limit: streamsMaxEvents }).events;
+      const allRecent = broker.store.getEvents({ limit: workersMaxEvents }).events;
       const idSet = new Set(workers.map((w) => w.id));
       for (const ev of allRecent) {
         const corr = ev.correlation_id;
@@ -1486,11 +1486,11 @@ export function mountDashboardRoutes(
     };
   }
 
-  // bom-oom-leak-hunt C2.2 — memoized accessors. Streams page is the
+  // bom-oom-leak-hunt C2.2 — memoized accessors. Workers page is the
   // hotter path (full event scan per render); home is the more frequent
   // path (5s poll). Both wrapped at the same TTL — overrideable via env.
   const homeData = memoize(homeDataRaw, dashboardCacheMs);
-  const streamsData = memoize(streamsDataRaw, Math.max(1, Math.floor(dashboardCacheMs / 2)));
+  const workersData = memoize(workersDataRaw, Math.max(1, Math.floor(dashboardCacheMs / 2)));
 
   // v0.4 Helm page — derived from the same underlying state as Home (we want
   // the same memoization to amortise the cost of broker.store reads). The
@@ -1631,7 +1631,7 @@ export function mountDashboardRoutes(
     };
   }
 
-  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, streamsData, historyData, toolkitData, mcpsData, toolsData, permissionsData, capabilitiesData, settingsData, diagnosticsData, familyModeData });
+  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, workersData, historyData, toolkitData, mcpsData, toolsData, permissionsData, capabilitiesData, settingsData, diagnosticsData, familyModeData });
 
   // v0.8 — XHR endpoint backing the History page's "Load more" + range
   // re-fetch. Same data sources as historyData() but with caller-supplied
@@ -2334,7 +2334,12 @@ export function mountDashboardRoutes(
     res.json(homeData());
   });
 
-  app.get('/dashboard/workers', (_req, res) => {
+  // chore/streams-to-workers — the bare `/dashboard/workers` URL now
+  // serves the renamed page (was Streams). The JSON list lives under
+  // `/dashboard/workers/data`, matching the `/dashboard/home/data`
+  // pattern; the per-worker drill-down at `/dashboard/workers/:id` is
+  // unchanged.
+  app.get('/dashboard/workers/data', (_req, res) => {
     res.json({ workers: broker.store.listWorkers() });
   });
 

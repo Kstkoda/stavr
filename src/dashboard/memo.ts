@@ -5,7 +5,7 @@
  * Wraps a zero-arg, side-effect-free supplier in a single-slot cache
  * that's valid for ttlMs. Cache invalidation strategy: time-based only.
  * No LRU, no per-key bucketing — the hot paths we wrap (homeData,
- * streamsData) take no inputs.
+ * workersData) take no inputs.
  *
  * Concurrency is single-threaded JS, so we don't need a lock. The first
  * caller after expiry recomputes; concurrent callers within the same tick
@@ -69,8 +69,8 @@ export function resolveDashboardCacheMs(fallback = 2000): number {
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
-export function resolveStreamsMaxEvents(fallback = 100): number {
-  const raw = process.env.STAVR_STREAMS_MAX_EVENTS;
+export function resolveWorkersMaxEvents(fallback = 100): number {
+  const raw = process.env.STAVR_WORKERS_MAX_EVENTS;
   if (raw === undefined || raw === '') return fallback;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;

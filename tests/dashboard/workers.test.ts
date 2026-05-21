@@ -1,12 +1,14 @@
 /**
- * C6 acceptance — Streams page.
+ * C6 acceptance — Workers page (renamed from Streams in chore/streams-to-workers).
+ * The legacy /dashboard/streams URL still serves the same page, so the
+ * integration block keeps hitting that path to confirm the alias.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { EventStore, type WorkerRecord, type StoredEvent } from '../../src/persistence.js';
 import { Broker } from '../../src/broker.js';
 import { mountTransports, type MountedTransports } from '../../src/transports.js';
-import { renderStreamsPage, type StreamsData } from '../../src/dashboard/pages/streams.js';
+import { renderWorkersPage, type WorkersData } from '../../src/dashboard/pages/workers.js';
 
 function worker(over: Partial<WorkerRecord> = {}): WorkerRecord {
   return {
@@ -36,13 +38,13 @@ function ev(over: Partial<StoredEvent> = {}): StoredEvent {
   };
 }
 
-function snap(over: Partial<StreamsData> = {}): StreamsData {
+function snap(over: Partial<WorkersData> = {}): WorkersData {
   return { workers: [], recent: {}, ...over };
 }
 
-describe('Streams page — unit', () => {
+describe('Workers page — unit', () => {
   it('renders one pane per worker with name, type, status pill', () => {
-    const html = renderStreamsPage(snap({
+    const html = renderWorkersPage(snap({
       workers: [
         worker({ id: 'w1', name: 'cc-alpha', type: 'cc', status: 'running' }),
         worker({ id: 'w2', name: 'opus-beta', type: 'opus', status: 'idle' }),
@@ -58,7 +60,7 @@ describe('Streams page — unit', () => {
 
   it('caps the visible pane count at 20', () => {
     const workers = Array.from({ length: 25 }, (_, i) => worker({ id: 'w' + i, name: 'w-' + i }));
-    const html = renderStreamsPage(snap({ workers }));
+    const html = renderWorkersPage(snap({ workers }));
     const paneMatches = html.match(/data-worker-id="w/g);
     expect(paneMatches?.length).toBe(20);
     expect(html).toContain('capped at 20 of 25');
@@ -66,7 +68,7 @@ describe('Streams page — unit', () => {
 
   it('renders recent events as tail lines per pane', () => {
     const w = worker({ id: 'w1' });
-    const html = renderStreamsPage(snap({
+    const html = renderWorkersPage(snap({
       workers: [w],
       recent: {
         w1: [
@@ -81,7 +83,7 @@ describe('Streams page — unit', () => {
   });
 
   it('shows a per-pane empty-tail placeholder when there is no output', () => {
-    const html = renderStreamsPage(snap({
+    const html = renderWorkersPage(snap({
       workers: [worker({ id: 'w1' })],
       recent: {},
     }));
@@ -89,7 +91,7 @@ describe('Streams page — unit', () => {
   });
 
   it('emits filter selects with the union of worker types', () => {
-    const html = renderStreamsPage(snap({
+    const html = renderWorkersPage(snap({
       workers: [
         worker({ type: 'cc' }),
         worker({ type: 'opus' }),
@@ -102,12 +104,15 @@ describe('Streams page — unit', () => {
   });
 
   it('shows the empty state when no workers are present', () => {
-    const html = renderStreamsPage(snap());
+    const html = renderWorkersPage(snap());
     expect(html).toContain('No workers running.');
   });
 
   it('wires SSE for live append', () => {
-    const html = renderStreamsPage(snap({ workers: [worker({ id: 'w1' })] }));
+    const html = renderWorkersPage(snap({ workers: [worker({ id: 'w1' })] }));
+    // The SSE event-stream endpoint is /dashboard/stream (singular) — a
+    // separate concept from the renamed Workers page. The shell's shared
+    // stream singleton owns the EventSource open; the page just subscribes.
     expect(html).toContain('/dashboard/stream');
     expect(html).toContain('EventSource');
     expect(html).toContain('appendLine');
@@ -115,21 +120,21 @@ describe('Streams page — unit', () => {
 
   it('attaches data-last-at so the quiet check has something to look at', () => {
     const startedAt = new Date('2030-01-01T00:00:00Z').toISOString();
-    const html = renderStreamsPage(snap({
+    const html = renderWorkersPage(snap({
       workers: [worker({ id: 'w1', started_at: startedAt })],
     }));
     expect(html).toContain(`data-last-at="${startedAt}"`);
   });
 
   it('v0.6.10 Task 2 — Worker roster table lifted from Topology renders below the grid', () => {
-    const html = renderStreamsPage(snap({
+    const html = renderWorkersPage(snap({
       workers: [
         worker({ id: 'w1', name: 'alpha', status: 'running' }),
         worker({ id: 'w2', name: 'beta',  status: 'idle' }),
       ],
     }));
     expect(html).toContain('Worker roster');
-    expect(html).toContain('data-role="streams-roster"');
+    expect(html).toContain('data-role="workers-roster"');
     expect(html).toContain('class="roster-row"');
     expect(html).toContain('alpha');
     expect(html).toContain('beta');
@@ -138,6 +143,37 @@ describe('Streams page — unit', () => {
     // roster test did, but on the new owning page.
     expect(html).toContain('pill-info');
     expect(html).toContain('pill-success');
+  });
+
+  it('historic split — 24h window: keeps recent terminated workers, drops older ones', () => {
+    const now = Date.now();
+    const recent = worker({
+      id: 'h-recent', name: 'finished-1h-ago', status: 'terminated',
+      started_at: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
+      ended_at:   new Date(now - 1 * 60 * 60 * 1000).toISOString(),
+    });
+    const old = worker({
+      id: 'h-old', name: 'finished-3d-ago', status: 'terminated',
+      started_at: new Date(now - 4 * 24 * 60 * 60 * 1000).toISOString(),
+      ended_at:   new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    const html = renderWorkersPage(snap({ workers: [recent, old] }));
+    expect(html).toContain('finished-1h-ago');
+    expect(html).not.toContain('finished-3d-ago');
+    expect(html).toContain('History · last 24h · 1 pane');
+    expect(html).toContain('/dashboard/history');
+  });
+
+  it('historic section is omitted entirely when there are no historic workers in window', () => {
+    const html = renderWorkersPage(snap({ workers: [worker({ id: 'w1', status: 'running' })] }));
+    expect(html).not.toContain('data-role="workers-history"');
+  });
+
+  it('page chrome — uses Workers activePage + title', () => {
+    const html = renderWorkersPage(snap());
+    expect(html).toContain('data-active-page="workers"');
+    expect(html).toContain('<title>Stavr — Workers</title>');
+    expect(html).toContain('<h1 class="page-title">Workers</h1>');
   });
 });
 
@@ -157,13 +193,13 @@ async function boot(): Promise<Harness> {
   return { store, broker, transports, base: `http://127.0.0.1:${addr.port}` };
 }
 
-describe('Streams page — integration', () => {
+describe('Workers page — integration', () => {
   let h: Harness;
 
   beforeEach(async () => { h = await boot(); });
   afterEach(async () => { await h.transports.shutdown(); });
 
-  it('GET /dashboard/streams renders panes for persisted workers', async () => {
+  it('GET /dashboard/workers renders panes for persisted workers', async () => {
     h.store.upsertWorker(worker({ id: 'w-int', name: 'cc-int', status: 'running' }));
     await h.broker.publish({
       kind: 'progress',
@@ -172,11 +208,22 @@ describe('Streams page — integration', () => {
       source_agent: 'cc',
       payload: { message: 'integration test event' },
     });
-    const r = await fetch(`${h.base}/dashboard/streams`);
+    const r = await fetch(`${h.base}/dashboard/workers`);
     expect(r.status).toBe(200);
     const body = await r.text();
     expect(body).toContain('cc-int');
     expect(body).toContain('integration test event');
-    expect(body).toContain('data-page="streams"');
+    expect(body).toContain('data-page="workers"');
+  });
+
+  it('legacy alias — GET /dashboard/streams still serves the Workers page', async () => {
+    h.store.upsertWorker(worker({ id: 'w-legacy', name: 'cc-legacy', status: 'running' }));
+    const r = await fetch(`${h.base}/dashboard/streams`);
+    expect(r.status).toBe(200);
+    const body = await r.text();
+    expect(body).toContain('cc-legacy');
+    // Same page renderer → same activePage marker.
+    expect(body).toContain('data-active-page="workers"');
+    expect(body).toContain('<h1 class="page-title">Workers</h1>');
   });
 });

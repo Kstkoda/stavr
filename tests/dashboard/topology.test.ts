@@ -312,7 +312,7 @@ describe('Topology page — unit', () => {
     expect(html).toContain('Twin A');
   });
 
-  it('v0.6.10 Task 2 — Worker roster table moved to /streams; topology is pure-topology', () => {
+  it('v0.6.10 Task 2 — Worker roster table moved to /workers; topology is pure-topology', () => {
     const html = renderTopologyPage(snapshot({
       workers: [
         worker({ id: 'w1', name: 'alpha', status: 'running' }),

@@ -209,7 +209,7 @@ async function emitHostExecDenied(ev: StoredEvent, notifier: Notifier, opts: Wir
       label: 'View audit',
       action_id: 'open:audit',
       kind: 'link',
-      url: `${opts.dashboardBaseUrl}/dashboard/streams?kind=host_exec_denied`,
+      url: `${opts.dashboardBaseUrl}/dashboard/workers?kind=host_exec_denied`,
     });
   }
   const actor = p?.actor ? `[${p.actor}] ` : '';

@@ -99,7 +99,7 @@ describe('v0.3 dashboard shell — integration', () => {
   });
 
   const pageIds: DashboardPageId[] = [
-    'helm', 'topology', 'streams', 'plans',
+    'helm', 'topology', 'workers', 'plans',
     'decide', 'toolkit', 'mcps', 'capabilities', 'settings',
   ];
 

@@ -28,7 +28,7 @@
  *
  * v0.6.10 Task 2 — the In-flight BOMs sidebar moved to
  * /dashboard/plans and the Worker roster table moved to
- * /dashboard/streams. Topology is now pure-topology (constellation only).
+ * /dashboard/workers. Topology is now pure-topology (constellation only).
  */
 import type { WorkerRecord } from '../../persistence.js';
 import type { Bom } from '../../types/stavr-bom.js';
@@ -439,7 +439,7 @@ function renderEdge(n: Map<string, GraphNode>, e: GraphEdge): string {
 
 // v0.6.10 Task 2 — renderBomSidebar moved to src/dashboard/pages/plans.ts
 // (now lives as `renderInFlightSidebar`).
-// v0.6.10 Task 2 — renderWorkerRoster moved to src/dashboard/pages/streams.ts.
+// v0.6.10 Task 2 — renderWorkerRoster moved to src/dashboard/pages/workers.ts.
 
 function renderFilterStrip(typeCounts: Record<GraphType, number>): string {
   const cell = (cls: string, label: string, type: GraphType) =>
@@ -962,7 +962,7 @@ const TOPOLOGY_CSS = `
 .placeholder { color: var(--ink-3); font-style: italic; font-size: 12px; padding: 8px 0; }
 
 /* roster */
-/* v0.6.10 Task 2 — .topo-roster removed; roster lives on /dashboard/streams now. */
+/* v0.6.10 Task 2 — .topo-roster removed; roster lives on /dashboard/workers now. */
 .roster-row {
   display: grid; grid-template-columns: 1fr auto auto;
   gap: 10px; align-items: center;
@@ -1614,7 +1614,7 @@ export function renderTopologyPage(data?: TopologyData): string {
     filterStrip,
     // v0.6.10 Task 2 — Topology page is now pure-topology: the BOM
     // sidebar moved to /dashboard/plans and the Worker roster moved
-    // to /dashboard/streams. Operators reach those from the topbar.
+    // to /dashboard/workers. Operators reach those from the topbar.
     `<div class="topo-frame topo-frame-solo">`,
     `<div class="topo-canvas glass" data-role="topo-canvas" data-live="on">`,
     `<div class="grid-bg"></div>`,
@@ -1638,7 +1638,7 @@ export function renderTopologyPage(data?: TopologyData): string {
       `<div class="topo-empty-body">Connect an MCP server or spawn a worker to populate the constellation. The canvas auto-updates as the daemon registers new entries.</div>`,
       `<div class="topo-empty-actions">`,
       `<a class="topo-empty-cta" href="/dashboard/mcps">Browse MCPs →</a>`,
-      `<a class="topo-empty-cta" href="/dashboard/streams">Live streams →</a>`,
+      `<a class="topo-empty-cta" href="/dashboard/workers">Live workers →</a>`,
       `</div>`,
       `</div>`,
     ].join('') : '',

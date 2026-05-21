@@ -6,7 +6,7 @@
  *   C3 → plans
  *   C4 → decide
  *   C5 → topology
- *   C6 → streams
+ *   C6 → workers
  *   C7 → toolkit
  *   C8 → capabilities
  *   C9 → settings
@@ -29,9 +29,9 @@ const SPECS: Record<Exclude<DashboardPageId, 'home' | 'helm' | 'history' | 'mcps
     comingIn: 'C5',
     description: 'SVG topology with workers, connectors, and a time scrubber for history rollback.',
   },
-  streams: {
-    id: 'streams',
-    title: 'Streams',
+  workers: {
+    id: 'workers',
+    title: 'Workers',
     sub: 'Live worker terminals',
     comingIn: 'C6',
     description: 'Multi-pane terminal view for up to 20 concurrent workers with filters and search.',
