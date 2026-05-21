@@ -126,6 +126,7 @@ Sensitivity is orthogonal to the 4-tier action model. A `high` dispatch over `Ti
 | Helm | `design-mockups/dashboard-helm-v2-expanded.html` | `src/dashboard/pages/helm.ts` |
 | Topology | `design-mockups/dashboard-topology-v2-graph.html` | `src/dashboard/pages/topology.ts` |
 | Diagnostics | `design-mockups/dashboard-diagnostics-v2-b-proxmox.html` | `src/dashboard/pages/diagnostics.ts` |
+| History | (no mockup — BOM `proposed/v0_8-audit-history-dashboard-bom.md`) | `src/dashboard/pages/history.ts` + `src/dashboard/data/history/*` |
 | Streams / Decide / Toolkit / Capabilities / Settings | `design-mockups/dashboard-mockup-v8.html` (sections `#page-streams`, etc.) | matching `src/dashboard/pages/*.ts` |
 | Shell + tokens | `dashboard-mockup-v8.html` topbar + iron palette `:root` | `src/dashboard/shell.ts` + `src/dashboard/tokens.ts` |
 

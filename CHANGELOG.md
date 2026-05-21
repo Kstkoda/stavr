@@ -2,6 +2,25 @@
 
 stavR ships incrementally — small, reviewable PRs that each pass `npm test` and `npm run build` independently. Release notes for major surface changes live in `docs/release-notes-v0.*.md`; this file is the project-level timeline.
 
+## v0.8 — Audit History dashboard (in progress)
+
+**One chronological view across every artifact stavR records.** Closes the "I can't go back and see what happened" gap exposed by the 2026-05-17 revert-then-merge cascade. Read-only UI over existing data sources — no schema changes, fully reversible (Tier 2).
+
+### Added
+
+- **`/dashboard/history` page** — single timeline merging decisions, trust scopes, BOM files (`proposed/*.md`), plan records (boms table), host_exec events, commits (`git log`), CI runs, and notifications. Range picker (Today / 24h / 7d / Custom), type tabs, free-text search with localStorage persistence.
+- **Bidirectional correlation walker** — forward walk from any origin row ("what happened after this dispatch?"); backward walk from any notification ("where did this alert come from?"). Kind-agnostic — follows `correlation_id` linkage only, so the v0.9 universal-signal-trace roadmap (LLM-calls, DB-queries, MCP-traffic, federation-traffic) plugs in without walker changes.
+- **Side drawer for full context** — markdown render for BOM files (sanitized), full record + action log for decisions / scopes / plans, command + redacted args + show-raw toggle for host_exec. Esc closes; no focus trap.
+- **Read-only JSON API** — `GET /dashboard/api/history`, `GET /dashboard/api/history/:kind/:id`, `GET /dashboard/api/history/:kind/:id/trace`. POST/PUT/PATCH/DELETE return 405 by construction so the page can't accidentally grow a write surface.
+- **Operator guide** — `docs/audit-history.md` with worked examples ("what did Cowork-Claude do today?", "why did CI fail at 10:45?").
+
+### Out of scope (separate BOMs)
+
+- Live mode (auto-refresh of the timeline) — `/dashboard/streams` is the live surface, history stays retrospective per BOM Open Q §4
+- Federated peer view — local-only in v0.8 per Open Q §3; aligned with ADR-035 phase 4
+- Internal-only events toggle — filtered out at the page boundary by default per Open Q §5; "Show internal events" affordance is a v0.8.1 candidate
+- Server-side LIKE search — Footgun #6 candidate when client-side substring slows down; profile first
+
 ## v0.6.6 — Worker status fidelity (in progress)
 
 **Helm + Topology + Streams + Diagnostics stop lying about worker state.** Closes audit findings #1, #2, #3, #5, #7, #8, #11, #22 from the 2026-05-17 capture. The dashboard's biggest live lie ("6 active workers" while 0 were actually running, the 2026-05-17 E2E session) becomes structurally impossible because all four pages now read from a single source.
