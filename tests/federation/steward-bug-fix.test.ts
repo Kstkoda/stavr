@@ -25,7 +25,9 @@ import { resolve, join } from 'node:path';
 
 const projectRoot = resolve(__dirname, '..', '..');
 const cliEntry = resolve(projectRoot, 'src', 'cli.ts');
+const tsxCli = resolve(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const isWindows = process.platform === 'win32';
+void isWindows;
 
 interface SpawnedDaemon {
   child: ChildProcess;
@@ -35,10 +37,11 @@ interface SpawnedDaemon {
 }
 
 function spawnCli(args: string[], env: NodeJS.ProcessEnv): SpawnedDaemon {
-  const child = spawn('npx', ['tsx', cliEntry, ...args], {
+  // See tests/federation/bind.test.ts — invoke tsx via node directly to avoid
+  // npx.cmd shell:true (DEP0190 on Node 22+).
+  const child = spawn(process.execPath, [tsxCli, cliEntry, ...args], {
     cwd: projectRoot,
     env: { ...process.env, ...env },
-    shell: isWindows,
   });
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -51,10 +54,9 @@ function spawnCli(args: string[], env: NodeJS.ProcessEnv): SpawnedDaemon {
 }
 
 function runCli(args: string[], env: NodeJS.ProcessEnv = {}): { stdout: string; stderr: string; status: number } {
-  const r = spawnSync('npx', ['tsx', cliEntry, ...args], {
+  const r = spawnSync(process.execPath, [tsxCli, cliEntry, ...args], {
     cwd: projectRoot,
     env: { ...process.env, ...env },
-    shell: isWindows,
     encoding: 'utf8',
   });
   return { stdout: r.stdout ?? '', stderr: r.stderr ?? '', status: r.status ?? -1 };

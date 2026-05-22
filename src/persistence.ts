@@ -774,6 +774,7 @@ export class EventStore {
     let deletedOperational = 0;
     let deletedAudit = 0;
     let unknownPreserved = 0;
+    let unknownKinds: Array<{ kind: string; count: number }> = [];
 
     try {
       // Operational: age cap. Use ISO timestamps so it lines up with what
@@ -811,18 +812,24 @@ export class EventStore {
         .run(...auditKinds, auditCutoff);
       deletedAudit += auditRes.changes;
 
-      // Unknown: count, warn, preserve. Casting after the spread because
-      // the runtime placeholder list shape is dynamic.
+      // Unknown: count + per-kind names, warn, preserve. The names matter:
+      // an operator extending OPERATIONAL_KINDS / AUDIT_KINDS needs to know
+      // which kinds are accumulating, not just that *some* are.
       const knownKinds = [...opKinds, ...auditKinds];
-      const unknownRow = this.db
+      const unknownRows = this.db
         .prepare(
-          `SELECT COUNT(*) AS c FROM events WHERE kind NOT IN (${knownKinds.map(() => '?').join(',')})`,
+          `SELECT kind, COUNT(*) AS c FROM events
+             WHERE kind NOT IN (${knownKinds.map(() => '?').join(',')})
+             GROUP BY kind
+             ORDER BY c DESC`,
         )
-        .get(...knownKinds) as { c: number };
-      unknownPreserved = unknownRow.c;
+        .all(...knownKinds) as Array<{ kind: string; c: number }>;
+      unknownKinds = unknownRows.map((r) => ({ kind: r.kind, count: r.c }));
+      unknownPreserved = unknownKinds.reduce((sum, r) => sum + r.count, 0);
       if (unknownPreserved > 0) {
         getLogger().warn('pruneEvents: uncategorized event kinds preserved (extend observability/retention.ts)', {
           unknown_count: unknownPreserved,
+          unknown_kinds: unknownKinds,
         });
       }
     } catch (err) {
@@ -835,6 +842,7 @@ export class EventStore {
       deletedAudit,
       deletedUnknown: 0,
       unknownPreserved,
+      unknownKinds,
       duration_ms: Date.now() - start,
       beforeCount,
       afterCount,

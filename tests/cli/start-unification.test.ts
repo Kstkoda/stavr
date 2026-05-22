@@ -28,7 +28,9 @@ import { EventStore } from '../../src/persistence.js';
 
 const projectRoot = resolve(__dirname, '..', '..');
 const cliEntry = resolve(projectRoot, 'src', 'cli.ts');
+const tsxCli = resolve(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const isWindows = process.platform === 'win32';
+void isWindows;
 
 interface Spawned {
   child: ChildProcess;
@@ -37,10 +39,11 @@ interface Spawned {
 }
 
 function spawnCli(args: string[], env: NodeJS.ProcessEnv): Spawned {
-  const child = spawn('npx', ['tsx', cliEntry, ...args], {
+  // See tests/federation/bind.test.ts — invoke tsx via node directly to avoid
+  // npx.cmd shell:true (DEP0190 on Node 22+).
+  const child = spawn(process.execPath, [tsxCli, cliEntry, ...args], {
     cwd: projectRoot,
     env: { ...process.env, ...env },
-    shell: isWindows,
   });
   const stderr: string[] = [];
   child.stderr?.on('data', (d) => stderr.push(String(d)));

@@ -45,7 +45,16 @@ export interface NotifierOpts {
   db?: Database.Database;
   /** Pluggable clock for tests. */
   now?: () => number;
+  /**
+   * Per-channel send timeout in ms. A channel that doesn't resolve within
+   * this window is recorded as a failed dispatch and the closure is released.
+   * Without this bound, a hanging HTTP channel retains the promise + caller
+   * context indefinitely. Default 10_000.
+   */
+  channelTimeoutMs?: number;
 }
+
+const DEFAULT_CHANNEL_TIMEOUT_MS = 10_000;
 
 export class Notifier {
   private channels = new Map<string, NotificationChannel>();
@@ -53,6 +62,7 @@ export class Notifier {
   private readonly replyBaseUrl?: string;
   private readonly db?: Database.Database;
   private readonly now: () => number;
+  private readonly channelTimeoutMs: number;
 
   constructor(opts: NotifierOpts) {
     if (!opts.secret) throw new Error('Notifier requires a signing secret');
@@ -60,6 +70,7 @@ export class Notifier {
     this.replyBaseUrl = opts.replyBaseUrl;
     this.db = opts.db;
     this.now = opts.now ?? Date.now;
+    this.channelTimeoutMs = opts.channelTimeoutMs ?? DEFAULT_CHANNEL_TIMEOUT_MS;
   }
 
   registerChannel(channel: NotificationChannel): void {
@@ -207,12 +218,26 @@ export class Notifier {
     channels: NotificationChannel[],
     input: ChannelSendInput,
   ): Promise<NotificationDispatch[]> {
+    const timeoutMs = this.channelTimeoutMs;
     const results = await Promise.all(
       channels.map(async (ch) => {
+        let timeoutHandle: NodeJS.Timeout | undefined;
         try {
-          return await ch.send(input);
+          const timeoutPromise = new Promise<NotificationDispatch>((resolve) => {
+            timeoutHandle = setTimeout(() => {
+              resolve({
+                channelId: ch.id,
+                ok: false,
+                error: `channel send timed out after ${timeoutMs}ms`,
+              } satisfies NotificationDispatch);
+            }, timeoutMs);
+            timeoutHandle.unref?.();
+          });
+          return await Promise.race([ch.send(input), timeoutPromise]);
         } catch (err) {
           return { channelId: ch.id, ok: false, error: (err as Error).message } satisfies NotificationDispatch;
+        } finally {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
         }
       }),
     );
