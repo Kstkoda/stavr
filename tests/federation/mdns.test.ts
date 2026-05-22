@@ -42,11 +42,20 @@ interface StubDriver {
   unpublishAll: ReturnType<typeof vi.fn>;
 }
 
-function makeStubDriver(): { driver: StubDriver; browser: EventEmitter; onup: (s: FakeService) => void } {
+function makeStubDriver(): {
+  driver: StubDriver;
+  browser: EventEmitter;
+  advertised: EventEmitter;
+  onup: (s: FakeService) => void;
+} {
   const browser = new EventEmitter();
+  // bonjour-service's Service is an EventEmitter — the coordinator wires
+  // an 'error' listener on it to catch async "name in use" probes, so the
+  // stub must be one too.
+  const advertised = Object.assign(new EventEmitter(), { name: 'self', published: true });
   let onup: (s: FakeService) => void = () => {};
   const driver: StubDriver = {
-    publish: vi.fn(() => ({ name: 'self', published: true }) as unknown),
+    publish: vi.fn(() => advertised as unknown),
     find: vi.fn((_opts: unknown, cb: (s: FakeService) => void) => {
       onup = cb;
       return browser;
@@ -54,7 +63,7 @@ function makeStubDriver(): { driver: StubDriver; browser: EventEmitter; onup: (s
     destroy: vi.fn(),
     unpublishAll: vi.fn(),
   };
-  return { driver, browser, onup: (s) => onup(s) };
+  return { driver, browser, advertised, onup: (s) => onup(s) };
 }
 
 describe('serviceToDiscovered', () => {
@@ -153,5 +162,45 @@ describe('MdnsCoordinator', () => {
     coord.start({ peerId: 'self', displayName: 'Self', port: 7777 });
     coord.stop();
     expect(() => coord.start({ peerId: 'self', displayName: 'Self', port: 7777 })).toThrow();
+  });
+
+  it("forwards async 'error' from the advertised Service into the coordinator's 'error' event", () => {
+    // Regression: bonjour-service emits "Service name is already in use"
+    // asynchronously after publish() has returned. Without a listener on
+    // the returned Service the EventEmitter promotes 'error' to an
+    // uncaught exception and crashes the daemon. The coordinator must
+    // attach a listener that re-emits via its own 'error' channel (which
+    // federation/index.ts routes to log.warn).
+    const coord = new MdnsCoordinator();
+    const { driver, advertised } = makeStubDriver();
+    coord.useDriver(driver as never);
+
+    const errors: Error[] = [];
+    coord.on('error', (err) => errors.push(err));
+
+    coord.start({ peerId: 'self', displayName: 'Self', port: 7777 });
+
+    // Simulate bonjour's async probe-response error.
+    advertised.emit('error', new Error('Service name is already in use'));
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.message).toBe('Service name is already in use');
+    coord.stop();
+  });
+
+  it("forwards async 'error' from the browser into the coordinator's 'error' event", () => {
+    const coord = new MdnsCoordinator();
+    const { driver, browser } = makeStubDriver();
+    coord.useDriver(driver as never);
+
+    const errors: Error[] = [];
+    coord.on('error', (err) => errors.push(err));
+
+    coord.start({ peerId: 'self', displayName: 'Self', port: 7777 });
+    browser.emit('error', new Error('multicast socket closed'));
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.message).toBe('multicast socket closed');
+    coord.stop();
   });
 });
