@@ -119,13 +119,15 @@ export function registerGithubWriteTools(
         title: z.string().min(1),
         body: z.string().default(''),
         draft: z.boolean().optional().default(false),
+        reason: z.string().optional().describe('Why this action is being requested — shown to the operator in the approval prompt.'),
       },
     },
-    async ({ repo, head, base, title, body, draft }) => {
+    async ({ repo, head, base, title, body, draft, reason }) => {
       const question = `Create PR in ${repo}: "${title}" (${head} → ${base}${draft ? ', draft' : ''}). Approve?`;
       const result = await gatedAction({
         broker,
         question,
+        reason,
         timeoutSec,
         scopeCheck: { tool: 'github_create_pr', args: { repo, head, base, title, body, draft }, trustStore },
         performAction: async () => {
@@ -172,13 +174,15 @@ export function registerGithubWriteTools(
       inputSchema: {
         repo: z.string().min(1),
         number: z.number().int().min(1),
+        reason: z.string().optional().describe('Why this action is being requested — shown to the operator in the approval prompt.'),
       },
     },
-    async ({ repo, number }) => {
+    async ({ repo, number, reason }) => {
       const question = `Merge PR #${number} in ${repo} (squash + delete-branch). Approve?`;
       const result = await gatedAction({
         broker,
         question,
+        reason,
         timeoutSec,
         scopeCheck: { tool: 'github_merge_pr', args: { repo, number }, trustStore },
         performAction: async () => {
@@ -234,13 +238,15 @@ export function registerGithubWriteTools(
         title: z.string().min(1),
         body: z.string().default(''),
         labels: z.array(z.string().min(1)).optional(),
+        reason: z.string().optional().describe('Why this action is being requested — shown to the operator in the approval prompt.'),
       },
     },
-    async ({ repo, title, body, labels }) => {
+    async ({ repo, title, body, labels, reason }) => {
       const question = `Create issue in ${repo}: "${title}"${labels && labels.length ? ` (labels: ${labels.join(', ')})` : ''}. Approve?`;
       const result = await gatedAction({
         broker,
         question,
+        reason,
         timeoutSec,
         scopeCheck: { tool: 'github_create_issue', args: { repo, title, body, labels }, trustStore },
         performAction: async () => {
@@ -284,14 +290,16 @@ export function registerGithubWriteTools(
         repo: z.string().min(1),
         number: z.number().int().min(1),
         body: z.string().min(1),
+        reason: z.string().optional().describe('Why this action is being requested — shown to the operator in the approval prompt.'),
       },
     },
-    async ({ repo, number, body }) => {
+    async ({ repo, number, body, reason }) => {
       const preview = body.length > 80 ? body.slice(0, 80) + '…' : body;
       const question = `Comment on issue #${number} in ${repo}: "${preview}". Approve?`;
       const result = await gatedAction({
         broker,
         question,
+        reason,
         timeoutSec,
         scopeCheck: { tool: 'github_create_issue_comment', args: { repo, number, body }, trustStore },
         performAction: async () => {
@@ -333,14 +341,16 @@ export function registerGithubWriteTools(
         repo: z.string().min(1),
         number: z.number().int().min(1),
         body: z.string().min(1),
+        reason: z.string().optional().describe('Why this action is being requested — shown to the operator in the approval prompt.'),
       },
     },
-    async ({ repo, number, body }) => {
+    async ({ repo, number, body, reason }) => {
       const preview = body.length > 80 ? body.slice(0, 80) + '…' : body;
       const question = `Comment on PR #${number} in ${repo}: "${preview}". Approve?`;
       const result = await gatedAction({
         broker,
         question,
+        reason,
         timeoutSec,
         scopeCheck: { tool: 'github_create_pr_comment', args: { repo, number, body }, trustStore },
         performAction: async () => {
@@ -382,13 +392,15 @@ export function registerGithubWriteTools(
         repo: z.string().min(1),
         number: z.number().int().min(1),
         comment: z.string().optional(),
+        reason: z.string().optional().describe('Why this action is being requested — shown to the operator in the approval prompt.'),
       },
     },
-    async ({ repo, number, comment }) => {
+    async ({ repo, number, comment, reason }) => {
       const question = `Close issue #${number} in ${repo}${comment ? ' (with comment)' : ''}. Approve?`;
       const result = await gatedAction({
         broker,
         question,
+        reason,
         timeoutSec,
         scopeCheck: { tool: 'github_close_issue', args: { repo, number, comment }, trustStore },
         performAction: async () => {
@@ -417,13 +429,15 @@ export function registerGithubWriteTools(
         repo: z.string().min(1),
         number: z.number().int().min(1),
         comment: z.string().optional(),
+        reason: z.string().optional().describe('Why this action is being requested — shown to the operator in the approval prompt.'),
       },
     },
-    async ({ repo, number, comment }) => {
+    async ({ repo, number, comment, reason }) => {
       const question = `Reopen issue #${number} in ${repo}${comment ? ' (with comment)' : ''}. Approve?`;
       const result = await gatedAction({
         broker,
         question,
+        reason,
         timeoutSec,
         scopeCheck: { tool: 'github_reopen_issue', args: { repo, number, comment }, trustStore },
         performAction: async () => {
@@ -452,13 +466,15 @@ export function registerGithubWriteTools(
         repo: z.string().min(1),
         number: z.number().int().min(1),
         labels: z.array(z.string().min(1)).min(1),
+        reason: z.string().optional().describe('Why this action is being requested — shown to the operator in the approval prompt.'),
       },
     },
-    async ({ repo, number, labels }) => {
+    async ({ repo, number, labels, reason }) => {
       const question = `Add labels [${labels.join(', ')}] to #${number} in ${repo}. Approve?`;
       const result = await gatedAction({
         broker,
         question,
+        reason,
         timeoutSec,
         scopeCheck: { tool: 'github_add_labels', args: { repo, number, labels }, trustStore },
         performAction: async () => {
@@ -507,13 +523,15 @@ export function registerGithubWriteTools(
         repo: z.string().min(1),
         number: z.number().int().min(1),
         labels: z.array(z.string().min(1)).min(1),
+        reason: z.string().optional().describe('Why this action is being requested — shown to the operator in the approval prompt.'),
       },
     },
-    async ({ repo, number, labels }) => {
+    async ({ repo, number, labels, reason }) => {
       const question = `Remove labels [${labels.join(', ')}] from #${number} in ${repo}. Approve?`;
       const result = await gatedAction({
         broker,
         question,
+        reason,
         timeoutSec,
         scopeCheck: { tool: 'github_remove_labels', args: { repo, number, labels }, trustStore },
         performAction: async () => {
@@ -562,13 +580,15 @@ export function registerGithubWriteTools(
         repo: z.string().min(1),
         number: z.number().int().min(1),
         reviewers: z.array(z.string().min(1)).min(1),
+        reason: z.string().optional().describe('Why this action is being requested — shown to the operator in the approval prompt.'),
       },
     },
-    async ({ repo, number, reviewers }) => {
+    async ({ repo, number, reviewers, reason }) => {
       const question = `Request review on PR #${number} in ${repo} from [${reviewers.join(', ')}]. Approve?`;
       const result = await gatedAction({
         broker,
         question,
+        reason,
         timeoutSec,
         scopeCheck: { tool: 'github_request_pr_review', args: { repo, number, reviewers }, trustStore },
         performAction: async () => {

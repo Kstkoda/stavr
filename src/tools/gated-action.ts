@@ -18,6 +18,13 @@ export interface SuccessEventSpec {
 export interface GatedActionOpts<T> {
   broker: Broker;
   question: string;
+  /**
+   * Optional human-readable rationale for *why* this action is being
+   * requested. When set, it is appended to the decision `question` so the
+   * operator sees the reason in the approval prompt — and it lands in the
+   * stored decision + `decision_request` event for the audit trail.
+   */
+  reason?: string;
   performAction: () => Promise<T>;
   successEvent?: (result: T) => SuccessEventSpec | undefined;
   timeoutSec?: number;
@@ -167,7 +174,12 @@ export async function gatedAction<T>(opts: GatedActionOpts<T>): Promise<GatedAct
   }
 
   const effectiveTimeoutSec = usingNoGo ? noGoTimeoutSec(noGoMatch!.severity) : timeoutSec;
-  const question = usingNoGo ? buildNoGoQuestion(noGoMatch!, opts.question) : opts.question;
+  const baseQuestion = usingNoGo ? buildNoGoQuestion(noGoMatch!, opts.question) : opts.question;
+  // Fold the caller-supplied rationale into the question so the operator sees
+  // *why* the action was requested, not just *what*. `question` is what
+  // createDecision stores and the decision_request event carries, so the
+  // reason reaches the audit trail too.
+  const question = opts.reason ? `${baseQuestion}\n\nReason: ${opts.reason}` : baseQuestion;
 
   const options = [
     { id: APPROVE, label: 'Approve' },

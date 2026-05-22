@@ -375,6 +375,23 @@ describe('GitHub write adapter — gated by await_decision', () => {
       expect(structured.reason).toBe('rejected_by_user');
       expect(harness.calls).toHaveLength(0);
     });
+
+    it('threads the optional reason into the decision question', async () => {
+      harness = await makeWriteHarness(() => ({ stdout: '' }));
+      const pending = callTool(harness.client, 'github.merge_pr', {
+        repo: 'stenlund/stavr',
+        number: 99,
+        reason: 'CI green on both runners; review blocker cleared',
+      });
+      const correlationId = await waitForPendingDecision(harness.broker);
+      await reject(harness.broker, correlationId);
+      await pending;
+      const req = harness.events.find((e) => e.kind === 'decision_request');
+      expect(req).toBeDefined();
+      expect(String((req!.payload as { question?: string }).question)).toContain(
+        'Reason: CI green on both runners; review blocker cleared',
+      );
+    });
   });
 
   // ── github.create_pr_comment ──────────────────────────────────────────
