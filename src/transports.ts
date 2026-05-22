@@ -55,7 +55,7 @@ import {
   setMcpServerSessionsActive,
   recordJsonRpcError,
 } from './observability/mcp-metrics.js';
-import { logContext } from './observability/logger.js';
+import { logContext, withLogContext } from './observability/logger.js';
 import { mountDebugEndpoints } from './observability/debug-endpoints.js';
 import { mountWebAuthnRoutes } from './security/webauthn-routes.js';
 import { mountFederationRoutes } from './federation/index.js';
@@ -787,7 +787,20 @@ export async function mountTransports(
         isNew = true;
       }
 
-      await session.transport.handleRequest(req, res, req.body);
+      // Phase 2 — stamp actor_id for the chokepoint gate. Bearer-auth
+      // already attached `req.device` for paired remote callers; loopback
+      // requests fall back to `loopback:<correlation_id>` so a single
+      // tool call has a stable identity across no-go / Layer 0 / per-actor
+      // checks. The chokepoint reads logContext.actor_id; nothing else
+      // depends on this stamp, so the nested scope is local to dispatch.
+      const reqDevice = (req as Request & { device?: { id: string; name: string } }).device;
+      const correlationIdForActor = (res.getHeader('x-correlation-id') as string | undefined) ?? '';
+      const actorId = reqDevice
+        ? `peer:${reqDevice.name}`
+        : `loopback:${correlationIdForActor}`;
+      await withLogContext({ actor_id: actorId }, () =>
+        session!.transport.handleRequest(req, res, req.body),
+      );
 
       // After handleRequest, sessionId is populated on the first POST.
       // Register so subsequent requests find the same session.

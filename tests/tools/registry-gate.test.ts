@@ -8,7 +8,7 @@ import {
 
 describe('wrapHandlerWithGate', () => {
   it('delegates to the inner handler when the gate allows', async () => {
-    const gate: RuntimeToolGate = { check: () => ({ allowed: true }) };
+    const gate: RuntimeToolGate = { check: async () => ({ allowed: true }) };
     const handler = async (args: unknown) => ({ content: [{ type: 'text', text: 'ran' }], echo: args });
     const wrapped = wrapHandlerWithGate('emit_event', handler, gate) as (
       args: unknown,
@@ -19,7 +19,7 @@ describe('wrapHandlerWithGate', () => {
 
   it('short-circuits with toolError when the gate denies', async () => {
     const gate: RuntimeToolGate = {
-      check: () => ({ allowed: false, reason: 'disabled by operator' }),
+      check: async () => ({ allowed: false, reason: 'disabled by operator' }),
     };
     let inner_called = false;
     const handler = async () => {
@@ -37,7 +37,7 @@ describe('wrapHandlerWithGate', () => {
 
   it('returns toolError when the gate itself throws', async () => {
     const gate: RuntimeToolGate = {
-      check: () => {
+      check: async () => {
         throw new Error('boom');
       },
     };
@@ -48,6 +48,32 @@ describe('wrapHandlerWithGate', () => {
     const result = (await wrapped({})) as { isError: boolean; content: Array<{ text: string }> };
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('boom');
+  });
+
+  it('awaits a slow async gate without invoking the handler early', async () => {
+    let gateResolved = false;
+    const gate: RuntimeToolGate = {
+      check: () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            gateResolved = true;
+            resolve({ allowed: false, reason: 'slow deny' });
+          }, 10);
+        }),
+    };
+    let inner_called = false;
+    const handler = async () => {
+      inner_called = true;
+      return { content: [{ type: 'text', text: 'unreachable' }] };
+    };
+    const wrapped = wrapHandlerWithGate('worker_spawn', handler, gate) as (
+      args: unknown,
+    ) => Promise<unknown>;
+    const result = (await wrapped({})) as { isError: boolean; content: Array<{ text: string }> };
+    expect(gateResolved).toBe(true);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('slow deny');
+    expect(inner_called).toBe(false);
   });
 });
 
@@ -65,7 +91,7 @@ describe('wrapServerForRegistry with gate', () => {
   it('records registration AND wraps the handler with the gate', async () => {
     const registry = new ToolRegistry();
     const gate: RuntimeToolGate = {
-      check: (toolId) =>
+      check: async (toolId) =>
         toolId === 'host_exec'
           ? { allowed: false, reason: 'host_exec is disabled' }
           : { allowed: true },
