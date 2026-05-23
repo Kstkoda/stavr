@@ -55,6 +55,9 @@ import {
   recordGatewayRequest,
   setMcpServerSessionsActive,
   recordJsonRpcError,
+  recordToolResponseDeliveryFailed,
+  recordToolHandlerDurationAtClose,
+  getDurabilitySnapshot,
 } from './observability/mcp-metrics.js';
 import { logContext } from './observability/logger.js';
 import { mountDebugEndpoints } from './observability/debug-endpoints.js';
@@ -175,6 +178,15 @@ export async function mountTransports(
      * interval for a closed session.
      */
     keepalive?: ReturnType<typeof setInterval>;
+    /**
+     * Per-session in-flight `tools/call` requests, keyed by JSON-RPC id,
+     * value is the `performance.now()` start. Populated when the SDK
+     * dispatches an incoming request through `transport.onmessage`;
+     * any entry still present at `transport.onclose` is observed in the
+     * Phase 3 delivery-failed counter + handler-duration histogram.
+     * BOM proposed/mcp-session-stability-bom.md Phase 3.
+     */
+    inFlight: Map<string | number, number>;
   };
   const sseSessions = new Map<string, McpSession>();
   const refreshSseGauge = (): void => {
@@ -813,9 +825,55 @@ export async function mountTransports(
         await handle.server.connect(transport);
         // Create the session object BEFORE wiring onclose so the close
         // handler can reference `session.keepalive` and clear it.
-        session = { transport, handle };
+        session = { transport, handle, inFlight: new Map<string | number, number>() };
         isNew = true;
+        // Phase 3 observability. Wrap onmessage AFTER server.connect()
+        // — the SDK set it during connect; we delegate to the SDK handler
+        // and just pre-record start_ts for tools/call requests so we can
+        // observe handler duration at close. Non-tools/call messages
+        // (initialize, list, notifications/*) are passed through untouched.
+        const sdkOnMessage = transport.onmessage;
+        transport.onmessage = (message, extra) => {
+          const m = message as { method?: string; id?: string | number };
+          if (m.method === 'tools/call' && m.id !== undefined) {
+            session!.inFlight.set(m.id, performance.now());
+          }
+          sdkOnMessage?.(message, extra);
+        };
+        // Wrap send() to clear inFlight on SUCCESSFUL response delivery.
+        // If sdkSend throws (the "No connection established" failure mode),
+        // we deliberately do NOT clear — the entry stays so the eventual
+        // onclose sees it and observes the abandoned duration. Replay-
+        // delivered responses don't pass through transport.send, so a
+        // call that survives via eventStore replay will still appear in
+        // the abandoned bucket at close; that's an acceptable upper-bound
+        // approximation called out in the metric help text.
+        const sdkSend = transport.send.bind(transport);
+        transport.send = async (message, options) => {
+          await sdkSend(message, options);
+          const m = message as { id?: string | number; result?: unknown; error?: unknown };
+          if (m.id !== undefined && (m.result !== undefined || m.error !== undefined)) {
+            session!.inFlight.delete(m.id);
+          }
+        };
+        transport.onerror = (err) => {
+          // SDK throws `No connection established for request ID: X` when
+          // the per-POST response stream is gone at send time. Any error
+          // matching that pattern is the failure mode this BOM protects.
+          const msg = err?.message ?? '';
+          if (msg.includes('No connection established') || msg.includes('controller')) {
+            recordToolResponseDeliveryFailed('send_error');
+          }
+        };
         transport.onclose = () => {
+          // Phase 3 — anything left in inFlight at close is "abandoned by
+          // close": handler ran (or was running), session died, response
+          // can no longer be delivered cleanly. Observe duration and count.
+          for (const start of session!.inFlight.values()) {
+            recordToolResponseDeliveryFailed('abandoned_by_close');
+            recordToolHandlerDurationAtClose((performance.now() - start) / 1000);
+          }
+          session!.inFlight.clear();
           if (session!.keepalive) {
             clearInterval(session!.keepalive);
             session!.keepalive = undefined;
@@ -1129,6 +1187,14 @@ export async function mountTransports(
         // missing/closed, remove it.
         const t = sess.transport as unknown as { _writable?: { destroyed?: boolean } };
         if (t?._writable?.destroyed) {
+          // Mirror the onclose accounting: a janitor force-remove is a
+          // session close that happens to skip onclose, so any in-flight
+          // calls at this moment are still "abandoned by close".
+          for (const start of sess.inFlight.values()) {
+            recordToolResponseDeliveryFailed('abandoned_by_close');
+            recordToolHandlerDurationAtClose((performance.now() - start) / 1000);
+          }
+          sess.inFlight.clear();
           if (sess.keepalive) {
             clearInterval(sess.keepalive);
             sess.keepalive = undefined;
@@ -1727,6 +1793,7 @@ export function mountDashboardRoutes(
         enabled: b.enabled,
       })),
       hostCeiling: fetchHostCeilingData(broker),
+      durability: getDurabilitySnapshot(),
     };
   }
 

@@ -65,6 +65,20 @@ export interface DiagnosticsData {
    * renders an "unwired" placeholder.
    */
   hostCeiling?: HostCeilingDashboardData;
+  /**
+   * MCP session durability snapshot — populated by
+   * `getDurabilitySnapshot()` from observability/mcp-metrics. Surfaces
+   * Phase 3 of proposed/mcp-session-stability-bom.md: the
+   * delivery-failed counter (split by reason) and the p99 of the
+   * bounded handler-at-close histogram mirror. When omitted, the tile
+   * renders an "unwired" placeholder.
+   */
+  durability?: {
+    send_error_total: number;
+    abandoned_by_close_total: number;
+    handler_at_close_count: number;
+    handler_at_close_p99_seconds: number | null;
+  };
 }
 
 function escapeHtml(s: string): string {
@@ -669,6 +683,45 @@ function renderPerfSection(): string {
     `<button type="button" class="perf-action-btn" data-role="perf-copy-load">Copy load-runner command</button>`,
     `<span class="perf-action-status" data-role="perf-copy-status"></span>`,
     `</div>`,
+    `</div>`,
+    `</div>`,
+    `</section>`,
+  ].join('');
+}
+
+/**
+ * MCP session durability tile — Phase 3 of
+ * proposed/mcp-session-stability-bom.md. Shows the two failure-mode
+ * metrics in a compact glass card on the engine page's Traffic section.
+ * When `data` is undefined, renders an "unwired" placeholder so the
+ * tile structure is always visible.
+ */
+function renderMcpDurabilityPanel(data?: DiagnosticsData['durability']): string {
+  const fmtSec = (s: number | null): string =>
+    s === null ? '—' : s < 1 ? `${(s * 1000).toFixed(0)}ms` : s < 60 ? `${s.toFixed(1)}s` : `${(s / 60).toFixed(1)}min`;
+  const tiles: Array<{ l: string; v: string; cls: 'ok' | 'warn' }> = data
+    ? [
+        { l: 'send_error', v: String(data.send_error_total), cls: data.send_error_total > 0 ? 'warn' : 'ok' },
+        { l: 'abandoned', v: String(data.abandoned_by_close_total), cls: data.abandoned_by_close_total > 0 ? 'warn' : 'ok' },
+        { l: 'handler p99', v: fmtSec(data.handler_at_close_p99_seconds), cls: 'ok' },
+        { l: 'samples', v: String(data.handler_at_close_count), cls: 'ok' },
+      ]
+    : [
+        { l: 'send_error', v: '—', cls: 'ok' },
+        { l: 'abandoned', v: '—', cls: 'ok' },
+        { l: 'handler p99', v: '—', cls: 'ok' },
+        { l: 'samples', v: '—', cls: 'ok' },
+      ];
+  return [
+    `<section class="diag-sec">`,
+    `<div class="sec-head">`,
+    `<span class="sec-title">MCP session durability</span>`,
+    `<span class="sec-bar"></span>`,
+    `<span class="sec-meta">${escapeHtml('eventStore + keepalive · failure-mode counters')}</span>`,
+    `</div>`,
+    `<div class="sec-body">`,
+    `<div class="jobs-banner glass" style="padding:8px 10px;">`,
+    tiles.map((t) => `<div class="job-pill ${t.cls}"><span class="l">${escapeHtml(t.l)}</span><span class="v">${escapeHtml(t.v)}</span></div>`).join(''),
     `</div>`,
     `</div>`,
     `</section>`,
@@ -1409,6 +1462,7 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     `<section id="traffic" class="diag-anchor">`,
     `<h2 class="diag-anchor-title">Traffic</h2>`,
     mcpSection,
+    renderMcpDurabilityPanel(data?.durability),
     fleetSection,
     workerSection,
     `<div class="bottom-row">${healPanel}${tailPanel}</div>`,
