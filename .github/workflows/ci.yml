@@ -30,11 +30,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # Matches package.json `engines.node` (>=25.7). 25.7 is the
-          # RC-stability floor for `node:sqlite` (DatabaseSync), which the
-          # persistence port (src/db/port.ts) depends on as of Phase 2 of
-          # family-mode-phase-2. CI must test the declared floor.
-          node-version: '>=25.7'
+          # Pinned to the current Node major. package.json `engines.node`
+          # declares the floor (`>=25.7`, RC-stability for `node:sqlite` /
+          # DatabaseSync used by the persistence port); pinning CI to a
+          # concrete major (`26.x`) keeps every run on a known-good toolchain
+          # rather than floating onto whatever just shipped on nodejs.org.
+          # Bump deliberately when the operator decides to validate a new
+          # major.
+          node-version: '26.x'
           cache: 'npm'
 
       - name: Install dependencies
