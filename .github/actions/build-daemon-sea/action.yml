@@ -118,6 +118,27 @@ runs:
         fi
         ls -la "${OUTPUT_DIR}/"
 
+    - name: Download Node release SHASUMS256
+      shell: bash
+      env:
+        NODE_RELEASE: ${{ steps.node.outputs.release }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        set -euo pipefail
+        # Per ADR-038 (supply-chain-integrity): any third-party binary we
+        # embed in a signed installer must be hash-verified at fetch time.
+        # nodejs.org publishes SHASUMS256.txt alongside every release and
+        # signs it with the OpenJS release-team GPG keys; we verify the
+        # archive against this file before postject embeds it.
+        # (GPG verification of SHASUMS256.txt itself is a follow-up — for
+        # Phase 4 the binding to a specific Node release via the URL +
+        # the sha256 line is the integrity boundary; nodejs.org TLS is
+        # the trust root.)
+        curl -fsSL -o "${OUTPUT_DIR}/SHASUMS256.txt" \
+          "https://nodejs.org/dist/${NODE_RELEASE}/SHASUMS256.txt"
+        echo "Fetched SHASUMS256.txt for ${NODE_RELEASE}:"
+        wc -l "${OUTPUT_DIR}/SHASUMS256.txt"
+
     - name: Download target Node binary (Unix)
       if: inputs.bin-ext == ''
       shell: bash
@@ -130,6 +151,10 @@ runs:
         ARCHIVE="node-${NODE_RELEASE}-${NODE_ARCH}.tar.gz"
         curl -fsSL -o "${OUTPUT_DIR}/${ARCHIVE}" \
           "https://nodejs.org/dist/${NODE_RELEASE}/${ARCHIVE}"
+        # Verify SHA256 against the SHASUMS256.txt entry. Format is
+        # "<64-hex> <space><space><filename>". grep -F to avoid glob /
+        # regex surprises; sha256sum --check confirms or aborts.
+        ( cd "${OUTPUT_DIR}" && grep -F "  ${ARCHIVE}" SHASUMS256.txt | sha256sum --check --strict - )
         mkdir -p "${OUTPUT_DIR}/node-target"
         tar -xzf "${OUTPUT_DIR}/${ARCHIVE}" -C "${OUTPUT_DIR}/node-target"
         cp "${OUTPUT_DIR}/node-target/node-${NODE_RELEASE}-${NODE_ARCH}/bin/node" \
@@ -149,6 +174,9 @@ runs:
         ARCHIVE="node-${NODE_RELEASE}-${NODE_ARCH}.zip"
         curl -fsSL -o "${OUTPUT_DIR}/${ARCHIVE}" \
           "https://nodejs.org/dist/${NODE_RELEASE}/${ARCHIVE}"
+        # Verify SHA256 against the SHASUMS256.txt entry. Windows runners
+        # ship sha256sum via git-bash, used implicitly via the bash shell.
+        ( cd "${OUTPUT_DIR}" && grep -F "  ${ARCHIVE}" SHASUMS256.txt | sha256sum --check --strict - )
         mkdir -p "${OUTPUT_DIR}/node-target"
         unzip -q -d "${OUTPUT_DIR}/node-target" "${OUTPUT_DIR}/${ARCHIVE}"
         cp "${OUTPUT_DIR}/node-target/node-${NODE_RELEASE}-${NODE_ARCH}/node.exe" \
