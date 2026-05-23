@@ -8,7 +8,8 @@
  * caller can surface to the operator (typically a redirect to the
  * dashboard's "Re-authenticate" prompt).
  *
- * Where this is wired (family-mode-phase-1 Phase 3):
+ * Where this is wired (family-mode-phase-1 Phase 3 — confirmed by code,
+ * not by Phase-0 recon docs):
  *
  *   - The structural chokepoint's EXPLICIT branch
  *     (`src/security/decision-gate.ts::buildChokepointGate`). Every MCP
@@ -19,7 +20,9 @@
  *     operator-confirmation decision opens. On miss the chokepoint
  *     denies the call and emits `tier3_assertion_required` so the
  *     dashboard can prompt; on hit it falls through to the decision
- *     route (Phase 4 then enforces operator-only respond for EXPLICIT).
+ *     route. Phases 4.5 / 4.6 then enforce operator-only respond for
+ *     every tier (loopback OR notify-verified-remote) on a verified
+ *     identity, with mayRespond as the single authority.
  *
  * Out of scope for this BOM (still deferred to the
  * `v0_7-tier-3-explicit-consent` BOM):
@@ -27,11 +30,10 @@
  *   - The typed-friction-string ceremony. Passkey + typed-friction are
  *     complementary: passkey proves presence (this module + the
  *     chokepoint EXPLICIT branch); friction proves articulation of the
- *     specific target. Phase 4 of family-mode-phase-1 substitutes the
- *     operator-must-respond rule (`responder = 'user-direct'`) for the
- *     missing friction string at respond time; the typed-friction BOM
- *     will replace that substitute with the real ceremony when it
- *     lands.
+ *     specific target. The Phase 4.5 + 4.6 verified-identity respond
+ *     rule (mayRespond) is the BOM's interim substitute for the typed-
+ *     friction string at respond time — when the dedicated BOM lands,
+ *     it replaces this substitute with the real ceremony.
  */
 import type { IdentityStore, Tier3Assertion } from './identity-store.js';
 import { DEFAULT_TIER3_ASSERTION_TTL_MS } from './webauthn.js';

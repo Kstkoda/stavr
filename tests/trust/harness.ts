@@ -130,15 +130,15 @@ export async function waitForOpenDecision(broker: Broker, timeoutMs = 2000): Pro
 }
 
 export function approve(broker: Broker, correlationId: string, reason = 'approved'): void {
-  // Phase 4.5 — store-level operator-shape check rejects arbitrary
-  // responder strings. Use the legacy operator label 'user-direct' (in
-  // the documented operator-shaped set) instead of 'cowork-user'.
-  const r = broker.store.respondToDecision(correlationId, 'approve', reason, 'user-direct');
+  // Phase 4.6 — operator-shape backstop is aligned with mayRespond
+  // (loopback OR notify-verified-remote). Use the canonical stdio
+  // loopback shape for direct-store callers.
+  const r = broker.store.respondToDecision(correlationId, 'approve', reason, 'unstamped-loopback');
   if (!r.ok) throw new Error(`respondToDecision failed: ${(r as any).error}`);
 }
 
 export function reject(broker: Broker, correlationId: string, reason = 'rejected'): void {
-  const r = broker.store.respondToDecision(correlationId, 'reject', reason, 'user-direct');
+  const r = broker.store.respondToDecision(correlationId, 'reject', reason, 'unstamped-loopback');
   if (!r.ok) throw new Error(`respondToDecision failed: ${(r as any).error}`);
 }
 

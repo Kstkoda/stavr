@@ -179,9 +179,10 @@ describe('Spec 40 Phase 3 — dashboard HTTP', () => {
   it('GET /dashboard/decisions returns open decisions only by default', async () => {
     h.store.createDecision('d-1', 'approve?', [{ id: 'yes', label: 'Yes' }, { id: 'no', label: 'No' }], 300, 'no');
     h.store.createDecision('d-2', 'approve?', [{ id: 'yes', label: 'Yes' }, { id: 'no', label: 'No' }], 300, 'no');
-    // Phase 4.5 — store-level operator-shape check requires a recognised
-    // responder label; use 'user-direct' (legacy operator label, accepted).
-    h.store.respondToDecision('d-2', 'yes', 'because', 'user-direct');
+    // Phase 4.6 — store-level operator-shape check is now aligned with
+    // mayRespond (loopback OR notify-verified-remote). Use the canonical
+    // stdio loopback shape for direct-store callers in tests.
+    h.store.respondToDecision('d-2', 'yes', 'because', 'unstamped-loopback');
 
     const openR = await fetch(`${h.base}/dashboard/decisions`);
     const open = await openR.json();

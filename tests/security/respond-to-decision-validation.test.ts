@@ -1,29 +1,40 @@
 /**
- * Phase 4 of family-mode-phase-1 — respond-time validation in
- * `EventStore.respondToDecision`.
+ * Phase 4 / 4.5 / 4.6 of family-mode-phase-1 — respond-time validation.
  *
- * Two rules ride on the additive `source_agent` + `tier` columns:
+ * Two rules ride on the additive `source_agent` + `tier` columns (Phase 4)
+ * and on the verified-identity discipline (Phase 4.5):
  *
  *   1. Self-approval is refused. If a decision was opened with a known
  *      requester (source_agent IS NOT NULL), a response from that same
- *      agent is rejected with `responder_is_requester`. Legacy rows from
- *      before Phase 4 keep NULL source_agent and the validator falls
- *      open on them (cannot-determine ≠ self-approval).
+ *      VERIFIED caller is rejected with `responder_is_requester`. Legacy
+ *      rows from before Phase 4 keep NULL source_agent and the validator
+ *      falls open on them (cannot-determine ≠ self-approval). Phase 4.5
+ *      moved "verified caller" from the spoofable arg to the
+ *      logContext.actor_id stamped by the HTTP transport — so the rule
+ *      now holds against lying actors too.
  *
- *   2. EXPLICIT-tier decisions require the operator. A decision opened
- *      at tier=EXPLICIT can only be answered by `user-direct` (dashboard
- *      operator) or `switch-default` (timeout fallback). Any agent-
- *      relayed responder (`cowork-user`, `cowork-auto`, `cc`, `peer:*`)
- *      is refused with `explicit_requires_operator`.
+ *   2. Operator-only at every tier. A decision (any tier) can only be
+ *      answered by a verified operator identity: loopback shapes
+ *      (`unstamped-loopback`, `loopback:*`) or notify-verified-remote
+ *      (`notify:*`, produced only by the HMAC-verified reply-router).
+ *      Anything else (`cc`, `cowork-user`, `peer:*`, arbitrary strings)
+ *      is refused with `operator_required`. Phase 4 had this rule only
+ *      for EXPLICIT decisions (and called it `explicit_requires_operator`);
+ *      Phase 4.5 widened it to every tier because the responder arg
+ *      could no longer be trusted to identify the caller. Phase 4.6
+ *      folded the notify channel in as a first-class case via
+ *      `mayRespond` so the store-level check is now a thin alignment
+ *      backstop, not a parallel looser policy.
  *
  * The synthetic `switch-default` responder bypasses both checks — the
  * timeout-fallback path must never be blocked by validation, otherwise
  * decisions could hang indefinitely past their deadline.
  *
- * Refusals emit `decision_self_approval_rejected` (via the await/respond
- * MCP tool; covered separately at the tool layer). This file tests the
- * store-level validator directly so the rule is grounded in the lowest
- * authority — the persistence layer — and any future caller picks it up.
+ * Refusals emit `decision_self_approval_rejected` (via the tool layer
+ * and the dashboard endpoint and the notify reply-router). This file
+ * tests the store-level validator directly so the rule is grounded in
+ * the lowest authority — the persistence layer — and any future caller
+ * picks it up via the canonical `isOperatorAuthorized` predicate.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EventStore } from '../../src/persistence.js';
@@ -73,7 +84,7 @@ describe('respondToDecision validation (Phase 4)', () => {
         'reject',
         'cc',
       );
-      const r = store.respondToDecision('self-2', 'approve', 'ok', 'user-direct');
+      const r = store.respondToDecision('self-2', 'approve', 'ok', 'unstamped-loopback');
       expect(r.ok).toBe(true);
     });
 
@@ -108,7 +119,7 @@ describe('respondToDecision validation (Phase 4)', () => {
       // that by using a recognised operator-shaped responder and seeing
       // it succeed even though it equals 'cc' would have been self-approval
       // on a stamped row.
-      const r = store.respondToDecision('legacy-1', 'approve', 'legacy', 'user-direct');
+      const r = store.respondToDecision('legacy-1', 'approve', 'legacy', 'unstamped-loopback');
       expect(r.ok).toBe(true);
     });
   });
@@ -135,7 +146,7 @@ describe('respondToDecision validation (Phase 4)', () => {
       expect(after?.status).toBe('open');
     });
 
-    it('allows user-direct (legacy operator label) to answer an EXPLICIT decision', () => {
+    it('allows an unstamped-loopback caller (canonical stdio operator) to answer an EXPLICIT decision', () => {
       store.createDecision(
         'explicit-2',
         'EXPLICIT approve?',
@@ -145,7 +156,24 @@ describe('respondToDecision validation (Phase 4)', () => {
         'peer:laptop',
         'EXPLICIT',
       );
-      const r = store.respondToDecision('explicit-2', 'approve', 'operator says yes', 'user-direct');
+      const r = store.respondToDecision('explicit-2', 'approve', 'operator says yes', 'unstamped-loopback');
+      expect(r.ok).toBe(true);
+    });
+
+    it('allows a notify-verified-remote responder (Phase 4.6 — notify is first-class via mayRespond)', () => {
+      // Phase 4.5 had `notify:*` as a store-level carve-out only; Phase 4.6
+      // folded it into mayRespond so the store-level fence and the primary
+      // policy accept the same set.
+      store.createDecision(
+        'explicit-notify',
+        'EXPLICIT approve via notify?',
+        [{ id: 'approve', label: 'A' }, { id: 'reject', label: 'R' }],
+        60,
+        'reject',
+        'peer:laptop',
+        'EXPLICIT',
+      );
+      const r = store.respondToDecision('explicit-notify', 'approve', 'operator via telegram', 'notify:telegram');
       expect(r.ok).toBe(true);
     });
 
@@ -196,7 +224,7 @@ describe('respondToDecision validation (Phase 4)', () => {
         'peer:laptop',
         'CONFIRM',
       );
-      const r = store.respondToDecision('confirm-ok', 'approve', 'ok', 'user-direct');
+      const r = store.respondToDecision('confirm-ok', 'approve', 'ok', 'unstamped-loopback');
       expect(r.ok).toBe(true);
     });
   });

@@ -150,7 +150,7 @@ describe('chokepoint gate (Phase 2 — defining test)', () => {
             ev.correlation_id,
             APPROVE,
             'test approve',
-            'user-direct',
+            'unstamped-loopback',
           );
         }
       });
@@ -172,7 +172,7 @@ describe('chokepoint gate (Phase 2 — defining test)', () => {
             ev.correlation_id,
             REJECT,
             'test reject',
-            'user-direct',
+            'unstamped-loopback',
           );
         }
       });
@@ -251,7 +251,7 @@ describe('chokepoint gate (Phase 2 — defining test)', () => {
             ev.correlation_id,
             APPROVE,
             'test approve',
-            'user-direct',
+            'unstamped-loopback',
           );
         }
       });
@@ -290,7 +290,7 @@ describe('chokepoint gate (Phase 2 — defining test)', () => {
             ev.correlation_id,
             REJECT,
             'operator declined',
-            'user-direct',
+            'unstamped-loopback',
           );
         }
       });
@@ -425,7 +425,7 @@ describe('chokepoint test-bypass seam (Phase 2 hardening)', () => {
     const off = broker.onEvent((ev) => {
       if (ev.kind === 'decision_request' && ev.correlation_id) {
         sawDecisionRequest = true;
-        broker.store.respondToDecision(ev.correlation_id, REJECT, 'test', 'user-direct');
+        broker.store.respondToDecision(ev.correlation_id, REJECT, 'test', 'unstamped-loopback');
       }
     });
     try {
@@ -449,7 +449,7 @@ describe('chokepoint test-bypass seam (Phase 2 hardening)', () => {
       const off = broker.onEvent((ev) => {
         if (ev.kind === 'decision_request' && ev.correlation_id) {
           sawDecisionRequest = true;
-          broker.store.respondToDecision(ev.correlation_id, REJECT, 'test', 'user-direct');
+          broker.store.respondToDecision(ev.correlation_id, REJECT, 'test', 'unstamped-loopback');
         }
       });
       try {

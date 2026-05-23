@@ -334,17 +334,20 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   // tools. Idempotent across sessions — wrapServerForRegistry tags the
   // patched method and bails on a second call.
   //
-  // family-mode-phase-1 Phase 2 — the structural chokepoint. The gate
-  // here is the single point every MCP tool call passes through; what
-  // it consults is "the permission model." Layer order (top denies
-  // first):
+  // family-mode-phase-1 Phases 2 / 3 / 4 / 4.5 / 4.6 — the structural
+  // chokepoint. The gate here is the single point every MCP tool call
+  // passes through; what it consults is "the permission model." Layer
+  // order (top denies first):
   //   1. No-Go list                  — hard deny, identity-blind
   //   2. Layer 0 capability switch   — operator runtime kill switch
   //   3. Per-actor permission tier   — AUTO / CONFIRM / EXPLICIT / NO_GO
+  //   3a. EXPLICIT also requires a recent WebAuthn assertion (Phase 3)
+  //       — see decision-gate.ts::buildChokepointGate's EXPLICIT branch.
   //
-  // Phase 3 will layer a WebAuthn assertion on top of EXPLICIT inside
-  // `runChokepointDecision`. Phase 4 closes the self-approval hole in
-  // respond_to_decision. The chokepoint itself does not move.
+  // Phases 4 / 4.5 / 4.6 close the loop at respond time: every decision
+  // opened from here is stamped with `source_agent` (the actor below) +
+  // `tier`, and respondToDecision enforces no-self-approval + operator-
+  // only on a VERIFIED identity (see src/security/respond-policy.ts).
   //
   // Actor identity comes from the AsyncLocalStorage `logContext.actor_id`
   // (HTTP middleware stamps it per request — see transports.ts). Stdio

@@ -1,15 +1,20 @@
 /**
- * Decision-response authorization policy — family-mode-phase-1 Phase 4.5.
+ * Decision-response authorization policy — family-mode-phase-1 Phase 4.5
+ * (introduced) + Phase 4.6 (notify folded in as first-class).
  *
  * This module owns the answer to: "may THIS verified caller respond to
- * THAT decision?" — and it is the **single extension point** for that
- * question across the whole codebase. Every code path that decides
- * whether to record a response goes through `mayRespond`. Future
- * widening (WebAuthn-verified remote operator, delegated approvers,
- * per-tier responder sets, role-based answer rules) must be a change to
- * this function only — call sites and store-level defenses do not move.
+ * THAT decision?" — and it is THE single authority for that question
+ * across the whole codebase. Every code path that decides whether to
+ * record a response goes through `mayRespond`. The store-level check in
+ * `respondToDecision` is a thin consistency backstop (matching this
+ * function's accepted set), not a parallel looser policy. Future
+ * widening (WebAuthn-verified remote operator on a paired peer,
+ * delegated approvers, per-tier responder sets, role-based answer
+ * rules) must be a change to this function only — call sites and the
+ * store-level fence do not move.
  *
- * Why this exists (and what Phase 4 missed):
+ * Why this exists (and what Phase 4 missed, what Phase 4.5 closed, what
+ * Phase 4.6 cleaned):
  *
  *   Phase 4 closed the self-approval hole by adding `source_agent` and
  *   `tier` columns to the decisions table and refusing a response from
@@ -17,55 +22,85 @@
  *   `responder` STRING ARGUMENT of the respond_to_decision MCP tool,
  *   which is self-asserted by the caller. A paired peer could evade the
  *   check by passing a different string, and could pass
- *   `responder: 'user-direct'` to satisfy the EXPLICIT operator-only
- *   check. The closure was real for honest actors and decorative for
- *   lying ones — exactly the failure mode the HARD RULE exists to
- *   prevent. Phase 4.5 closes it structurally by deriving the
- *   responder from VERIFIED identity at every call site.
+ *   `responder: 'user-direct'` to satisfy the operator-only check. The
+ *   closure was real for honest actors and decorative for lying ones —
+ *   exactly the failure mode the HARD RULE exists to prevent.
  *
- * Today's policy (loopback-only, every tier):
+ *   Phase 4.5 closed the spoof structurally by deriving the responder
+ *   from VERIFIED identity at every call site (logContext.actor_id,
+ *   stamped by the HTTP transport from req.device or the kernel loopback
+ *   signal). Phase 4.5 also left an intentional looseness at the store
+ *   level: `notify:*` was a documented carve-out to keep the notify
+ *   reply-router channel working.
  *
- *   - The verified caller must be the operator. "Operator" today means a
- *     LOOPBACK caller — the daemon's own host. Loopback is sovereign per
- *     the existing trust model and the actor_id values the HTTP
- *     transport stamps (`loopback:<correlation_id>` for verified /mcp
- *     loopback, `unstamped-loopback` for stdio MCP sessions where no
- *     HTTP middleware ran). A paired peer is stamped `peer:<name>` by
- *     the bearer-auth middleware (transports.ts) and is therefore
- *     structurally unable to satisfy this check — the spoof is killed.
- *   - The verified caller must not equal the decision's `source_agent`
- *     (no self-approval). This is the Phase 4 rule, now operating on a
- *     trustworthy actor identity.
- *   - The synthetic `switch-default` responder (timeout fallback) is an
- *     internal-only caller and bypasses this function — see the call
- *     path in `runChokepointDecision` (src/security/decision-gate.ts)
- *     and the equivalent fallback in `gatedAction`
- *     (src/tools/gated-action.ts). It never collides with source_agent
- *     and must remain able to close any open decision so the gate
- *     cannot hang past its deadline.
+ *   Phase 4.6 folds that carve-out IN as a first-class case: `notify:*`
+ *   is a verified-remote-operator channel because the notify subsystem
+ *   has already verified the reply via HMAC sigil before it ever calls
+ *   the store. The reply-router now calls `mayRespond` BEFORE the store
+ *   call, the same way the tool layer does, and the store-level check
+ *   becomes a thin alignment fence: same accepted set as this function.
  *
- * Out of scope (deferred to the operator):
+ * Today's policy (operator OR verified-remote, every tier):
  *
- *   - Verified-remote operator paths (notify-via-Telegram/email, future
- *     federated peers). The notify subsystem's reply-router has its own
- *     HMAC sigil verification today and writes responder=`notify:*`
- *     directly to the store; this function does NOT cover that path.
- *     The store-level defense in `respondToDecision` accepts `notify:*`
- *     as a documented legacy-verified-remote carve-out so the existing
- *     channel keeps working; widening this function to formally accept
- *     it (or replacing the carve-out) is a design call for the operator
- *     per the Phase 4.5 stop condition.
+ *   - Loopback caller (`unstamped-loopback`, `loopback:*`) — the operator
+ *     on the daemon's own host. The HTTP transport stamps `loopback:<corr>`
+ *     for verified /mcp loopback; stdio MCP sessions fall through to
+ *     `unstamped-loopback`. Loopback is the kernel-enforced ADR-006
+ *     boundary; a peer cannot fake it.
+ *
+ *   - Notify-verified-remote (`notify:*`) — the operator replying via a
+ *     channel the notify subsystem has cryptographically verified (HMAC
+ *     sigil per the reply-router). Only the reply-router produces this
+ *     identity; the tool layer cannot stamp it (HTTP middleware only
+ *     emits `loopback:*` or `peer:*`). The HMAC verification stays in
+ *     the reply-router; only the authorization decision lives here.
+ *
+ *   - Self-approval refused for any verified caller: if the caller's
+ *     identity equals the decision's `source_agent`, the response is
+ *     refused regardless of channel shape. Legacy decisions
+ *     (source_agent === undefined) fall open on this rule — they predate
+ *     Phase 4 and have no requester identity to compare against.
+ *
+ *   - `switch-default` (timeout fallback) is an internal-only synthetic
+ *     responder used by `runChokepointDecision` and `gatedAction`. It
+ *     never enters this function — the store-level shortcut handles it
+ *     directly so the timeout path cannot deadlock against the policy.
+ *
+ * A paired peer (`peer:<name>`) is structurally unable to satisfy any of
+ * these — that's the spoof Phase 4.5 killed. To formally widen to
+ * verified-remote peers (WebAuthn-verified federated operator, delegated
+ * approver registries, etc.), edit `mayRespond` here and nothing else.
  */
 import type { DecisionRecord } from '../persistence.js';
 
 /**
  * Verified caller is loopback iff actor_id matches the shape the HTTP
- * transport stamps for loopback callers, or the stdio default (`unstamped-
- * loopback`). Anything starting with `peer:` is a paired remote caller and
- * therefore not the operator.
+ * transport stamps for loopback callers, or the stdio default
+ * (`unstamped-loopback`). Anything starting with `peer:` is a paired
+ * remote caller and therefore not on this path.
  */
 export function isLoopbackActor(actor: string): boolean {
   return actor === 'unstamped-loopback' || actor.startsWith('loopback:');
+}
+
+/**
+ * Verified caller is the operator via a notify channel iff actor_id has
+ * the `notify:*` shape the reply-router stamps after HMAC sigil
+ * verification. The reply-router (`src/notify/reply-router.ts`) is the
+ * ONLY production caller that emits this identity; no HTTP middleware
+ * stamp produces it, so a peer cannot impersonate the shape.
+ */
+export function isNotifyVerifiedRemote(actor: string): boolean {
+  return actor.startsWith('notify:');
+}
+
+/**
+ * The full set of verified-operator identities mayRespond accepts today.
+ * The store-level fence in `respondToDecision` keeps an aligned predicate
+ * so it cannot accept a responder this function rejects.
+ */
+export function isOperatorAuthorized(actor: string): boolean {
+  return isLoopbackActor(actor) || isNotifyVerifiedRemote(actor);
 }
 
 export type RespondPolicyResult =
@@ -95,19 +130,20 @@ export function mayRespond(
     };
   }
 
-  // Operator-only at every tier. A paired peer (peer:*) is never the
-  // operator regardless of what they claim in the tool input. The
-  // structural answer is: only a loopback caller can approve.
-  if (!isLoopbackActor(verifiedCaller)) {
+  // Operator-shape: loopback caller OR notify-verified-remote. Any other
+  // identity (a paired `peer:*` actor, an unstamped HTTP request, an
+  // unknown string) is refused. Widening this set is the single-function
+  // extension point for verified-remote peers, delegated approvers, etc.
+  if (!isOperatorAuthorized(verifiedCaller)) {
     return {
       ok: false,
       error: 'operator_required',
       reason:
-        `verified caller "${verifiedCaller}" is not a loopback (operator) ` +
-        `caller; this BOM's policy is that only the operator may respond ` +
-        `to gated decisions. Widening this rule (verified-remote operator, ` +
-        `delegated approvers, per-tier responder sets) is a single-function ` +
-        `change in src/security/respond-policy.ts`,
+        `verified caller "${verifiedCaller}" is not authorized to respond ` +
+        `to gated decisions. Accepted shapes today: loopback ` +
+        `(unstamped-loopback, loopback:*) or notify-verified-remote ` +
+        `(notify:*). Widening (e.g., WebAuthn-verified peer) is a ` +
+        `single-function change in src/security/respond-policy.ts`,
     };
   }
 

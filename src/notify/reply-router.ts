@@ -4,10 +4,20 @@
 // action a dashboard click would perform. The audit trail is identical to the
 // dashboard path: respond_to_decision publishes `decision_response`, trust-scope
 // extensions publish `trust_scope_extended`. No bypass, no special-casing.
+//
+// family-mode-phase-1 Phase 4.6 — this module's `routeDecision` now routes
+// through `mayRespond` (src/security/respond-policy.ts) before calling
+// `respondToDecision`, exactly like the MCP tool layer and the dashboard
+// endpoint do. The HMAC sigil verification stays HERE (the inbound
+// pipeline that gates which replies even reach the router); only the
+// AUTHORIZATION decision moves into mayRespond — so notify:* is now a
+// first-class verified-remote identity, not a parallel store-level
+// carve-out.
 
 import type { Broker } from '../broker.js';
 import type { TrustStore } from '../trust/store.js';
 import { getLogger } from '../log.js';
+import { mayRespond } from '../security/respond-policy.js';
 import type { NotificationAction } from './types.js';
 
 export type ReplySource = 'webhook' | 'telegram' | 'cli';
@@ -151,11 +161,52 @@ export class ReplyRouter {
     const decisionId = action.target_id;
     if (!decisionId) return { ok: false, error: 'no_target' };
     const optionId = opts.actionId.slice('decision:'.length);
+    const verifiedCaller = `notify:${opts.source}`;
+
+    // Phase 4.6 — mayRespond is the single authority. HMAC verification
+    // happens upstream (the inbound pipeline only forwards a verified
+    // reply here); this gate enforces the self-approval invariant against
+    // a notify channel that somehow tried to answer a decision it had
+    // itself opened (theoretical today, defensive in depth).
+    const existing = this.broker.store.getDecision(decisionId);
+    if (existing) {
+      const policy = mayRespond(existing, verifiedCaller);
+      if (!policy.ok) {
+        await this.broker.publish({
+          kind: 'decision_self_approval_rejected',
+          at: new Date().toISOString(),
+          correlation_id: decisionId,
+          source_agent: verifiedCaller,
+          payload: {
+            error: policy.error,
+            attempted_responder: verifiedCaller,
+            verified_caller: verifiedCaller,
+            decision_source_agent: existing.source_agent,
+            decision_tier: existing.tier,
+            chosen_option_id: optionId,
+            reason: policy.reason,
+          },
+        });
+        getLogger().warn('reply-router: mayRespond refused', {
+          decision_id: decisionId,
+          chosen: optionId,
+          error: policy.error,
+        });
+        return {
+          ok: true,
+          kind: 'decision',
+          outcome: 'invalid',
+          decisionId,
+          chosenOptionId: optionId,
+        };
+      }
+    }
+
     const result = this.broker.store.respondToDecision(
       decisionId,
       optionId,
       `reply via ${opts.source}`,
-      `notify:${opts.source}`,
+      verifiedCaller,
     );
     if (!result.ok) {
       const outcome = result.error === 'already_responded' ? 'late' : 'invalid';
@@ -166,11 +217,11 @@ export class ReplyRouter {
           kind: 'decision_late_response',
           at: new Date().toISOString(),
           correlation_id: decisionId,
-          source_agent: `notify:${opts.source}`,
+          source_agent: verifiedCaller,
           payload: {
             chosen_option_id: optionId,
             reason: `reply via ${opts.source}`,
-            responder: `notify:${opts.source}`,
+            responder: verifiedCaller,
           },
         });
       }

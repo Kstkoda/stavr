@@ -184,7 +184,7 @@ describe('Spec 48 Layer 3 — integration with gatedAction', () => {
     }
     expect(cid).toBeDefined();
     // Reject — no-go decision must block execution and emit no_go_blocked.
-    broker.store.respondToDecision(cid!, 'reject', 'no', 'user-direct');
+    broker.store.respondToDecision(cid!, 'reject', 'no', 'unstamped-loopback');
     const result = await actionP;
     expect(performed).toBe(false);
     expect(result.ok).toBe(false);
@@ -224,7 +224,7 @@ describe('Spec 48 Layer 3 — integration with gatedAction', () => {
       if (!cid) await new Promise((r) => setTimeout(r, 5));
     }
     expect(cid).toBeDefined();
-    broker.store.respondToDecision(cid!, 'reject', 'never', 'user-direct');
+    broker.store.respondToDecision(cid!, 'reject', 'never', 'unstamped-loopback');
     const result = await actionP;
     expect(performed).toBe(false);
     expect(result.ok).toBe(false);
@@ -247,7 +247,7 @@ describe('Spec 48 Layer 3 — integration with gatedAction', () => {
       cid = open?.correlation_id;
       if (!cid) await new Promise((r) => setTimeout(r, 5));
     }
-    broker.store.respondToDecision(cid!, 'approve', 'one-time ok', 'user-direct');
+    broker.store.respondToDecision(cid!, 'approve', 'one-time ok', 'unstamped-loopback');
     const result = await actionP;
     expect(result.ok).toBe(true);
 

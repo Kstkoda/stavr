@@ -1,5 +1,5 @@
 /**
- * Chokepoint decision gate (Phase 2 of family-mode-phase-1).
+ * Chokepoint decision gate — family-mode-phase-1 Phases 2 / 3 / 4.5 / 4.6.
  *
  * Routes a CONFIRM- or EXPLICIT-tier tool call through an `await_decision`
  * cycle on the broker. Used by the structural chokepoint in `server.ts` —
@@ -9,9 +9,13 @@
  * is the lean path the chokepoint uses for every tool the per-actor tier
  * matrix flags as CONFIRM / EXPLICIT.
  *
- * Phase 3 will layer a WebAuthn assertion check on top for EXPLICIT — that
- * check belongs HERE (or in a small wrapper around this), not at the call
- * site.
+ * Phase 3 layered a WebAuthn assertion check on top for EXPLICIT — see
+ * `buildChokepointGate`'s EXPLICIT branch in this same file, which calls
+ * `requireRecentTier3Assertion` BEFORE opening the operator-confirmation
+ * decision. Phase 4 stamped `source_agent` + `tier` on every decision
+ * opened from here (so respondToDecision can enforce its policy on a
+ * trustworthy provenance); Phase 4.5 + 4.6 moved respond-time
+ * authorization to verified identity via `respond-policy.ts::mayRespond`.
  *
  * Test seam (defense-in-depth, post-Phase-2 hardening): the bypass requires
  * BOTH conditions to be true to fire:
