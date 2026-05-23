@@ -270,15 +270,19 @@ describe('Phase 5 — loopback fence integration (booted HTTP server)', () => {
   });
 });
 
-describe('Phase 5.5 — fresh peer is default-DENY (was: conservative defaults)', () => {
-  // Operator review of Phase 5 found that defaultTierFor()/EXPLICIT_TIER
-  // in categories.ts is actor-blind — a peer with no matrix row was
-  // inheriting AUTO on get_events / emit_event / subscribe_to_events /
-  // worker_list_* / steward_ask, which would let a paired family device
-  // read the operator's audit log via the MCP tool path (defeating the
-  // Phase 5 loopback fence on /events/sse). Phase 5.5 closes that:
-  // an unconfigured peer resolves to NO_GO, not defaultTierFor().
-  // Loopback / operator-shape actors keep defaultTierFor() unchanged.
+describe('Phase 5.5 / 5.6 — fresh peer is default-DENY (allowlist for operator-shape)', () => {
+  // Phase 5 review found defaultTierFor() in categories.ts was actor-
+  // blind — a peer with no matrix row was inheriting AUTO on
+  // get_events / emit_event / subscribe_to_events / worker_list_* /
+  // steward_ask, which would let a paired family device read the
+  // operator's audit log via the MCP tool path (defeating the Phase 5
+  // loopback fence on /events/sse). Phase 5.5 closed that for
+  // peer:* — but the fall-through was still a denylist (peer:* → NO_GO,
+  // else → defaultTierFor()), so the transport's 'unknown' actor stamp
+  // and any future unrecognized shape silently inherited operator
+  // defaults. Phase 5.6 flipped to an explicit allowlist: operator-
+  // shape (loopback shapes + KNOWN_ACTORS) gets defaultTierFor; every-
+  // thing else (peer:*, 'unknown', arbitrary strings) gets default-deny.
 
   let store: EventStore;
   let perms: ActorPermissionStore;
@@ -325,7 +329,7 @@ describe('Phase 5.5 — fresh peer is default-DENY (was: conservative defaults)'
     for (const tool of [...sensitive, ...reads]) {
       const r = perms.resolve('peer:fresh-laptop', tool);
       expect(r.tier, `peer:fresh-laptop/${tool}`).toBe('NO_GO');
-      expect(r.source, `peer:fresh-laptop/${tool}`).toBe('default-deny-peer');
+      expect(r.source, `peer:fresh-laptop/${tool}`).toBe('default-deny');
     }
   });
 
@@ -367,7 +371,7 @@ describe('Phase 5.5 — fresh peer is default-DENY (was: conservative defaults)'
     // Tools the operator did NOT grant remain default-deny.
     expect(perms.resolve('peer:fresh-laptop', 'github_merge_pr')).toEqual({
       tier: 'NO_GO',
-      source: 'default-deny-peer',
+      source: 'default-deny',
     });
   });
 
@@ -379,7 +383,7 @@ describe('Phase 5.5 — fresh peer is default-DENY (was: conservative defaults)'
     // NOT to defaultTierFor's CONFIRM.
     const r = perms.resolve('peer:fresh-laptop', 'worker_spawn');
     expect(r.tier).toBe('NO_GO');
-    expect(r.source).toBe('default-deny-peer');
+    expect(r.source).toBe('default-deny');
   });
 
   it('the peer:* prefix is the trigger — any peer id with that shape is default-deny', () => {
@@ -387,9 +391,13 @@ describe('Phase 5.5 — fresh peer is default-DENY (was: conservative defaults)'
     expect(perms.resolve('peer:laptop', 'emit_event').tier).toBe('NO_GO');
     expect(perms.resolve('peer:kenneth-laptop', 'emit_event').tier).toBe('NO_GO');
     expect(perms.resolve('peer:nas.local', 'emit_event').tier).toBe('NO_GO');
-    // Things that LOOK like peer but aren't the exact prefix are not
-    // peer actors and resolve via defaultTierFor().
-    expect(perms.resolve('peerless', 'emit_event').tier).toBe('AUTO');
-    expect(perms.resolve('not-peer:laptop', 'emit_event').tier).toBe('AUTO');
+    // Phase 5.6 — the allowlist flip: things that LOOK like peer but
+    // aren't on the operator-shape allowlist are ALSO default-deny now.
+    // The catch-all is the point: anything not explicitly recognized as
+    // operator-shape resolves to NO_GO.
+    expect(perms.resolve('peerless', 'emit_event').tier).toBe('NO_GO');
+    expect(perms.resolve('peerless', 'emit_event').source).toBe('default-deny');
+    expect(perms.resolve('not-peer:laptop', 'emit_event').tier).toBe('NO_GO');
+    expect(perms.resolve('not-peer:laptop', 'emit_event').source).toBe('default-deny');
   });
 });

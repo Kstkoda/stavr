@@ -40,12 +40,13 @@ export interface PermissionsMatrixCell {
   /** Effective tier — what the chokepoint will actually enforce. */
   tier: Tier;
   /**
-   * Where the effective tier came from. `default-deny-peer` is the Phase
-   * 5.5 fall-through for paired peers with no matrix row (resolves to
-   * NO_GO at runtime); see ActorPermissionStore.resolve for the full
-   * shape table.
+   * Where the effective tier came from. `default-deny` is the Phase 5.6
+   * fall-through for any actor that isn't operator-shape (paired peers,
+   * unknown actors, future unrecognized shapes) with no matrix row;
+   * resolves to NO_GO at runtime. See `ActorPermissionStore.resolve` for
+   * the full shape table.
    */
-  source: 'default' | 'matrix' | 'default-deny-peer';
+  source: 'default' | 'matrix' | 'default-deny';
 }
 
 export interface PermissionsData {
