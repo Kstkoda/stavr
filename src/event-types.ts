@@ -13,6 +13,13 @@ export const EventKind = z.enum([
   'decision_request',
   'decision_response',
   'decision_late_response',
+  // family-mode-phase-1 Phase 4 — emitted by respond_to_decision when a
+  // response is refused for policy (responder === source_agent, or
+  // EXPLICIT decision answered by a non-operator actor). The attempt is
+  // not destructive — the decision stays open — but it is loud in the
+  // audit log because an agent trying to self-approve a gated action is
+  // exactly the signal Phase 4 exists to surface.
+  'decision_self_approval_rejected',
   'error',
   'checkpoint',
   'session_ended',

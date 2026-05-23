@@ -70,6 +70,24 @@ export interface DecisionRecord {
   responded_by?: string;
   chosen_option_id?: string;
   response_reason?: string;
+  /**
+   * family-mode-phase-1 Phase 4 — who requested the decision (`cc`,
+   * `cowork-claude`, `peer:<name>`, `loopback:<corr>`, etc). Stamped at
+   * createDecision time by every code path that opens a decision (the
+   * chokepoint, gatedAction, and the await_decision MCP tool). Used by
+   * respondToDecision to refuse self-approval. NULL on legacy rows
+   * created before this column existed; respond-time validation treats
+   * NULL as "cannot determine requester" and does not hard-fail.
+   */
+  source_agent?: string;
+  /**
+   * family-mode-phase-1 Phase 4 — tier the decision was opened at, when
+   * known. Only set for decisions opened by the chokepoint gate (Phase 2);
+   * gatedAction and ad-hoc await_decision calls leave this NULL. Used by
+   * respondToDecision to enforce "EXPLICIT decisions require operator as
+   * responder."
+   */
+  tier?: 'CONFIRM' | 'EXPLICIT';
 }
 
 export interface DecisionResponseResult {
@@ -191,6 +209,24 @@ export class EventStore {
       this.db.exec(`ALTER TABLE workers ADD COLUMN lifecycle_state TEXT`);
     }
 
+    // family-mode-phase-1 Phase 4 — additive source_agent + tier columns on
+    // decisions. Same pattern as lifecycle_state above: idempotent pragma
+    // probe, then ALTER for existing on-disk DBs; fresh DBs get the columns
+    // via the CREATE TABLE declaration below. Legacy rows keep NULL on
+    // both — respondToDecision treats NULL source_agent as cannot-determine
+    // and does not enforce the self-approval rule against it.
+    const decisionsCols = this.db.prepare(`PRAGMA table_info(decisions)`).all() as Array<{ name: string }>;
+    if (decisionsCols.length > 0) {
+      const hasSourceAgent = decisionsCols.some((r) => r.name === 'source_agent');
+      if (!hasSourceAgent) {
+        this.db.exec(`ALTER TABLE decisions ADD COLUMN source_agent TEXT`);
+      }
+      const hasTier = decisionsCols.some((r) => r.name === 'tier');
+      if (!hasTier) {
+        this.db.exec(`ALTER TABLE decisions ADD COLUMN tier TEXT`);
+      }
+    }
+
     this.db.exec(`
 
       CREATE TABLE IF NOT EXISTS decisions (
@@ -205,7 +241,13 @@ export class EventStore {
         responded_at TEXT,
         responded_by TEXT,
         chosen_option_id TEXT,
-        response_reason TEXT
+        response_reason TEXT,
+        -- family-mode-phase-1 Phase 4 — see DecisionRecord (persistence.ts)
+        -- for semantics. Both columns are additive nullables; existing rows
+        -- on disk keep NULL and the respond-time validator falls open on
+        -- those (cannot-determine ≠ self-approval).
+        source_agent TEXT,
+        tier TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_decisions_status ON decisions(status);
 
@@ -900,13 +942,15 @@ export class EventStore {
     options: DecisionOption[],
     timeoutSec: number,
     defaultOptionId?: string,
+    sourceAgent?: string,
+    tier?: 'CONFIRM' | 'EXPLICIT',
   ): void {
     const now = new Date();
     const expires = new Date(now.getTime() + timeoutSec * 1000);
     this.db
       .prepare(
-        `INSERT INTO decisions (correlation_id, question, options_json, default_option_id, timeout_sec, status, requested_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, 'open', ?, ?)`,
+        `INSERT INTO decisions (correlation_id, question, options_json, default_option_id, timeout_sec, status, requested_at, expires_at, source_agent, tier)
+         VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
       )
       .run(
         correlationId,
@@ -916,6 +960,8 @@ export class EventStore {
         timeoutSec,
         now.toISOString(),
         expires.toISOString(),
+        sourceAgent ?? null,
+        tier ?? null,
       );
   }
 
@@ -936,9 +982,13 @@ export class EventStore {
           responded_by: string | null;
           chosen_option_id: string | null;
           response_reason: string | null;
+          source_agent: string | null;
+          tier: string | null;
         }
       | undefined;
     if (!row) return undefined;
+    const tier =
+      row.tier === 'CONFIRM' || row.tier === 'EXPLICIT' ? row.tier : undefined;
     return {
       correlation_id: row.correlation_id,
       question: row.question,
@@ -952,6 +1002,8 @@ export class EventStore {
       responded_by: row.responded_by ?? undefined,
       chosen_option_id: row.chosen_option_id ?? undefined,
       response_reason: row.response_reason ?? undefined,
+      source_agent: row.source_agent ?? undefined,
+      tier,
     };
   }
 
@@ -985,7 +1037,18 @@ export class EventStore {
     chosenOptionId: string,
     reason: string,
     responder: string,
-  ): { ok: true; result: DecisionResponseResult } | { ok: false; error: 'not_found' | 'already_responded' | 'expired' | 'invalid_option' } {
+  ):
+    | { ok: true; result: DecisionResponseResult }
+    | {
+        ok: false;
+        error:
+          | 'not_found'
+          | 'already_responded'
+          | 'expired'
+          | 'invalid_option'
+          | 'responder_is_requester'
+          | 'explicit_requires_operator';
+      } {
     const existing = this.getDecision(correlationId);
     if (!existing) return { ok: false, error: 'not_found' };
     if (existing.status === 'responded') return { ok: false, error: 'already_responded' };
@@ -993,6 +1056,37 @@ export class EventStore {
 
     const validIds = new Set(existing.options.map((o) => o.id));
     if (!validIds.has(chosenOptionId)) return { ok: false, error: 'invalid_option' };
+
+    // family-mode-phase-1 Phase 4 — respond-time validation.
+    //
+    // The synthetic `switch-default` responder is the timeout-fallback
+    // path and bypasses both checks below; it is never an actor, never
+    // collides with source_agent, and must remain able to close any
+    // open decision so the gate cannot hang past its deadline.
+    //
+    // Otherwise:
+    //  - Self-approval: if the original requester is known (source_agent
+    //    IS NOT NULL on the decision row), a response from that same
+    //    agent is rejected. Legacy decisions predate the column → NULL →
+    //    "cannot determine requester" → fall open. Enforcement applies
+    //    only to decisions opened after Phase 4 — those all stamp it.
+    //  - EXPLICIT operator-only: a decision opened at tier EXPLICIT can
+    //    only be answered by `user-direct` (operator from the dashboard
+    //    session) or `switch-default`. Agent-relayed responders such as
+    //    `cowork-user`, `cowork-auto`, `cc`, `peer:*` are refused. Per
+    //    Phase 0 §7 Q3: declared identity is the line for this BOM, but
+    //    EXPLICIT is verified-only at respond time — Phase 3 already
+    //    requires a recent WebAuthn assertion at gate time, and Phase 4
+    //    keeps the loop closed by requiring the operator at respond time
+    //    too.
+    if (responder !== 'switch-default') {
+      if (existing.source_agent && responder === existing.source_agent) {
+        return { ok: false, error: 'responder_is_requester' };
+      }
+      if (existing.tier === 'EXPLICIT' && responder !== 'user-direct') {
+        return { ok: false, error: 'explicit_requires_operator' };
+      }
+    }
 
     const responded_at = new Date().toISOString();
     this.db

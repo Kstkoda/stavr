@@ -117,7 +117,15 @@ export async function runChokepointDecision(
     { id: REJECT, label: 'Reject' },
   ];
 
-  broker.store.createDecision(correlationId, question, options, timeoutSec, REJECT);
+  broker.store.createDecision(
+    correlationId,
+    question,
+    options,
+    timeoutSec,
+    REJECT,
+    opts.actor,
+    opts.tier,
+  );
 
   await broker.publish({
     kind: 'decision_request',

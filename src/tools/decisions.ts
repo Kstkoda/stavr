@@ -44,6 +44,7 @@ function registerAwaitDecision(server: McpServer, broker: Broker): void {
         args.options,
         args.timeout_sec,
         args.default_option_id,
+        args.source_agent,
       );
 
       await broker.publish({
@@ -161,6 +162,29 @@ function registerRespondToDecision(server: McpServer, broker: Broker): void {
               reason: args.reason,
               responder: args.responder,
               fallback_was: existing.chosen_option_id,
+            },
+          });
+        }
+        // family-mode-phase-1 Phase 4 — surface the self-approval and
+        // operator-only refusals to the audit trail. These are not
+        // operational errors, they are policy denies, and the auditor
+        // wants them visible (a failed self-approval attempt is exactly
+        // the signal we built this for).
+        if (
+          result.error === 'responder_is_requester' ||
+          result.error === 'explicit_requires_operator'
+        ) {
+          await broker.publish({
+            kind: 'decision_self_approval_rejected',
+            at: new Date().toISOString(),
+            correlation_id: args.correlation_id,
+            source_agent: args.responder,
+            payload: {
+              error: result.error,
+              attempted_responder: args.responder,
+              decision_source_agent: existing.source_agent,
+              decision_tier: existing.tier,
+              chosen_option_id: args.chosen_option_id,
             },
           });
         }
