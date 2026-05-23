@@ -42,6 +42,9 @@ import { EmailChannel } from './notify/channels/email.js';
 import { TelegramChannel } from './notify/channels/telegram.js';
 import { wireNotifications } from './notify/wiring.js';
 import { DigestScheduler } from './notify/digest.js';
+import { TelegramPoller } from './notify/telegram-poller.js';
+import { ReplyRouter } from './notify/reply-router.js';
+import { RateLimiter } from './notify/rate-limit.js';
 import { getLogger } from './log.js';
 
 export interface SwitchServerHandle {
@@ -66,6 +69,7 @@ const hostCeilingContextByBroker = new WeakMap<
 >();
 const notifiersByBroker = new WeakMap<Broker, Notifier>();
 const digestSchedulersByBroker = new WeakMap<Broker, DigestScheduler>();
+const telegramPollersByBroker = new WeakMap<Broker, TelegramPoller>();
 const toolRegistriesByBroker = new WeakMap<Broker, ToolRegistry>();
 
 /**
@@ -298,10 +302,38 @@ export function getOrCreateNotifier(broker: Broker): Notifier | undefined {
     sched.start();
     digestSchedulersByBroker.set(broker, sched);
   }
+  // v0.6.X — Telegram inbound poller. Without this, the inline Approve/Reject
+  // buttons on outbound Telegram alerts are one-way: taps land at Telegram's
+  // getUpdates queue with nothing draining them. When the bot token is set we
+  // construct a ReplyRouter (sharing trustStore with the dashboard path so
+  // grant_extension replies hit the same authority surface) and start the
+  // poller. Skipped in test env unless STAVR_NOTIFY_FORCE_CHANNELS=1, matching
+  // the channel-registration guard above.
+  if (!isTestEnv && process.env.STAVR_NOTIFY_TELEGRAM_BOT_TOKEN) {
+    const router = new ReplyRouter(broker, getOrCreateTrustStore(broker));
+    const directiveRateLimiter = new RateLimiter({ max: 30, windowMs: 60_000 });
+    const poller = new TelegramPoller({
+      botToken: process.env.STAVR_NOTIFY_TELEGRAM_BOT_TOKEN,
+      notifier,
+      router,
+      secret,
+      db: broker.store.rawDb,
+      broker,
+      authorisedChatId: process.env.STAVR_NOTIFY_TELEGRAM_CHAT_ID,
+      directiveRateLimiter,
+    });
+    poller.start();
+    telegramPollersByBroker.set(broker, poller);
+  }
   getLogger().info('notification fabric initialized', {
     channels: notifier.getChannelStatus().map((c) => ({ id: c.id, configured: c.configured })),
+    telegram_poller: telegramPollersByBroker.has(broker),
   });
   return notifier;
+}
+
+export function getTelegramPoller(broker: Broker): TelegramPoller | undefined {
+  return telegramPollersByBroker.get(broker);
 }
 
 export function getNotifier(broker: Broker): Notifier | undefined {

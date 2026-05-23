@@ -14,6 +14,7 @@ import { loadMasterKey } from './credentials/vault.js';
 import { CredentialStore } from './credentials/store.js';
 import {
   getOrchestrator,
+  getTelegramPoller,
   setCredentialStore,
   setHostCeilingContext,
 } from './server.js';
@@ -669,6 +670,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     if (v02) {
       try { v02.stop(); } catch { /* best effort */ }
     }
+    try { getTelegramPoller(broker)?.stop(); } catch { /* best effort */ }
     await transports.shutdown();
     if (otelHandle) {
       try { await otelHandle.shutdown(); } catch { /* best effort */ }
