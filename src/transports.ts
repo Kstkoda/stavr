@@ -460,6 +460,37 @@ export async function mountTransports(
       logContext.run({ ...existing, actor_id: actorId }, () => next());
     });
 
+    // family-mode-phase-1 Phase 5 — loopback-only fence for operator-data
+    // routes. /dashboard/* and /events/sse expose the operator's audit
+    // tail and internal state; a paired peer HAS a valid bearer token (so
+    // the auth gate above lets it through) but has no legitimate need to
+    // read the operator's audit log. The fence is structural: regardless
+    // of bearer state, non-loopback callers get 403 on these paths.
+    //
+    // The /dashboard/decisions/:id/respond endpoint is mayRespond-protected
+    // already (a peer caller gets operator_required), so it's structurally
+    // safe — but the READ endpoints under /dashboard/ are not, hence this
+    // dedicated fence. The /dashboard/.../respond write is reachable via
+    // mayRespond's verified-loopback check from a loopback caller; this
+    // fence keeps it consistent at the path level too.
+    //
+    // Remote operator dashboard access is a future extension (would land
+    // as additional mayRespond cases + a separate auth path), not Phase 5.
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if (isLoopbackOnlyPath(req.path) && !isLoopbackRequest(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'loopback_only',
+          reason:
+            `${req.path} exposes operator audit data and is restricted to ` +
+            `loopback callers; remote dashboard access is not a Phase 5 ` +
+            `surface`,
+        });
+        return;
+      }
+      next();
+    });
+
     app.get('/status', (_req, res) => {
       res.json({
         ok: true,
@@ -1139,6 +1170,22 @@ export async function mountTransports(
     sseSessionCount: () => sseSessions.size,
     pairingRegistry,
   };
+}
+
+/**
+ * family-mode-phase-1 Phase 5 — paths that expose operator audit data
+ * and must refuse non-loopback callers regardless of bearer state. The
+ * /dashboard/* prefix covers every dashboard read endpoint + the
+ * dashboard API (memory / perf / storage diagnostics + history feeds);
+ * /events/sse is the raw event-tail stream consumed by `stavr tail` and
+ * the dashboard's live updates. Exported so the integration test in
+ * tests/federation/loopback-fence.test.ts can verify the predicate
+ * without booting a server.
+ */
+export function isLoopbackOnlyPath(path: string): boolean {
+  return path === '/dashboard' ||
+    path.startsWith('/dashboard/') ||
+    path === '/events/sse';
 }
 
 /**
