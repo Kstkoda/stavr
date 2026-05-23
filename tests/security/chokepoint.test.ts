@@ -227,3 +227,113 @@ describe('chokepoint gate (Phase 2 — defining test)', () => {
     });
   });
 });
+
+describe('chokepoint test-bypass seam (Phase 2 hardening)', () => {
+  // These tests deliberately do NOT delete the auto-approve env var; the
+  // global setup leaves it as '1'. They toggle the test-run signal to
+  // prove the bypass is two-key: env var alone does not enable it.
+  let store: EventStore;
+  let broker: Broker;
+  let capability: CapabilityOverrideStore;
+  let actorPermissions: ActorPermissionStore;
+  let gate: ReturnType<typeof buildChokepointGate>;
+  let prevVitest: string | undefined;
+  let prevNodeEnv: string | undefined;
+
+  beforeEach(() => {
+    store = new EventStore();
+    store.init(':memory:');
+    broker = new Broker(store);
+    capability = new CapabilityOverrideStore(store.rawDb);
+    actorPermissions = new ActorPermissionStore(store.rawDb);
+    gate = buildChokepointGate(broker, { capability, actorPermissions });
+    prevVitest = process.env.VITEST;
+    prevNodeEnv = process.env.NODE_ENV;
+  });
+
+  afterEach(() => {
+    store.close();
+    if (prevVitest === undefined) delete process.env.VITEST;
+    else process.env.VITEST = prevVitest;
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+  });
+
+  it('emits a decision_chokepoint_test_bypass event each time the bypass fires', async () => {
+    expect(process.env.STAVR_CHOKEPOINT_TEST_AUTO_APPROVE).toBe('1');
+    // Vitest sets VITEST=true automatically; verify the bypass is active.
+    actorPermissions.set('peer:bypass', 'worker_spawn', 'CONFIRM', 'operator');
+    const events: Array<{ kind: string; source_agent?: string; payload?: unknown }> = [];
+    const off = broker.onEvent((ev) => events.push(ev));
+    try {
+      const result = await logContext.run({ actor_id: 'peer:bypass' }, () =>
+        gate.check('worker_spawn', { name: 'w1' }),
+      );
+      expect(result.allowed).toBe(true);
+    } finally {
+      off();
+    }
+    const bypass = events.find((e) => e.kind === 'decision_chokepoint_test_bypass');
+    expect(bypass).toBeDefined();
+    expect(bypass?.source_agent).toBe('peer:bypass');
+    expect((bypass?.payload as { tool: string }).tool).toBe('worker_spawn');
+    expect((bypass?.payload as { tier: string }).tier).toBe('CONFIRM');
+  });
+
+  it('does NOT bypass when env var is set but VITEST/NODE_ENV are unset (real decision opens)', async () => {
+    // Strip the test-run signal — env var alone must not be enough.
+    delete process.env.VITEST;
+    delete process.env.NODE_ENV;
+    expect(process.env.STAVR_CHOKEPOINT_TEST_AUTO_APPROVE).toBe('1');
+
+    actorPermissions.set('peer:strict', 'worker_spawn', 'CONFIRM', 'operator');
+
+    // Drive a real decision — if the bypass were active, no decision would
+    // open; the call would resolve instantly without a decision_request
+    // event firing.
+    let sawDecisionRequest = false;
+    const off = broker.onEvent((ev) => {
+      if (ev.kind === 'decision_request' && ev.correlation_id) {
+        sawDecisionRequest = true;
+        broker.store.respondToDecision(ev.correlation_id, REJECT, 'test', 'user-direct');
+      }
+    });
+    try {
+      const result = await logContext.run({ actor_id: 'peer:strict' }, () =>
+        gate.check('worker_spawn', {}),
+      );
+      expect(sawDecisionRequest).toBe(true); // a real decision was opened
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/chokepoint denied/);
+    } finally {
+      off();
+    }
+  });
+
+  it('does NOT bypass when env var is unset, even with VITEST=true', async () => {
+    const prevEnv = process.env.STAVR_CHOKEPOINT_TEST_AUTO_APPROVE;
+    delete process.env.STAVR_CHOKEPOINT_TEST_AUTO_APPROVE;
+    try {
+      actorPermissions.set('peer:no-env', 'worker_spawn', 'CONFIRM', 'operator');
+      let sawDecisionRequest = false;
+      const off = broker.onEvent((ev) => {
+        if (ev.kind === 'decision_request' && ev.correlation_id) {
+          sawDecisionRequest = true;
+          broker.store.respondToDecision(ev.correlation_id, REJECT, 'test', 'user-direct');
+        }
+      });
+      try {
+        const result = await logContext.run({ actor_id: 'peer:no-env' }, () =>
+          gate.check('worker_spawn', {}),
+        );
+        expect(sawDecisionRequest).toBe(true);
+        expect(result.allowed).toBe(false);
+      } finally {
+        off();
+      }
+    } finally {
+      if (prevEnv === undefined) delete process.env.STAVR_CHOKEPOINT_TEST_AUTO_APPROVE;
+      else process.env.STAVR_CHOKEPOINT_TEST_AUTO_APPROVE = prevEnv;
+    }
+  });
+});

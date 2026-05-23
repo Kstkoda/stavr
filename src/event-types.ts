@@ -53,6 +53,13 @@ export const EventKind = z.enum([
   'no_go_match',
   'no_go_authorized',
   'no_go_blocked',
+  // family-mode-phase-1 Phase 2 hardening — the chokepoint decision gate
+  // exposes a test-only auto-approve seam (STAVR_CHOKEPOINT_TEST_AUTO_APPROVE)
+  // so vitest doesn't hang on CONFIRM-tier tools. Every bypass emits this
+  // event so its use is observable in the audit trail; the seam is also
+  // structurally blocked from firing in production by a boot-time guard
+  // in src/daemon.ts. See src/security/decision-gate.ts.
+  'decision_chokepoint_test_bypass',
   // Spec 49 Layer 1 — daemon-hosted Steward
   'steward_started',
   'steward_stopped',

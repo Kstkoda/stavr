@@ -13,14 +13,23 @@
  * check belongs HERE (or in a small wrapper around this), not at the call
  * site.
  *
- * Test seam: when `STAVR_CHOKEPOINT_TEST_AUTO_APPROVE=1` is set, the gate
- * short-circuits with `allowed: true` and emits a
- * `decision_chokepoint_test_bypass` event. Production never sets this; the
- * vitest setup file (`tests/setup.ts`) does, so the ~30 existing tests that
- * exercise CONFIRM-tier tools (worker_spawn / host_exec / propose_plan / …)
- * keep passing without each setting up its own decision-responder. Negative-
- * path tests in `tests/security/chokepoint.test.ts` override the flag back
- * to off to exercise the real decision route.
+ * Test seam (defense-in-depth, post-Phase-2 hardening): the bypass requires
+ * BOTH conditions to be true to fire:
+ *   1. STAVR_CHOKEPOINT_TEST_AUTO_APPROVE === '1'
+ *   2. `isTestRun()` returns true (process.env.VITEST === 'true' or
+ *      NODE_ENV === 'test')
+ *
+ * Setting only the env var (e.g., a malicious or accidental production
+ * setting) does NOT enable the bypass — the gate runs the real decision
+ * route. A boot-time guard in `src/daemon.ts` ALSO refuses to start the
+ * daemon when the env var is set without the test signal, so the seam
+ * cannot silently take effect in production at any layer. Every actual
+ * bypass emits a `decision_chokepoint_test_bypass` audit event carrying
+ * actor + tool + tier so its use is never silent. The vitest setup file
+ * (`tests/setup.ts`) is what enables it for the ~30 existing tests that
+ * exercise CONFIRM-tier tools; the negative-path tests in
+ * `tests/security/chokepoint.test.ts` clear the env var inside beforeEach
+ * to exercise the real decision route.
  */
 import { randomUUID } from 'node:crypto';
 import type { Broker } from '../broker.js';
@@ -34,7 +43,27 @@ import type { ActorPermissionStore } from './actor-permissions.js';
 import type { CapabilityOverrideStore } from './capability-overrides.js';
 
 const DEFAULT_TIMEOUT_SEC = 1800;
-const TEST_AUTO_APPROVE_ENV = 'STAVR_CHOKEPOINT_TEST_AUTO_APPROVE';
+export const TEST_AUTO_APPROVE_ENV = 'STAVR_CHOKEPOINT_TEST_AUTO_APPROVE';
+
+/**
+ * Returns true iff the process is running inside a known test harness.
+ * Vitest sets `VITEST=true` automatically; `NODE_ENV=test` is the broader
+ * Node convention. Either signal is sufficient — the bypass guard checks
+ * `isTestRun()` to refuse activation outside these conditions, and the
+ * daemon boot guard in `src/daemon.ts` refuses to start when
+ * `STAVR_CHOKEPOINT_TEST_AUTO_APPROVE` is set without it.
+ */
+export function isTestRun(): boolean {
+  return process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
+}
+
+/**
+ * Returns true iff the test-only bypass is active in this process. Combines
+ * the env-var opt-in with the test-mode signal — both must hold.
+ */
+export function isChokepointTestBypassActive(): boolean {
+  return process.env[TEST_AUTO_APPROVE_ENV] === '1' && isTestRun();
+}
 
 export interface ChokepointDecisionOpts {
   toolId: string;
@@ -57,13 +86,26 @@ export async function runChokepointDecision(
   const correlationId = randomUUID();
   const timeoutSec = opts.timeoutSec ?? DEFAULT_TIMEOUT_SEC;
 
-  // Documented test-mode escape. Skipped in production (the env var is
-  // never set there). Silent: the whole point is that vitest's ~30 tests
-  // that exercise CONFIRM-tier tools don't grow per-test plumbing for a
-  // decision-responder. The negative-path tests in
-  // tests/security/chokepoint.test.ts override the env back to undefined
-  // to exercise the real decision route.
-  if (process.env[TEST_AUTO_APPROVE_ENV] === '1') {
+  // Documented test-mode escape. Fires only when BOTH the env var AND the
+  // test-run signal hold (see isChokepointTestBypassActive). A bare env
+  // var set in production cannot enable it — and the daemon boot guard
+  // refuses to start when that misconfiguration is present, so even a
+  // mistaken set is caught loudly. Every bypass emits an audit event
+  // carrying actor + tool + tier; the negative-path tests in
+  // tests/security/chokepoint.test.ts clear the env var to exercise the
+  // real decision route.
+  if (isChokepointTestBypassActive()) {
+    await broker.publish({
+      kind: 'decision_chokepoint_test_bypass',
+      at: new Date().toISOString(),
+      correlation_id: correlationId,
+      source_agent: opts.actor,
+      payload: {
+        tool: opts.toolId,
+        tier: opts.tier,
+        args: opts.args,
+      },
+    });
     return { allowed: true, correlation_id: correlationId };
   }
 

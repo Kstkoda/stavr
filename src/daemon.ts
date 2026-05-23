@@ -51,6 +51,30 @@ import {
 import { installOsCap } from './governor/os-cap.js';
 import { startLoadShedder, type LoadShedderStop } from './governor/load-shedder.js';
 import { totalmem as osTotalmem } from 'node:os';
+import { TEST_AUTO_APPROVE_ENV, isTestRun } from './security/decision-gate.js';
+
+/**
+ * Boot-time guard for the chokepoint test bypass (family-mode-phase-1
+ * Phase 2 hardening). The env var STAVR_CHOKEPOINT_TEST_AUTO_APPROVE
+ * silently disables CONFIRM/EXPLICIT enforcement for tests — it must
+ * NEVER take effect in production. We refuse to start the daemon when
+ * the var is set without the test-run signal, so a stray production
+ * `export` is caught loudly at boot rather than silently disabling
+ * Phase 2's enforcement.
+ *
+ * Tests assert this behavior in tests/security/chokepoint.test.ts and
+ * tests/daemon/test-bypass-guard.test.ts.
+ */
+export function assertNoChokepointTestBypassInProduction(): void {
+  if (process.env[TEST_AUTO_APPROVE_ENV] === '1' && !isTestRun()) {
+    throw new Error(
+      `${TEST_AUTO_APPROVE_ENV}=1 is set but this is not a test run ` +
+        '(neither VITEST=true nor NODE_ENV=test). The chokepoint test ' +
+        'bypass disables CONFIRM/EXPLICIT enforcement and MUST NOT take ' +
+        'effect in production. Unset the variable or shut down stavR.',
+    );
+  }
+}
 
 export interface DaemonOptions {
   port: number;
@@ -147,6 +171,12 @@ async function sleep(ms: number): Promise<void> {
  * Used when `--detach` is NOT set (foreground) or, internally, by the detached child.
  */
 export async function startDaemonForeground(opts: DaemonOptions): Promise<MountedTransports> {
+  // family-mode-phase-1 Phase 2 hardening — refuse to boot when the
+  // chokepoint test bypass is enabled outside a test harness. This MUST
+  // run before any subsystem initializes; the bypass would otherwise
+  // disable CONFIRM/EXPLICIT enforcement for every tool call.
+  assertNoChokepointTestBypassInProduction();
+
   // bom-diagnostics-2026 C2.2 — start OTel SDK as early as possible so the
   // http + express auto-instrumentations can patch before any server binds.
   // When STAVR_OTEL_EXPORTER_OTLP_ENDPOINT is unset, this is a no-op and
