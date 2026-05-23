@@ -41,6 +41,8 @@ import { checkNoGo } from '../trust/no-go-list.js';
 import { logContext } from '../observability/logger.js';
 import type { ActorPermissionStore } from './actor-permissions.js';
 import type { CapabilityOverrideStore } from './capability-overrides.js';
+import type { IdentityStore } from './identity-store.js';
+import { requireRecentTier3Assertion } from './tier3-gate.js';
 
 const DEFAULT_TIMEOUT_SEC = 1800;
 export const TEST_AUTO_APPROVE_ENV = 'STAVR_CHOKEPOINT_TEST_AUTO_APPROVE';
@@ -185,6 +187,8 @@ export async function runChokepointDecision(
  *   1. No-Go list                  — identity-blind hard deny
  *   2. Layer 0 capability switch   — operator runtime kill switch
  *   3. Per-actor permission tier   — AUTO / CONFIRM / EXPLICIT / NO_GO
+ *     3a. EXPLICIT also requires a recent WebAuthn assertion (Phase 3)
+ *         BEFORE the operator-confirmation decision opens.
  *
  * The gate reads the calling actor from `logContext.actor_id`
  * (AsyncLocalStorage). HTTP middleware stamps it per request; stdio falls
@@ -196,6 +200,7 @@ export function buildChokepointGate(
   stores: {
     capability: CapabilityOverrideStore;
     actorPermissions: ActorPermissionStore;
+    identity: IdentityStore;
   },
 ): RuntimeToolGate {
   return {
@@ -245,12 +250,56 @@ export function buildChokepointGate(
               `per-actor NO_GO: actor "${actor}" cannot invoke ${toolId} ` +
               `(source=${resolved.source})`,
           };
-        case 'CONFIRM':
         case 'EXPLICIT': {
+          // Phase 3 — Tier 3 EXPLICIT requires a recent operator WebAuthn
+          // assertion BEFORE the confirmation decision opens. Friction is
+          // the point: passkey proves presence; the subsequent decision
+          // proves the operator articulates THIS specific action.
+          //
+          // Test-mode bypass uses the same two-key guard as the decision
+          // route — env var + isTestRun(). Production has neither signal
+          // and the boot guard refuses to start if the var is set in
+          // production. See assertNoChokepointTestBypassInProduction.
+          if (!isChokepointTestBypassActive()) {
+            const tier3 = requireRecentTier3Assertion(stores.identity);
+            if (!tier3.ok) {
+              await broker.publish({
+                kind: 'tier3_assertion_required',
+                at: new Date().toISOString(),
+                source_agent: actor,
+                payload: {
+                  tool: toolId,
+                  reason: tier3.reason,
+                  hint: tier3.hint,
+                  operator_id: tier3.operator_id,
+                },
+              });
+              return {
+                allowed: false,
+                reason:
+                  `EXPLICIT denied: ${tier3.hint} ` +
+                  `(actor=${actor}, tool=${toolId})`,
+              };
+            }
+          }
+          // Fall through to the operator-confirmation decision route.
+          const explicitResult = await runChokepointDecision(broker, {
+            toolId,
+            actor,
+            tier: 'EXPLICIT',
+            args,
+          });
+          if (explicitResult.allowed) return { allowed: true };
+          return {
+            allowed: false,
+            reason: explicitResult.reason ?? `chokepoint decision denied for ${toolId}`,
+          };
+        }
+        case 'CONFIRM': {
           const result = await runChokepointDecision(broker, {
             toolId,
             actor,
-            tier: resolved.tier,
+            tier: 'CONFIRM',
             args,
           });
           if (result.allowed) return { allowed: true };

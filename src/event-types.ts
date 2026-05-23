@@ -150,6 +150,11 @@ export const EventKind = z.enum([
   // WebAuthn coordinator on every successful Tier 3 verification so
   // forensic review can correlate assertions to the actions they gated.
   'tier3_assertion_recorded',
+  // family-mode-phase-1 Phase 3 — the chokepoint gate denies an EXPLICIT-
+  // tier tool call when no recent WebAuthn assertion is on file and emits
+  // this so the dashboard can prompt the operator to authenticate. Caller
+  // (CC etc) retries after the operator completes the passkey ceremony.
+  'tier3_assertion_required',
   // Host-resource ceiling (proposed/host-resource-ceiling-bom.md).
   // daemon_host_headroom: per-tick host RAM/CPU sample from the headroom
   //   poller (Phase 2).

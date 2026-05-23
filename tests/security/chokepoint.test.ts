@@ -21,6 +21,7 @@ import { EventStore } from '../../src/persistence.js';
 import { Broker } from '../../src/broker.js';
 import { CapabilityOverrideStore } from '../../src/security/capability-overrides.js';
 import { ActorPermissionStore } from '../../src/security/actor-permissions.js';
+import { IdentityStore } from '../../src/security/identity-store.js';
 import { buildChokepointGate } from '../../src/security/decision-gate.js';
 import { APPROVE, REJECT } from '../../src/tools/gated-action.js';
 import { logContext } from '../../src/observability/logger.js';
@@ -30,6 +31,7 @@ describe('chokepoint gate (Phase 2 — defining test)', () => {
   let broker: Broker;
   let capability: CapabilityOverrideStore;
   let actorPermissions: ActorPermissionStore;
+  let identity: IdentityStore;
   let gate: ReturnType<typeof buildChokepointGate>;
   let prevAutoApprove: string | undefined;
 
@@ -45,7 +47,8 @@ describe('chokepoint gate (Phase 2 — defining test)', () => {
     broker = new Broker(store);
     capability = new CapabilityOverrideStore(store.rawDb);
     actorPermissions = new ActorPermissionStore(store.rawDb);
-    gate = buildChokepointGate(broker, { capability, actorPermissions });
+    identity = new IdentityStore(store.rawDb);
+    gate = buildChokepointGate(broker, { capability, actorPermissions, identity });
   });
 
   afterEach(() => {
@@ -184,7 +187,63 @@ describe('chokepoint gate (Phase 2 — defining test)', () => {
       }
     });
 
-    it('EXPLICIT routes through the same decision gate as CONFIRM in Phase 2 (WebAuthn lands Phase 3)', async () => {
+    it('EXPLICIT denies without a recent WebAuthn assertion (Phase 3 — no decision opens)', async () => {
+      // No assertion seeded in the identity store. The Tier-3 layer must
+      // refuse the call BEFORE the operator-confirmation decision route.
+      actorPermissions.set('peer:explicit', 'host_exec', 'EXPLICIT', 'operator');
+      let sawDecisionRequest = false;
+      const off = broker.onEvent((ev) => {
+        if (ev.kind === 'decision_request') sawDecisionRequest = true;
+      });
+      try {
+        const result = await logContext.run({ actor_id: 'peer:explicit' }, () =>
+          gate.check('host_exec', { command: 'git', args: ['status'] }),
+        );
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toMatch(/EXPLICIT denied/);
+        expect(sawDecisionRequest).toBe(false);
+        expect(broker.store.pendingDecisionCount()).toBe(0);
+      } finally {
+        off();
+      }
+    });
+
+    it('EXPLICIT emits tier3_assertion_required so the dashboard can prompt the operator', async () => {
+      actorPermissions.set('peer:explicit', 'host_exec', 'EXPLICIT', 'operator');
+      const events: Array<{ kind: string; payload?: unknown }> = [];
+      const off = broker.onEvent((ev) => events.push(ev));
+      try {
+        await logContext.run({ actor_id: 'peer:explicit' }, () =>
+          gate.check('host_exec', { command: 'git', args: ['status'] }),
+        );
+      } finally {
+        off();
+      }
+      const req = events.find((e) => e.kind === 'tier3_assertion_required');
+      expect(req).toBeDefined();
+      expect((req?.payload as { tool: string }).tool).toBe('host_exec');
+      expect((req?.payload as { operator_id: string }).operator_id).toBe('operator');
+    });
+
+    it('EXPLICIT proceeds to the operator-confirmation decision once a recent assertion is on file', async () => {
+      // Seed a recent assertion for the default operator.
+      const now = Date.now();
+      identity.register({
+        credentialId: 'cred-test-1',
+        operatorId: 'operator',
+        publicKey: Buffer.from('test'),
+        counter: 0,
+        transports: ['internal'],
+        deviceLabel: 'test',
+      });
+      identity.recordAssertion({
+        id: 'assertion-test-1',
+        operatorId: 'operator',
+        credentialId: 'cred-test-1',
+        createdAt: now - 1000,
+        expiresAt: now + 60_000,
+      });
+
       actorPermissions.set('peer:explicit', 'host_exec', 'EXPLICIT', 'operator');
       const off = broker.onEvent((ev) => {
         if (ev.kind === 'decision_request' && ev.correlation_id) {
@@ -204,6 +263,75 @@ describe('chokepoint gate (Phase 2 — defining test)', () => {
       } finally {
         off();
       }
+    });
+
+    it('EXPLICIT denies if assertion exists but operator rejects the confirmation decision', async () => {
+      const now = Date.now();
+      identity.register({
+        credentialId: 'cred-test-2',
+        operatorId: 'operator',
+        publicKey: Buffer.from('test'),
+        counter: 0,
+        transports: ['internal'],
+        deviceLabel: 'test',
+      });
+      identity.recordAssertion({
+        id: 'assertion-test-2',
+        operatorId: 'operator',
+        credentialId: 'cred-test-2',
+        createdAt: now - 1000,
+        expiresAt: now + 60_000,
+      });
+
+      actorPermissions.set('peer:explicit', 'host_exec', 'EXPLICIT', 'operator');
+      const off = broker.onEvent((ev) => {
+        if (ev.kind === 'decision_request' && ev.correlation_id) {
+          broker.store.respondToDecision(
+            ev.correlation_id,
+            REJECT,
+            'operator declined',
+            'user-direct',
+          );
+        }
+      });
+      try {
+        const result = await logContext.run({ actor_id: 'peer:explicit' }, () =>
+          gate.check('host_exec', { command: 'git', args: ['status'] }),
+        );
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toMatch(/chokepoint denied/);
+      } finally {
+        off();
+      }
+    });
+
+    it('EXPLICIT denies once the assertion has aged out of the freshness window', async () => {
+      const now = Date.now();
+      identity.register({
+        credentialId: 'cred-test-stale',
+        operatorId: 'operator',
+        publicKey: Buffer.from('test'),
+        counter: 0,
+        transports: ['internal'],
+        deviceLabel: 'test',
+      });
+      // Assertion was created well outside the freshness window — Identity-
+      // Store's hasRecentAssertion filters by expires_at > now, so seeding
+      // an already-expired assertion is the deterministic way to simulate
+      // staleness without manipulating the clock.
+      identity.recordAssertion({
+        id: 'assertion-stale',
+        operatorId: 'operator',
+        credentialId: 'cred-test-stale',
+        createdAt: now - 600_000,
+        expiresAt: now - 1000,
+      });
+      actorPermissions.set('peer:explicit', 'host_exec', 'EXPLICIT', 'operator');
+      const result = await logContext.run({ actor_id: 'peer:explicit' }, () =>
+        gate.check('host_exec', {}),
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toMatch(/EXPLICIT denied/);
     });
 
     it("uses 'unstamped-loopback' when logContext has no actor_id; falls through to defaultTierFor()", async () => {
@@ -236,6 +364,7 @@ describe('chokepoint test-bypass seam (Phase 2 hardening)', () => {
   let broker: Broker;
   let capability: CapabilityOverrideStore;
   let actorPermissions: ActorPermissionStore;
+  let identity: IdentityStore;
   let gate: ReturnType<typeof buildChokepointGate>;
   let prevVitest: string | undefined;
   let prevNodeEnv: string | undefined;
@@ -246,7 +375,8 @@ describe('chokepoint test-bypass seam (Phase 2 hardening)', () => {
     broker = new Broker(store);
     capability = new CapabilityOverrideStore(store.rawDb);
     actorPermissions = new ActorPermissionStore(store.rawDb);
-    gate = buildChokepointGate(broker, { capability, actorPermissions });
+    identity = new IdentityStore(store.rawDb);
+    gate = buildChokepointGate(broker, { capability, actorPermissions, identity });
     prevVitest = process.env.VITEST;
     prevNodeEnv = process.env.NODE_ENV;
   });

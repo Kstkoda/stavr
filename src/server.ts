@@ -355,6 +355,7 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   const toolRegistry = getOrCreateToolRegistry(broker);
   const capabilityStore = getOrCreateCapabilityOverrideStore(broker);
   const actorPermissionStore = getOrCreateActorPermissionStore(broker);
+  const identityStore = getOrCreateIdentityStore(broker);
   wrapServerForRegistry(
     server,
     toolRegistry,
@@ -362,6 +363,7 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
     buildChokepointGate(broker, {
       capability: capabilityStore,
       actorPermissions: actorPermissionStore,
+      identity: identityStore,
     }),
   );
 
