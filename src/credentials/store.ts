@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type Database from 'better-sqlite3';
+import type { Database } from '../db/index.js';
 import type { EventStore } from '../persistence.js';
 import { decrypt, encrypt } from './vault.js';
 import {
@@ -38,7 +38,7 @@ interface GrantRow {
 }
 
 export class CredentialStore {
-  private readonly db: Database.Database;
+  private readonly db: Database;
 
   constructor(eventStore: EventStore, private readonly masterKey: Buffer) {
     this.db = eventStore.rawDb;

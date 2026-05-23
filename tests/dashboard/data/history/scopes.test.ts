@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { fetchScopesHistory } from '../../../../src/dashboard/data/history/scopes.js';
 import { makeStore } from './helpers.js';
+import type { Database } from '../../../../src/db/index.js';
 
-function seedScope(db: import('better-sqlite3').Database, override: Partial<{
+function seedScope(db: Database, override: Partial<{
   id: string;
   title: string;
   status: string;

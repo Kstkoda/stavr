@@ -18,7 +18,7 @@
     "check": "tsc --noEmit && vitest run && npm run build"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=25.7"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

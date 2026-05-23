@@ -7,7 +7,7 @@
  * world). `granted_at` may be empty when the scope was rejected before
  * grant; the timeline still wants to show the proposal.
  */
-import type Database from 'better-sqlite3';
+import type { Database } from '../../../db/index.js';
 import type { TrustScope, TrustScopeStatus, ActionMatcher, ScopeReporting } from '../../../trust/types.js';
 import {
   type HistoryItem,
@@ -23,7 +23,7 @@ export interface ScopeHistoryQuery extends HistoryQuery {
 }
 
 export interface ScopesHistorySources {
-  db: Database.Database;
+  db: Database;
 }
 
 function scopeStatusToHistory(status: TrustScopeStatus | string): HistoryStatus {

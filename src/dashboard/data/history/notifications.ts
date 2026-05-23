@@ -13,7 +13,7 @@
  * walker's job. The fetcher just emits the leaf row; the page
  * lazy-loads depth when the operator hovers.
  */
-import type Database from 'better-sqlite3';
+import type { Database } from '../../../db/index.js';
 import {
   type HistoryItem,
   type HistoryPage,
@@ -32,7 +32,7 @@ export interface NotificationsHistoryQuery extends HistoryQuery {
 }
 
 export interface NotificationsHistorySources {
-  db: Database.Database;
+  db: Database;
 }
 
 export interface NotificationPayload {

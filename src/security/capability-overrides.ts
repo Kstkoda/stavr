@@ -25,7 +25,7 @@
  * enforced at the transport layer.
  */
 
-import type { Database } from 'better-sqlite3';
+import type { Database } from '../db/index.js';
 
 export type CapabilityState =
   | 'enabled'

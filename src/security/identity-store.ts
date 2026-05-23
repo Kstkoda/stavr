@@ -9,7 +9,7 @@
  * exposes the read / write surface other modules (`security/webauthn.ts`,
  * the HTTP endpoints in `transports.ts`) consume.
  */
-import type { Database } from 'better-sqlite3';
+import type { Database } from '../db/index.js';
 
 export interface RegisteredCredential {
   credential_id: string;

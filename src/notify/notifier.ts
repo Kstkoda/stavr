@@ -8,7 +8,7 @@
 // For `severity: 'crit'`, the notification row is persisted BEFORE channel
 // dispatch so a daemon restart can replay (Footgun #12).
 
-import type Database from 'better-sqlite3';
+import type { Database } from '../db/index.js';
 import { randomUUID } from 'node:crypto';
 import { getLogger } from '../log.js';
 import { mintCorrelationId } from './correlation.js';
@@ -42,7 +42,7 @@ export interface NotifierOpts {
   /** Base URL the daemon publishes on, e.g. http://localhost:3030. */
   replyBaseUrl?: string;
   /** SQLite handle (event store's rawDb). */
-  db?: Database.Database;
+  db?: Database;
   /** Pluggable clock for tests. */
   now?: () => number;
   /**
@@ -60,7 +60,7 @@ export class Notifier {
   private channels = new Map<string, NotificationChannel>();
   private readonly secret: string;
   private readonly replyBaseUrl?: string;
-  private readonly db?: Database.Database;
+  private readonly db?: Database;
   private readonly now: () => number;
   private readonly channelTimeoutMs: number;
 
