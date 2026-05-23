@@ -1,0 +1,59 @@
+[Unit]
+# stavR daemon — systemd user instance.
+# Installed by bin/install-systemd.sh; uninstalled by bin/uninstall-systemd.sh.
+# See proposed/os-native-governor-bom.md and proposed/os-native-governor-recon.md
+# for the design.
+Description=stavR — local-first MCP gateway daemon
+Documentation=https://github.com/Kstkoda/stavr
+After=network.target
+
+# Crash-loop guard (mandatory per the BOM): 5 starts within 5 minutes trips
+# the start-limit and stops further restarts until the operator runs
+# `systemctl --user reset-failed stavr.service`. Without this a fast-crash
+# daemon would burn restarts forever.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# The daemon runs in foreground — NO --detach. The supervisor needs a
+# process to watch; --detach forks a detached child the supervisor would
+# see as the daemon having died.
+ExecStart=@NODE_BIN@ --max-old-space-size=8192 --heapsnapshot-near-heap-limit=2 --report-on-fatalerror --report-directory=@INSTALL_DIR@/tmp/diag-reports @INSTALL_DIR@/dist/cli.js daemon start --port 7777 --db @STAVR_HOME@/runestone.db --log-format json
+
+WorkingDirectory=@INSTALL_DIR@
+
+# systemd doesn't inherit HOME / PATH for User= services. The install
+# script writes the operator's values verbatim so node + the daemon's
+# subprocess invocations (gh, git, claude) resolve correctly.
+Environment=HOME=@HOME_DIR@
+Environment=STAVR_HOME=@STAVR_HOME@
+Environment=STAVR_DEBUG_ENABLED=1
+Environment=PATH=@PATH_VALUE@
+
+# Restart policy — matches PM2's max_restarts=5 + restart_delay=30s.
+# On clean exit (SIGTERM via operator stop), no restart. On any non-zero
+# exit, restart after 30s.
+Restart=on-failure
+RestartSec=30
+
+# Memory ceiling — PM2's max_memory_restart surrogate. MemoryHigh is the
+# soft throttle (kernel applies memcg pressure above this); the hard
+# heap cap stays in node_args (--max-old-space-size=8192). For a hard
+# OS-level kill ceiling, set MemoryMax=8G — but that requires cgroup-v2
+# delegation, which the host-resource-ceiling work owns. Out of scope
+# here.
+MemoryHigh=7G
+
+# Graceful shutdown grace period. The daemon's SIGTERM handler clears
+# pollers, closes transports, removes PID file. PM2 used kill_timeout=10s.
+TimeoutStopSec=10
+
+# Capture stdout/stderr into journald. pino writes JSON to stderr by
+# default; journalctl preserves it cleanly.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
