@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { BoundedEventStore } from './observability/bounded-event-store.js';
 import {
   createSwitchServer,
   getOrCreateTrustStore,
@@ -112,6 +113,13 @@ export interface TransportOpts {
    * Override `Date.now()` for the pairing TTL. Test seam.
    */
   now?: () => number;
+  /**
+   * Interval (ms) for the standalone-GET stream keepalive. Defaults to
+   * 20_000. Tests use a short value (e.g. 200) to assert the heartbeat
+   * fires; production should leave at the default. See BOM
+   * proposed/mcp-session-stability-bom.md Phase 2b.
+   */
+  mcpKeepaliveIntervalMs?: number;
 }
 
 export interface MountedTransports {
@@ -138,6 +146,7 @@ export async function mountTransports(
 
   // Resolve mode from explicit param or legacy `stdioOnly`.
   const mode: TransportMode = opts.mode ?? (opts.stdioOnly ? 'stdio' : 'both');
+  const keepaliveIntervalMs = opts.mcpKeepaliveIntervalMs ?? 20_000;
 
   const sweptCount = await startupDecisionSweep(broker);
   if (sweptCount > 0) log(`startup sweep expired ${sweptCount} stale decision(s)`);
@@ -158,6 +167,14 @@ export async function mountTransports(
   type McpSession = {
     transport: StreamableHTTPServerTransport;
     handle: ReturnType<typeof createSwitchServer>;
+    /**
+     * 20s `notifications/message` heartbeat on the standalone GET stream.
+     * Defence-in-depth against control-channel idle disconnect — see
+     * BOM proposed/mcp-session-stability-bom.md Phase 2b. Cleared in
+     * `transport.onclose` so the daemon never carries a dangling
+     * interval for a closed session.
+     */
+    keepalive?: ReturnType<typeof setInterval>;
   };
   const sseSessions = new Map<string, McpSession>();
   const refreshSseGauge = (): void => {
@@ -781,10 +798,28 @@ export async function mountTransports(
         }
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
+          // Per BOM proposed/mcp-session-stability-bom.md Phase 2a.
+          // Without an eventStore, the SDK omits the protocol-version-
+          // gated priming event and the per-POST response stream is
+          // non-resumable — a connection drop while a long-blocking tool
+          // handler (`await_decision`, slow `github_*` writes) is in
+          // flight loses the result silently. BoundedEventStore caps
+          // per-stream history at 256 events OR 5 min (whichever fires
+          // first), evicted on every insert; one store per session,
+          // GC'd when the transport closes.
+          eventStore: new BoundedEventStore(),
         });
         const handle = createSwitchServer(broker);
         await handle.server.connect(transport);
+        // Create the session object BEFORE wiring onclose so the close
+        // handler can reference `session.keepalive` and clear it.
+        session = { transport, handle };
+        isNew = true;
         transport.onclose = () => {
+          if (session!.keepalive) {
+            clearInterval(session!.keepalive);
+            session!.keepalive = undefined;
+          }
           const tid = transport.sessionId;
           if (tid) sseSessions.delete(tid);
           broker.removeSession(handle.sessionId);
@@ -838,8 +873,6 @@ export async function mountTransports(
           }, 30_000);
           sweepHandle.unref?.();
         };
-        session = { transport, handle };
-        isNew = true;
       }
 
       // Phase 4.5 — actor_id was stamped by the global middleware above,
@@ -856,6 +889,29 @@ export async function mountTransports(
         sseSessions.set(session.transport.sessionId, session);
         refreshSseGauge();
         log(`MCP session ${session.transport.sessionId} connected`);
+        // Per BOM Phase 2b. The Phase 0 cadence findings classified the
+        // ~15-min recycle as a wall-clock client timer, so this heartbeat
+        // is NOT the load-bearing fix for that. Its job is the orthogonal
+        // threat: a TCP/proxy idle close on the standalone GET control
+        // stream. A spec-clean server-initiated `notifications/message`
+        // every 20s keeps that stream warm. Per-POST response streams
+        // are protected by Phase 2a's resumable eventStore. The SDK
+        // exposes no hook for raw SSE comments, so this is the cheapest
+        // protocol-compliant keepalive available; spike doc:
+        // proposed/mcp-session-stability-bom.md Phase 2b.
+        const keepaliveHandle = setInterval(() => {
+          void session!.transport
+            .send({
+              jsonrpc: '2.0',
+              method: 'notifications/message',
+              params: { level: 'debug', logger: 'stavr-keepalive', data: { at: Date.now() } },
+            })
+            .catch(() => {
+              /* stream gone; onclose will tear the interval down */
+            });
+        }, keepaliveIntervalMs);
+        keepaliveHandle.unref?.();
+        session.keepalive = keepaliveHandle;
         // OOM leak-hunt: paired with `sse_session_closed` below. The count
         // INCLUDES the just-registered session so it reflects the live map.
         void broker
@@ -1073,6 +1129,10 @@ export async function mountTransports(
         // missing/closed, remove it.
         const t = sess.transport as unknown as { _writable?: { destroyed?: boolean } };
         if (t?._writable?.destroyed) {
+          if (sess.keepalive) {
+            clearInterval(sess.keepalive);
+            sess.keepalive = undefined;
+          }
           sseSessions.delete(sid);
           broker.removeSession(sess.handle.sessionId);
           refreshSseGauge();
