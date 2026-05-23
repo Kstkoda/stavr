@@ -19,7 +19,6 @@ import type { CapabilityOverrideStore, CapabilityOverrideRow } from '../../secur
 import type { ToolRegistry } from '../../tools/registry.js';
 import { KNOWN_ACTORS, type KnownActor } from '../../security/actor-permissions.js';
 import {
-  defaultTierFor,
   type Tier,
   type ToolCategory,
 } from '../../tools/categories.js';
@@ -38,10 +37,15 @@ export interface PermissionsToolSummary {
 export interface PermissionsMatrixCell {
   actor: string;
   tool: string;
-  /** Effective tier (matrix-set if present, else registered default). */
+  /** Effective tier — what the chokepoint will actually enforce. */
   tier: Tier;
-  /** Whether the tier came from a matrix row or the registered default. */
-  source: 'default' | 'matrix';
+  /**
+   * Where the effective tier came from. `default-deny-peer` is the Phase
+   * 5.5 fall-through for paired peers with no matrix row (resolves to
+   * NO_GO at runtime); see ActorPermissionStore.resolve for the full
+   * shape table.
+   */
+  source: 'default' | 'matrix' | 'default-deny-peer';
 }
 
 export interface PermissionsData {
@@ -88,15 +92,21 @@ export function fetchPermissionsData(opts: {
     ...(KNOWN_ACTORS as readonly KnownActor[]),
     ...Array.from(discovered),
   ]));
+  // Phase 5.5 — route through `resolve()` so the matrix UI reflects what
+  // the chokepoint will ACTUALLY enforce (including the peer:* default-
+  // deny). Was previously inlined as get-or-defaultTierFor, which under-
+  // reported peer effective tiers — a peer with no row would appear in
+  // the UI as 'CONFIRM' for worker_spawn while the chokepoint actually
+  // denied with NO_GO. Now they match.
   const matrix: PermissionsMatrixCell[] = [];
   for (const actor of actors) {
     for (const t of tools) {
-      const row = opts.perms.get(actor, t.id);
+      const resolved = opts.perms.resolve(actor, t.id);
       matrix.push({
         actor,
         tool: t.id,
-        tier: row?.tier ?? defaultTierFor(t.id),
-        source: row ? 'matrix' : 'default',
+        tier: resolved.tier,
+        source: resolved.source,
       });
     }
   }

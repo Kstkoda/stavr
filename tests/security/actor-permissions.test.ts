@@ -80,4 +80,43 @@ describe('ActorPermissionStore', () => {
     const cwc = perms.resolve('cowork-claude', 'github_merge_pr');
     expect(cwc.source).toBe('default');
   });
+
+  // family-mode-phase-1 Phase 5.5 — paired peers are default-deny.
+  describe('paired peers (actor_id starts with peer:) — default-deny', () => {
+    it('returns NO_GO with source default-deny-peer for an unconfigured peer', () => {
+      const r = perms.resolve('peer:fresh-laptop', 'emit_event');
+      expect(r.tier).toBe('NO_GO');
+      expect(r.source).toBe('default-deny-peer');
+    });
+
+    it('does NOT inherit the AUTO default that operator-shape actors get', () => {
+      // Same tool, two actors: operator gets AUTO, peer gets NO_GO.
+      expect(perms.resolve('operator', 'emit_event').tier).toBe('AUTO');
+      expect(perms.resolve('peer:fresh-laptop', 'emit_event').tier).toBe('NO_GO');
+    });
+
+    it('an explicit matrix row beats the default-deny fall-through', () => {
+      perms.set('peer:fresh-laptop', 'emit_event', 'AUTO', 'operator');
+      expect(perms.resolve('peer:fresh-laptop', 'emit_event')).toEqual({
+        tier: 'AUTO',
+        source: 'matrix',
+      });
+    });
+
+    it('reset() returns the peer to default-deny, not to defaultTierFor()', () => {
+      perms.set('peer:fresh-laptop', 'worker_spawn', 'CONFIRM', 'operator');
+      perms.reset('peer:fresh-laptop', 'worker_spawn');
+      const r = perms.resolve('peer:fresh-laptop', 'worker_spawn');
+      expect(r.tier).toBe('NO_GO');
+      expect(r.source).toBe('default-deny-peer');
+    });
+
+    it('the well-known agent actors (cc, cowork-claude, steward) still resolve via defaultTierFor', () => {
+      // Sanity: Phase 5.5 ONLY changes the peer:* fall-through. The
+      // existing in-process agents keep the conservative defaults.
+      expect(perms.resolve('cc', 'worker_spawn').source).toBe('default');
+      expect(perms.resolve('cowork-claude', 'worker_spawn').source).toBe('default');
+      expect(perms.resolve('steward', 'worker_spawn').source).toBe('default');
+    });
+  });
 });

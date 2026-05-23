@@ -270,7 +270,16 @@ describe('Phase 5 — loopback fence integration (booted HTTP server)', () => {
   });
 });
 
-describe('Phase 5 — fresh peer lands on conservative per-actor defaults', () => {
+describe('Phase 5.5 — fresh peer is default-DENY (was: conservative defaults)', () => {
+  // Operator review of Phase 5 found that defaultTierFor()/EXPLICIT_TIER
+  // in categories.ts is actor-blind — a peer with no matrix row was
+  // inheriting AUTO on get_events / emit_event / subscribe_to_events /
+  // worker_list_* / steward_ask, which would let a paired family device
+  // read the operator's audit log via the MCP tool path (defeating the
+  // Phase 5 loopback fence on /events/sse). Phase 5.5 closes that:
+  // an unconfigured peer resolves to NO_GO, not defaultTierFor().
+  // Loopback / operator-shape actors keep defaultTierFor() unchanged.
+
   let store: EventStore;
   let perms: ActorPermissionStore;
 
@@ -288,34 +297,99 @@ describe('Phase 5 — fresh peer lands on conservative per-actor defaults', () =
     expect(perms.byActor('peer:fresh-laptop')).toHaveLength(0);
   });
 
-  it('resolve() falls through to defaultTierFor() for a peer with no matrix rows', () => {
-    // The defaults come from src/tools/categories.ts and represent the
-    // conservative bias: writes/spawns/destroys default to CONFIRM+,
-    // shell + credentials default to EXPLICIT.
-    expect(perms.resolve('peer:fresh-laptop', 'worker_spawn').tier).toBe('CONFIRM');
-    expect(perms.resolve('peer:fresh-laptop', 'worker_dispatch').tier).toBe('CONFIRM');
-    expect(perms.resolve('peer:fresh-laptop', 'worker_terminate').tier).toBe('CONFIRM');
-    expect(perms.resolve('peer:fresh-laptop', 'host_exec').tier).toBe('EXPLICIT');
-    expect(perms.resolve('peer:fresh-laptop', 'github_create_pr').tier).toBe('CONFIRM');
-    expect(perms.resolve('peer:fresh-laptop', 'github_merge_pr').tier).toBe('CONFIRM');
-    expect(perms.resolve('peer:fresh-laptop', 'trust_scope_grant').tier).toBe('CONFIRM');
-    expect(perms.resolve('peer:fresh-laptop', 'credential_use').tier).toBe('EXPLICIT');
+  it('a fresh peer resolves to NO_GO across read AND write tools — default-DENY (Phase 5.5)', () => {
+    // Every tool category — even the read-only AUTO-by-default ones —
+    // refuses an unconfigured peer. This is the security correction
+    // Phase 5.5 lands: get_events / emit_event / subscribe_to_events /
+    // worker_list / worker_status / steward_ask all return NO_GO for
+    // a peer with no matrix row, closing the audit-log exfiltration
+    // path through the MCP tool surface.
+    const sensitive = [
+      'worker_spawn',
+      'worker_dispatch',
+      'worker_terminate',
+      'host_exec',
+      'github_create_pr',
+      'github_merge_pr',
+      'trust_scope_grant',
+      'credential_use',
+    ];
+    const reads = [
+      'emit_event',
+      'subscribe_to_events',
+      'get_events',
+      'worker_list',
+      'worker_status',
+      'steward_ask',
+    ];
+    for (const tool of [...sensitive, ...reads]) {
+      const r = perms.resolve('peer:fresh-laptop', tool);
+      expect(r.tier, `peer:fresh-laptop/${tool}`).toBe('NO_GO');
+      expect(r.source, `peer:fresh-laptop/${tool}`).toBe('default-deny-peer');
+    }
   });
 
-  it('the source is always "default" for an unseen peer (no row was implicitly seeded by pairing)', () => {
-    expect(perms.resolve('peer:fresh-laptop', 'worker_spawn').source).toBe('default');
-    expect(perms.resolve('peer:fresh-laptop', 'host_exec').source).toBe('default');
+  it('a loopback / operator-shape actor still resolves via defaultTierFor()', () => {
+    // Phase 5.5 only changes the peer:* fall-through. The operator and
+    // the well-known agent actors keep the conservative defaults from
+    // categories.ts — reads stay AUTO, writes stay CONFIRM, shell stays
+    // EXPLICIT.
+    for (const actor of ['operator', 'cowork-claude', 'cc', 'steward', 'unstamped-loopback', 'loopback:abc-corr']) {
+      expect(perms.resolve(actor, 'emit_event').tier).toBe('AUTO');
+      expect(perms.resolve(actor, 'subscribe_to_events').tier).toBe('AUTO');
+      expect(perms.resolve(actor, 'get_events').tier).toBe('AUTO');
+      expect(perms.resolve(actor, 'worker_spawn').tier).toBe('CONFIRM');
+      expect(perms.resolve(actor, 'host_exec').tier).toBe('EXPLICIT');
+      expect(perms.resolve(actor, 'emit_event').source).toBe('default');
+    }
   });
 
-  it('only AUTO-by-default tools (reads / subscriptions) are auto for a fresh peer — and those are read-only', () => {
-    // emit_event / subscribe / get_events / worker_list_* / decision tools
-    // default to AUTO per categories.ts. A fresh peer can therefore observe
-    // events and list workers; it cannot spawn, dispatch, or terminate
-    // anything without operator action.
-    expect(perms.resolve('peer:fresh-laptop', 'emit_event').tier).toBe('AUTO');
-    expect(perms.resolve('peer:fresh-laptop', 'subscribe_to_events').tier).toBe('AUTO');
-    expect(perms.resolve('peer:fresh-laptop', 'get_events').tier).toBe('AUTO');
-    expect(perms.resolve('peer:fresh-laptop', 'worker_list').tier).toBe('AUTO');
-    expect(perms.resolve('peer:fresh-laptop', 'worker_status').tier).toBe('AUTO');
+  it('once the operator grants a per-(actor,tool) tier, the peer gets that tier', () => {
+    // Operator action lifts the default-deny. The matrix row beats the
+    // peer fall-through (matrix > default-deny-peer > default).
+    perms.set('peer:fresh-laptop', 'worker_spawn', 'CONFIRM', 'operator');
+    perms.set('peer:fresh-laptop', 'emit_event', 'AUTO', 'operator');
+    perms.set('peer:fresh-laptop', 'host_exec', 'NO_GO', 'operator');
+
+    expect(perms.resolve('peer:fresh-laptop', 'worker_spawn')).toEqual({
+      tier: 'CONFIRM',
+      source: 'matrix',
+    });
+    expect(perms.resolve('peer:fresh-laptop', 'emit_event')).toEqual({
+      tier: 'AUTO',
+      source: 'matrix',
+    });
+    expect(perms.resolve('peer:fresh-laptop', 'host_exec')).toEqual({
+      tier: 'NO_GO',
+      source: 'matrix',
+    });
+
+    // Tools the operator did NOT grant remain default-deny.
+    expect(perms.resolve('peer:fresh-laptop', 'github_merge_pr')).toEqual({
+      tier: 'NO_GO',
+      source: 'default-deny-peer',
+    });
+  });
+
+  it('reset() of a granted row returns the peer to default-deny (not defaultTierFor)', () => {
+    perms.set('peer:fresh-laptop', 'worker_spawn', 'AUTO', 'operator');
+    expect(perms.resolve('peer:fresh-laptop', 'worker_spawn').source).toBe('matrix');
+    perms.reset('peer:fresh-laptop', 'worker_spawn');
+    // After reset, the row is gone — peer falls through to default-deny,
+    // NOT to defaultTierFor's CONFIRM.
+    const r = perms.resolve('peer:fresh-laptop', 'worker_spawn');
+    expect(r.tier).toBe('NO_GO');
+    expect(r.source).toBe('default-deny-peer');
+  });
+
+  it('the peer:* prefix is the trigger — any peer id with that shape is default-deny', () => {
+    expect(perms.resolve('peer:', 'emit_event').tier).toBe('NO_GO');
+    expect(perms.resolve('peer:laptop', 'emit_event').tier).toBe('NO_GO');
+    expect(perms.resolve('peer:kenneth-laptop', 'emit_event').tier).toBe('NO_GO');
+    expect(perms.resolve('peer:nas.local', 'emit_event').tier).toBe('NO_GO');
+    // Things that LOOK like peer but aren't the exact prefix are not
+    // peer actors and resolve via defaultTierFor().
+    expect(perms.resolve('peerless', 'emit_event').tier).toBe('AUTO');
+    expect(perms.resolve('not-peer:laptop', 'emit_event').tier).toBe('AUTO');
   });
 });

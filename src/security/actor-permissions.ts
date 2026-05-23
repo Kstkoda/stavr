@@ -48,8 +48,23 @@ export interface ActorPermissionRow {
 export interface ResolvedTier {
   /** The tier in force for (actor, tool). */
   tier: Tier;
-  /** Where it came from — for the UI to label "default" vs "operator-set". */
-  source: 'default' | 'matrix';
+  /**
+   * Where the tier came from — for the UI to label correctly and for
+   * audit reasons in chokepoint deny messages.
+   *
+   *   `matrix`            — operator set this cell explicitly.
+   *   `default`           — operator-shape actor (loopback / unstamped /
+   *                         well-known: operator, cc, cowork-claude,
+   *                         steward) with no matrix row → falls through
+   *                         to `defaultTierFor()` (categories.ts
+   *                         conservative bias).
+   *   `default-deny-peer` — paired peer (actor_id starts with `peer:`)
+   *                         with no matrix row → Phase 5.5 default-deny.
+   *                         Resolves to NO_GO so the chokepoint hard-
+   *                         denies until the operator explicitly grants
+   *                         a tier via the matrix UI.
+   */
+  source: 'default' | 'matrix' | 'default-deny-peer';
 }
 
 export class ActorPermissionStore {
@@ -104,13 +119,30 @@ export class ActorPermissionStore {
   }
 
   /**
-   * Resolve the effective tier for (actor, tool). Matrix row beats the
-   * registered default; if no matrix row exists, returns the default with
-   * `source = 'default'`.
+   * Resolve the effective tier for (actor, tool). Matrix row beats every
+   * fall-through; with no row, the fall-through depends on the actor:
+   *
+   *   Paired peers (actor_id starts with `peer:`) → Phase 5.5 default-deny.
+   *   A freshly-paired family device cannot invoke ANY tool until the
+   *   operator explicitly grants a per-(actor,tool) tier via the matrix
+   *   UI. Trust scopes do NOT lift this — the chokepoint hard-denies
+   *   NO_GO before the gatedAction trust-scope check runs, matching the
+   *   existing "NO_GO is a hard floor regardless of scope" semantics in
+   *   src/tools/categories.ts. Trust-scope-driven peer authorization
+   *   would be a future widening (it would need either a chokepoint
+   *   scope-aware override or a new tier-resolution layer).
+   *
+   *   Operator-shape actors (loopback / unstamped / the well-known
+   *   operator/cc/cowork-claude/steward labels) → defaultTierFor() from
+   *   categories.ts. Conservative bias: writes/spawns get CONFIRM, shell
+   *   + credentials get EXPLICIT, reads/subscriptions get AUTO.
    */
   resolve(actorId: string, toolId: string): ResolvedTier {
     const row = this.get(actorId, toolId);
     if (row) return { tier: row.tier, source: 'matrix' };
+    if (actorId.startsWith('peer:')) {
+      return { tier: 'NO_GO', source: 'default-deny-peer' };
+    }
     return { tier: defaultTierFor(toolId), source: 'default' };
   }
 

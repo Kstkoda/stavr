@@ -1179,8 +1179,8 @@ export async function mountTransports(
  * dashboard API (memory / perf / storage diagnostics + history feeds);
  * /events/sse is the raw event-tail stream consumed by `stavr tail` and
  * the dashboard's live updates. Exported so the integration test in
- * tests/federation/loopback-fence.test.ts can verify the predicate
- * without booting a server.
+ * tests/federation/phase5-bind-and-fence.test.ts can verify the
+ * predicate without booting a server.
  */
 export function isLoopbackOnlyPath(path: string): boolean {
   return path === '/dashboard' ||
