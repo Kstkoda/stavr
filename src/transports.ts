@@ -55,9 +55,10 @@ import {
   setMcpServerSessionsActive,
   recordJsonRpcError,
 } from './observability/mcp-metrics.js';
-import { logContext, withLogContext } from './observability/logger.js';
+import { logContext } from './observability/logger.js';
 import { mountDebugEndpoints } from './observability/debug-endpoints.js';
 import { mountWebAuthnRoutes } from './security/webauthn-routes.js';
+import { mayRespond } from './security/respond-policy.js';
 import { mountFederationRoutes } from './federation/index.js';
 import { getOrCreateIdentityStore, getOrCreateWebAuthnCoordinator, getOrCreateFederation } from './server.js';
 import { attachMcpAttributes } from './observability/spans.js';
@@ -436,6 +437,29 @@ export async function mountTransports(
       });
     }
 
+    // family-mode-phase-1 Phase 4.5 — verified actor_id stamping for all
+    // HTTP routes. Runs AFTER bearer-auth so `req.device` (if set) is the
+    // verified paired-peer identity. The existing per-route nesting of
+    // logContext.run is preserved — this middleware adds the actor_id
+    // field to the current store (correlation_id already set above), then
+    // chains to next(). Downstream handlers (the /mcp dispatch wrapper,
+    // the /dashboard/.../respond endpoint, etc.) read logContext.actor_id
+    // and trust it because it was set HERE, not by any caller-supplied
+    // string. Loopback signal is the kernel-enforced ADR-006 boundary —
+    // a peer cannot fake `loopback:*` because it cannot connect from the
+    // loopback interface.
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      const reqDevice = (req as Request & { device?: { id: string; name: string } }).device;
+      const corrId = (res.getHeader('x-correlation-id') as string | undefined) ?? '';
+      const actorId = reqDevice
+        ? `peer:${reqDevice.name}`
+        : isLoopbackRequest(req)
+          ? `loopback:${corrId}`
+          : 'unknown';
+      const existing = logContext.getStore() ?? {};
+      logContext.run({ ...existing, actor_id: actorId }, () => next());
+    });
+
     app.get('/status', (_req, res) => {
       res.json({
         ok: true,
@@ -787,20 +811,13 @@ export async function mountTransports(
         isNew = true;
       }
 
-      // Phase 2 — stamp actor_id for the chokepoint gate. Bearer-auth
-      // already attached `req.device` for paired remote callers; loopback
-      // requests fall back to `loopback:<correlation_id>` so a single
-      // tool call has a stable identity across no-go / Layer 0 / per-actor
-      // checks. The chokepoint reads logContext.actor_id; nothing else
-      // depends on this stamp, so the nested scope is local to dispatch.
-      const reqDevice = (req as Request & { device?: { id: string; name: string } }).device;
-      const correlationIdForActor = (res.getHeader('x-correlation-id') as string | undefined) ?? '';
-      const actorId = reqDevice
-        ? `peer:${reqDevice.name}`
-        : `loopback:${correlationIdForActor}`;
-      await withLogContext({ actor_id: actorId }, () =>
-        session!.transport.handleRequest(req, res, req.body),
-      );
+      // Phase 4.5 — actor_id was stamped by the global middleware above,
+      // so the chokepoint gate's `logContext.getStore()?.actor_id` is
+      // available inside transport.handleRequest without per-route
+      // re-wrapping. The Phase 2 inline wrap is gone — the lift to a
+      // general middleware also covers the /dashboard/.../respond path
+      // that Phase 4.5's mayRespond depends on.
+      await session!.transport.handleRequest(req, res, req.body);
 
       // After handleRequest, sessionId is populated on the first POST.
       // Register so subsequent requests find the same session.
@@ -2482,12 +2499,40 @@ export function mountDashboardRoutes(
       res.status(404).json({ error: 'not_found' });
       return;
     }
-    const responder = body.responder || 'dashboard-user';
+    // family-mode-phase-1 Phase 4.5 — same verified-identity discipline
+    // as the respond_to_decision MCP tool. The `body.responder` field is
+    // advisory only; the authorization identity comes from the actor_id
+    // stamped by the upstream middleware (logContext.actor_id) which
+    // reads the kernel-enforced loopback signal or req.device. The
+    // dashboard mounts under /dashboard/* which is loopback-only by the
+    // bind itself (ADR-006), so verifiedCaller will be `loopback:*` or
+    // `unstamped-loopback` here in practice.
+    const verifiedCaller = logContext.getStore()?.actor_id ?? 'unstamped-loopback';
+    const policy = mayRespond(existing, verifiedCaller);
+    if (!policy.ok) {
+      await broker.publish({
+        kind: 'decision_self_approval_rejected',
+        at: new Date().toISOString(),
+        correlation_id: corr,
+        source_agent: verifiedCaller,
+        payload: {
+          error: policy.error,
+          attempted_responder: body.responder ?? null,
+          verified_caller: verifiedCaller,
+          decision_source_agent: existing.source_agent,
+          decision_tier: existing.tier,
+          chosen_option_id: body.chosen_option_id,
+          reason: policy.reason,
+        },
+      });
+      res.status(403).json({ ok: false, error: policy.error });
+      return;
+    }
     const result = broker.store.respondToDecision(
       corr,
       body.chosen_option_id,
       body.reason ?? '',
-      responder,
+      verifiedCaller,
     );
     if (!result.ok) {
       if (result.error === 'already_responded') {
@@ -2495,11 +2540,11 @@ export function mountDashboardRoutes(
           kind: 'decision_late_response',
           at: new Date().toISOString(),
           correlation_id: corr,
-          source_agent: responder,
+          source_agent: verifiedCaller,
           payload: {
             chosen_option_id: body.chosen_option_id,
             reason: body.reason,
-            responder,
+            responder: verifiedCaller,
             fallback_was: existing.chosen_option_id,
           },
         });
@@ -2511,11 +2556,11 @@ export function mountDashboardRoutes(
       kind: 'decision_response',
       at: result.result.responded_at,
       correlation_id: corr,
-      source_agent: responder,
+      source_agent: verifiedCaller,
       payload: {
         chosen_option_id: body.chosen_option_id,
         reason: body.reason,
-        responder,
+        responder: verifiedCaller,
       },
     });
     res.json({ ok: true, responded_at: result.result.responded_at });

@@ -155,7 +155,8 @@ describe('Decide page — integration', () => {
 
   it('a responded decision shows up in the resolved section, not open', async () => {
     h.store.createDecision('d-resp', 'Run?', [{ id: 'go', label: 'Go' }, { id: 'no', label: 'No' }], 120, 'no');
-    h.store.respondToDecision('d-resp', 'go', 'manual', 'tester');
+    // Phase 4.5 — store-level operator-shape check; use a recognised label.
+    h.store.respondToDecision('d-resp', 'go', 'manual', 'user-direct');
     const r = await fetch(`${h.base}/dashboard/decide`);
     const body = await r.text();
     expect(body).toContain('Run?');

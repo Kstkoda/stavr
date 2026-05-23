@@ -1047,7 +1047,7 @@ export class EventStore {
           | 'expired'
           | 'invalid_option'
           | 'responder_is_requester'
-          | 'explicit_requires_operator';
+          | 'operator_required';
       } {
     const existing = this.getDecision(correlationId);
     if (!existing) return { ok: false, error: 'not_found' };
@@ -1057,34 +1057,52 @@ export class EventStore {
     const validIds = new Set(existing.options.map((o) => o.id));
     if (!validIds.has(chosenOptionId)) return { ok: false, error: 'invalid_option' };
 
-    // family-mode-phase-1 Phase 4 — respond-time validation.
+    // family-mode-phase-1 Phase 4.5 — respond-time validation.
+    //
+    // The PRIMARY authorization gate lives in `src/security/respond-
+    // policy.ts::mayRespond` and runs at the call site (the
+    // respond_to_decision MCP tool and the /dashboard/.../respond HTTP
+    // route), operating on a VERIFIED caller derived from
+    // logContext.actor_id — NOT from any string the caller supplied. The
+    // store-level checks below are defense-in-depth: if a future caller
+    // forgets to call mayRespond, the store still refuses garbage
+    // responders and enforces the no-self-approval invariant.
     //
     // The synthetic `switch-default` responder is the timeout-fallback
-    // path and bypasses both checks below; it is never an actor, never
-    // collides with source_agent, and must remain able to close any
-    // open decision so the gate cannot hang past its deadline.
+    // path (`runChokepointDecision`, `gatedAction`) and bypasses both
+    // checks — it is never an actor, never collides with source_agent,
+    // and must remain able to close any open decision so the gate
+    // cannot hang past its deadline.
     //
-    // Otherwise:
-    //  - Self-approval: if the original requester is known (source_agent
-    //    IS NOT NULL on the decision row), a response from that same
-    //    agent is rejected. Legacy decisions predate the column → NULL →
-    //    "cannot determine requester" → fall open. Enforcement applies
-    //    only to decisions opened after Phase 4 — those all stamp it.
-    //  - EXPLICIT operator-only: a decision opened at tier EXPLICIT can
-    //    only be answered by `user-direct` (operator from the dashboard
-    //    session) or `switch-default`. Agent-relayed responders such as
-    //    `cowork-user`, `cowork-auto`, `cc`, `peer:*` are refused. Per
-    //    Phase 0 §7 Q3: declared identity is the line for this BOM, but
-    //    EXPLICIT is verified-only at respond time — Phase 3 already
-    //    requires a recent WebAuthn assertion at gate time, and Phase 4
-    //    keeps the loop closed by requiring the operator at respond time
-    //    too.
+    //   1. Self-approval: a non-NULL source_agent matching responder is
+    //      refused. Legacy rows (NULL source_agent) fall open — Phase 4.5
+    //      enforcement applies only to decisions stamped after Phase 4
+    //      landed, and those all stamp it.
+    //
+    //   2. Operator-shape: the responder string must look like one of
+    //      the known verified-channel labels. Today's accepted set:
+    //        - `unstamped-loopback` (stdio MCP, no HTTP middleware)
+    //        - `loopback:<corr>`    (HTTP /mcp loopback, verified by transport)
+    //        - `dashboard-user`     (legacy /dashboard/respond label)
+    //        - `user-direct`        (legacy operator label)
+    //        - `notify:*`           (legacy verified-remote via the notify
+    //                                subsystem's HMAC sigil — documented
+    //                                carve-out; widening for verified-
+    //                                remote operators is the operator's
+    //                                design call per Phase 4.5 stop
+    //                                condition, and would land in
+    //                                respond-policy.ts::mayRespond)
+    //      Anything else (`cc`, `cowork-user`, `cowork-auto`, `peer:*`,
+    //      arbitrary strings) is refused with `operator_required`. The
+    //      primary tool-layer mayRespond is stricter (loopback-only);
+    //      this fence catches misconfigured callers without breaking
+    //      existing verified channels.
     if (responder !== 'switch-default') {
       if (existing.source_agent && responder === existing.source_agent) {
         return { ok: false, error: 'responder_is_requester' };
       }
-      if (existing.tier === 'EXPLICIT' && responder !== 'user-direct') {
-        return { ok: false, error: 'explicit_requires_operator' };
+      if (!isOperatorShapedResponder(responder)) {
+        return { ok: false, error: 'operator_required' };
       }
     }
 
@@ -2048,4 +2066,22 @@ function workerRowToRecord(row: WorkerRow): WorkerRecord {
     exit_code: row.exit_code ?? undefined,
     lifecycle_state: row.lifecycle_state ?? undefined,
   };
+}
+
+/**
+ * family-mode-phase-1 Phase 4.5 — store-level defense-in-depth: does
+ * `responder` look like one of the known verified-channel labels? See
+ * the long-form comment in `respondToDecision` for the accepted set
+ * and why each is in it. The PRIMARY authorization gate is
+ * `src/security/respond-policy.ts::mayRespond` which is loopback-only
+ * (stricter); this fence is broader to keep existing verified channels
+ * (notify subsystem, legacy dashboard endpoint) working.
+ */
+function isOperatorShapedResponder(responder: string): boolean {
+  if (responder === 'unstamped-loopback') return true;
+  if (responder.startsWith('loopback:')) return true;
+  if (responder === 'dashboard-user') return true;
+  if (responder === 'user-direct') return true;
+  if (responder.startsWith('notify:')) return true;
+  return false;
 }

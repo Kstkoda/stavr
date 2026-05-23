@@ -30,6 +30,7 @@ import { EventStore } from '../../src/persistence.js';
 import { Broker } from '../../src/broker.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerDecisionTools } from '../../src/tools/decisions.js';
+import { logContext } from '../../src/observability/logger.js';
 
 describe('respondToDecision validation (Phase 4)', () => {
   let store: EventStore;
@@ -100,14 +101,19 @@ describe('respondToDecision validation (Phase 4)', () => {
       const row = store.getDecision('legacy-1');
       expect(row?.source_agent).toBeUndefined();
 
-      // A responder identical to the requester's likely identity ('cc')
-      // still passes — there is no source_agent to compare against.
-      const r = store.respondToDecision('legacy-1', 'approve', 'legacy', 'cc');
+      // Phase 4.5 — the operator-shape check still applies to legacy rows;
+      // a non-operator-shaped responder ('cc') is rejected with
+      // operator_required. The PURPOSE of this case is to show the
+      // self-approval check falls open on NULL source_agent — we prove
+      // that by using a recognised operator-shaped responder and seeing
+      // it succeed even though it equals 'cc' would have been self-approval
+      // on a stamped row.
+      const r = store.respondToDecision('legacy-1', 'approve', 'legacy', 'user-direct');
       expect(r.ok).toBe(true);
     });
   });
 
-  describe('EXPLICIT operator-only', () => {
+  describe('operator-only at every tier (Phase 4.5 — was EXPLICIT-only in Phase 4)', () => {
     it('refuses an agent-relayed responder for an EXPLICIT decision', () => {
       store.createDecision(
         'explicit-1',
@@ -118,15 +124,18 @@ describe('respondToDecision validation (Phase 4)', () => {
         'peer:laptop',
         'EXPLICIT',
       );
+      // Phase 4.5 — the error code is now 'operator_required' (was
+      // 'explicit_requires_operator' in Phase 4); the rule has widened
+      // from EXPLICIT-only to operator-only at every tier.
       const r = store.respondToDecision('explicit-1', 'approve', 'try', 'cowork-user');
       expect(r.ok).toBe(false);
-      if (!r.ok) expect(r.error).toBe('explicit_requires_operator');
+      if (!r.ok) expect(r.error).toBe('operator_required');
 
       const after = store.getDecision('explicit-1');
       expect(after?.status).toBe('open');
     });
 
-    it('allows user-direct (dashboard operator) to answer an EXPLICIT decision', () => {
+    it('allows user-direct (legacy operator label) to answer an EXPLICIT decision', () => {
       store.createDecision(
         'explicit-2',
         'EXPLICIT approve?',
@@ -140,7 +149,11 @@ describe('respondToDecision validation (Phase 4)', () => {
       expect(r.ok).toBe(true);
     });
 
-    it('CONFIRM decisions accept agent-relayed responders (the rule is EXPLICIT-only)', () => {
+    it('refuses agent-relayed responders for CONFIRM decisions too (Phase 4.5 widened the rule)', () => {
+      // Phase 4 allowed 'cowork-user' at the CONFIRM tier; Phase 4.5 closes
+      // that — operator-only applies to EVERY tier, since the responder
+      // string can no longer be trusted to identify the actual caller
+      // (Phase 4.5 derives verified identity in the tool layer).
       store.createDecision(
         'confirm-1',
         'Confirm?',
@@ -150,13 +163,16 @@ describe('respondToDecision validation (Phase 4)', () => {
         'peer:laptop',
         'CONFIRM',
       );
-      const r = store.respondToDecision('confirm-1', 'approve', 'ok', 'cowork-user');
-      expect(r.ok).toBe(true);
+      const r = store.respondToDecision('confirm-1', 'approve', 'try', 'cowork-user');
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toBe('operator_required');
     });
 
-    it('decisions without a tier (gatedAction / await_decision) accept any non-requester responder', () => {
-      // gatedAction-opened decisions stamp source_agent but leave tier NULL —
-      // the EXPLICIT operator-only rule does not apply to them.
+    it('refuses agent-relayed responders for tier-less (gatedAction) decisions too', () => {
+      // Phase 4 allowed any non-requester for NULL-tier decisions; Phase
+      // 4.5 closes that as part of the operator-only-at-every-tier
+      // widening. gatedAction-opened decisions still stamp source_agent
+      // for the self-approval check but no longer have a tier-based escape.
       store.createDecision(
         'no-tier-1',
         'Approve?',
@@ -165,7 +181,22 @@ describe('respondToDecision validation (Phase 4)', () => {
         'reject',
         'cc',
       );
-      const r = store.respondToDecision('no-tier-1', 'approve', 'ok', 'cowork-user');
+      const r = store.respondToDecision('no-tier-1', 'approve', 'try', 'cowork-user');
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toBe('operator_required');
+    });
+
+    it('CONFIRM decisions accept operator-shaped responders', () => {
+      store.createDecision(
+        'confirm-ok',
+        'Confirm?',
+        [{ id: 'approve', label: 'A' }, { id: 'reject', label: 'R' }],
+        60,
+        'reject',
+        'peer:laptop',
+        'CONFIRM',
+      );
+      const r = store.respondToDecision('confirm-ok', 'approve', 'ok', 'user-direct');
       expect(r.ok).toBe(true);
     });
   });
@@ -232,7 +263,14 @@ describe('respondToDecision validation (Phase 4)', () => {
       return JSON.parse(result.content[0].text) as { ok?: boolean; error?: string };
     }
 
-    it('emits decision_self_approval_rejected when responder === source_agent', async () => {
+    it('refuses self-approval based on VERIFIED identity (not the responder arg)', async () => {
+      // Phase 4.5 — the tool ignores `args.responder` for authorization;
+      // verified identity comes from logContext.actor_id. We simulate a
+      // paired peer whose verified identity (`peer:laptop`) equals the
+      // decision's source_agent — that's the self-approval the BOM exists
+      // to refuse. The peer can pass any string they want in the
+      // `responder` arg (here 'user-direct' — spoofing the operator
+      // label); the gate refuses anyway.
       const broker = new Broker(store);
       store.createDecision(
         'tool-self-1',
@@ -240,16 +278,18 @@ describe('respondToDecision validation (Phase 4)', () => {
         [{ id: 'a', label: 'A' }],
         60,
         'a',
-        'cc',
+        'peer:laptop',
       );
       const events: Array<{ kind: string; payload?: unknown }> = [];
       const off = broker.onEvent((ev) => events.push(ev));
       try {
-        const r = await callTool(broker, {
-          correlation_id: 'tool-self-1',
-          chosen_option_id: 'a',
-          responder: 'cc',
-        });
+        const r = await logContext.run({ actor_id: 'peer:laptop' }, () =>
+          callTool(broker, {
+            correlation_id: 'tool-self-1',
+            chosen_option_id: 'a',
+            responder: 'user-direct',
+          }),
+        );
         expect(r.ok).toBe(false);
         expect(r.error).toBe('responder_is_requester');
       } finally {
@@ -258,11 +298,18 @@ describe('respondToDecision validation (Phase 4)', () => {
       const audit = events.find((e) => e.kind === 'decision_self_approval_rejected');
       expect(audit).toBeDefined();
       expect((audit?.payload as { error: string }).error).toBe('responder_is_requester');
-      expect((audit?.payload as { attempted_responder: string }).attempted_responder).toBe('cc');
-      expect((audit?.payload as { decision_source_agent: string }).decision_source_agent).toBe('cc');
+      // The advisory string the caller passed is recorded for forensics —
+      // but it did NOT drive the policy. Verified identity did.
+      expect((audit?.payload as { attempted_responder: string }).attempted_responder).toBe('user-direct');
+      expect((audit?.payload as { verified_caller: string }).verified_caller).toBe('peer:laptop');
+      expect((audit?.payload as { decision_source_agent: string }).decision_source_agent).toBe('peer:laptop');
     });
 
-    it('emits decision_self_approval_rejected when EXPLICIT decision answered by non-operator', async () => {
+    it('refuses a paired peer trying to answer an EXPLICIT decision by claiming user-direct', async () => {
+      // Phase 4.5 — the exact spoof the BOM cites: a paired peer passes
+      // `responder: 'user-direct'` to satisfy the EXPLICIT operator-only
+      // check. Verified identity is `peer:laptop` (paired remote); the
+      // gate refuses with operator_required regardless of the arg.
       const broker = new Broker(store);
       store.createDecision(
         'tool-explicit-1',
@@ -270,26 +317,80 @@ describe('respondToDecision validation (Phase 4)', () => {
         [{ id: 'a', label: 'A' }],
         60,
         'a',
-        'peer:laptop',
+        'peer:other',
         'EXPLICIT',
       );
       const events: Array<{ kind: string; payload?: unknown }> = [];
       const off = broker.onEvent((ev) => events.push(ev));
       try {
-        const r = await callTool(broker, {
-          correlation_id: 'tool-explicit-1',
-          chosen_option_id: 'a',
-          responder: 'cowork-user',
-        });
+        const r = await logContext.run({ actor_id: 'peer:laptop' }, () =>
+          callTool(broker, {
+            correlation_id: 'tool-explicit-1',
+            chosen_option_id: 'a',
+            responder: 'user-direct',
+          }),
+        );
         expect(r.ok).toBe(false);
-        expect(r.error).toBe('explicit_requires_operator');
+        expect(r.error).toBe('operator_required');
       } finally {
         off();
       }
       const audit = events.find((e) => e.kind === 'decision_self_approval_rejected');
       expect(audit).toBeDefined();
-      expect((audit?.payload as { error: string }).error).toBe('explicit_requires_operator');
+      expect((audit?.payload as { error: string }).error).toBe('operator_required');
+      expect((audit?.payload as { verified_caller: string }).verified_caller).toBe('peer:laptop');
+      expect((audit?.payload as { attempted_responder: string }).attempted_responder).toBe('user-direct');
       expect((audit?.payload as { decision_tier: string }).decision_tier).toBe('EXPLICIT');
+    });
+
+    it('allows a loopback operator (verified caller starts with loopback:) to respond', async () => {
+      // The verified caller is `loopback:corr-1` — operator-shape per the
+      // HTTP transport's actor_id stamping; mayRespond approves.
+      const broker = new Broker(store);
+      store.createDecision(
+        'tool-loopback-ok',
+        'q',
+        [{ id: 'a', label: 'A' }],
+        60,
+        'a',
+        'peer:requester',
+        'EXPLICIT',
+      );
+      const r = await logContext.run({ actor_id: 'loopback:test-corr-1' }, () =>
+        callTool(broker, {
+          correlation_id: 'tool-loopback-ok',
+          chosen_option_id: 'a',
+          responder: 'whatever',  // advisory; ignored
+        }),
+      );
+      expect(r.ok).toBe(true);
+      const after = broker.store.getDecision('tool-loopback-ok');
+      expect(after?.status).toBe('responded');
+      // The stored responder is the verified identity, NOT the arg.
+      expect(after?.responded_by).toBe('loopback:test-corr-1');
+    });
+
+    it('allows an unstamped-loopback caller (stdio / no HTTP middleware) to respond', async () => {
+      // No logContext.run wrapper — the verified caller falls through to
+      // `unstamped-loopback`, which is operator-shape (stdio is local).
+      const broker = new Broker(store);
+      store.createDecision(
+        'tool-stdio-ok',
+        'q',
+        [{ id: 'a', label: 'A' }],
+        60,
+        'a',
+        'peer:requester',
+        'CONFIRM',
+      );
+      const r = await callTool(broker, {
+        correlation_id: 'tool-stdio-ok',
+        chosen_option_id: 'a',
+        responder: 'something',
+      });
+      expect(r.ok).toBe(true);
+      const after = broker.store.getDecision('tool-stdio-ok');
+      expect(after?.responded_by).toBe('unstamped-loopback');
     });
   });
 

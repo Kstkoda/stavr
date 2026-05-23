@@ -69,7 +69,8 @@ describe('trust scope — grant + execute happy path', () => {
       if (!cid) await new Promise((r) => setTimeout(r, 10));
     }
     if (!cid) throw new Error('no open decision');
-    h.broker.store.respondToDecision(cid, 'reject', 'no', 'cowork-user');
+    // Phase 4.5 — operator-shape check rejects 'cowork-user'; use 'user-direct'.
+    h.broker.store.respondToDecision(cid, 'reject', 'no', 'user-direct');
     const granted = await grantPromise;
     expect(granted.parsed.ok).toBe(false);
 

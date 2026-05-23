@@ -92,7 +92,13 @@ describe('Phase B — decision flow', () => {
 
     const settled = await awaitPromise;
     expect(settled.parsed.chosen_option_id).toBe('a');
-    expect(settled.parsed.responder).toBe('cowork-user');
+    // Phase 4.5 — the responder ARG to respond_to_decision is advisory
+    // only; the tool records the VERIFIED actor (logContext.actor_id) as
+    // responder. In an in-memory MCP test client there is no HTTP
+    // middleware stamping actor_id, so the verified caller falls through
+    // to 'unstamped-loopback' — the loopback default the tool's policy
+    // treats as the operator.
+    expect(settled.parsed.responder).toBe('unstamped-loopback');
     expect(settled.parsed.timed_out).toBe(false);
 
     await cc.close();

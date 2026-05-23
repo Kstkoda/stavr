@@ -4,6 +4,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Broker } from '../broker.js';
 import { DecisionTimeoutError } from '../persistence.js';
 import { toolError, toolJson } from '../server.js';
+import { logContext } from '../observability/logger.js';
+import { mayRespond } from '../security/respond-policy.js';
 
 export function registerDecisionTools(server: McpServer, broker: Broker): void {
   registerAwaitDecision(server, broker);
@@ -128,11 +130,16 @@ function registerRespondToDecision(server: McpServer, broker: Broker): void {
     'respond_to_decision',
     {
       description:
-        'Resolve a pending decision. If the decision has already closed via switch-default fallback, this is recorded as a decision_late_response event but does not override the fallback.',
+        'Resolve a pending decision. Authorization is derived from VERIFIED identity (logContext.actor_id, stamped by the HTTP transport from the paired-device identity or loopback signal) — the `responder` input is advisory only and is NOT used to drive authorization. If the decision has already closed via switch-default fallback, the call is recorded as a decision_late_response event but does not override the fallback.',
       inputSchema: {
         correlation_id: z.string(),
         chosen_option_id: z.string(),
         reason: z.string().optional(),
+        /** Advisory label — kept for backwards compatibility with existing
+         *  callers. Phase 4.5 derives the actual authorization identity from
+         *  logContext.actor_id (stamped by the HTTP transport). This field
+         *  is captured in the audit trail as `attempted_responder` on a
+         *  refusal but never drives the policy check. */
         responder: z.string(),
       },
     },
@@ -142,11 +149,41 @@ function registerRespondToDecision(server: McpServer, broker: Broker): void {
         return toolJson({ ok: false, error: 'not_found' });
       }
 
+      // family-mode-phase-1 Phase 4.5 — derive the verified caller from
+      // the AsyncLocalStorage actor stamp. HTTP middleware sets it from
+      // req.device.name (paired remote → `peer:<name>`) or the loopback
+      // signal (local /mcp → `loopback:<corr>`); stdio sessions inherit
+      // nothing and fall through to `unstamped-loopback` here, which the
+      // policy treats as a loopback (operator) caller. The `args.responder`
+      // string is ignored for authorization — it is recorded on a refusal
+      // as `attempted_responder` for audit, and dropped from the success
+      // path entirely (the audit event carries the verified identity).
+      const verifiedCaller = logContext.getStore()?.actor_id ?? 'unstamped-loopback';
+      const policy = mayRespond(existing, verifiedCaller);
+      if (!policy.ok) {
+        await broker.publish({
+          kind: 'decision_self_approval_rejected',
+          at: new Date().toISOString(),
+          correlation_id: args.correlation_id,
+          source_agent: verifiedCaller,
+          payload: {
+            error: policy.error,
+            attempted_responder: args.responder,
+            verified_caller: verifiedCaller,
+            decision_source_agent: existing.source_agent,
+            decision_tier: existing.tier,
+            chosen_option_id: args.chosen_option_id,
+            reason: policy.reason,
+          },
+        });
+        return toolJson({ ok: false, error: policy.error });
+      }
+
       const result = broker.store.respondToDecision(
         args.correlation_id,
         args.chosen_option_id,
         args.reason ?? '',
-        args.responder,
+        verifiedCaller,
       );
 
       if (!result.ok) {
@@ -156,32 +193,33 @@ function registerRespondToDecision(server: McpServer, broker: Broker): void {
             kind: 'decision_late_response',
             at: new Date().toISOString(),
             correlation_id: args.correlation_id,
-            source_agent: args.responder,
+            source_agent: verifiedCaller,
             payload: {
               chosen_option_id: args.chosen_option_id,
               reason: args.reason,
-              responder: args.responder,
+              responder: verifiedCaller,
               fallback_was: existing.chosen_option_id,
             },
           });
         }
-        // family-mode-phase-1 Phase 4 — surface the self-approval and
-        // operator-only refusals to the audit trail. These are not
-        // operational errors, they are policy denies, and the auditor
-        // wants them visible (a failed self-approval attempt is exactly
-        // the signal we built this for).
+        // Defense-in-depth: if mayRespond passed but the store still
+        // refused for self-approval or operator-shape (e.g. the verified
+        // caller was somehow not loopback-shaped, which should be
+        // impossible given the mayRespond check above), surface that
+        // mismatch to the audit trail too.
         if (
           result.error === 'responder_is_requester' ||
-          result.error === 'explicit_requires_operator'
+          result.error === 'operator_required'
         ) {
           await broker.publish({
             kind: 'decision_self_approval_rejected',
             at: new Date().toISOString(),
             correlation_id: args.correlation_id,
-            source_agent: args.responder,
+            source_agent: verifiedCaller,
             payload: {
               error: result.error,
               attempted_responder: args.responder,
+              verified_caller: verifiedCaller,
               decision_source_agent: existing.source_agent,
               decision_tier: existing.tier,
               chosen_option_id: args.chosen_option_id,
@@ -195,11 +233,11 @@ function registerRespondToDecision(server: McpServer, broker: Broker): void {
         kind: 'decision_response',
         at: result.result.responded_at,
         correlation_id: args.correlation_id,
-        source_agent: args.responder,
+        source_agent: verifiedCaller,
         payload: {
           chosen_option_id: args.chosen_option_id,
           reason: args.reason,
-          responder: args.responder,
+          responder: verifiedCaller,
         },
       });
       return toolJson({ ok: true, responded_at: result.result.responded_at });

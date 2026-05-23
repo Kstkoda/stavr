@@ -137,7 +137,8 @@ describe('v0.6 P4 — inbound hardening', () => {
     });
     await tick();
     // Operator clicks in dashboard first, then via notification.
-    h.store.respondToDecision('dec-b', 'yes', 'dashboard click', 'operator');
+    // Phase 4.5 — operator-shape check requires a recognised label.
+    h.store.respondToDecision('dec-b', 'yes', 'dashboard click', 'user-direct');
     const cid = encodeURIComponent(result.correlationId);
     const r = await fetch(`${h.base}/notify/reply?cid=${cid}&action=decision%3Ayes`);
     expect(r.status).toBe(200);
@@ -145,7 +146,7 @@ describe('v0.6 P4 — inbound hardening', () => {
     const lateEvents = h.events.filter((e) => e.kind === 'decision_late_response');
     expect(lateEvents.length).toBe(1);
     // First responder still stands.
-    expect(h.store.getDecision('dec-b')?.responded_by).toBe('operator');
+    expect(h.store.getDecision('dec-b')?.responded_by).toBe('user-direct');
   });
 
   it('reply targeting unknown scope: returns 500 server-error AND records audit', async () => {

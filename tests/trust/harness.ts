@@ -130,12 +130,15 @@ export async function waitForOpenDecision(broker: Broker, timeoutMs = 2000): Pro
 }
 
 export function approve(broker: Broker, correlationId: string, reason = 'approved'): void {
-  const r = broker.store.respondToDecision(correlationId, 'approve', reason, 'cowork-user');
+  // Phase 4.5 — store-level operator-shape check rejects arbitrary
+  // responder strings. Use the legacy operator label 'user-direct' (in
+  // the documented operator-shaped set) instead of 'cowork-user'.
+  const r = broker.store.respondToDecision(correlationId, 'approve', reason, 'user-direct');
   if (!r.ok) throw new Error(`respondToDecision failed: ${(r as any).error}`);
 }
 
 export function reject(broker: Broker, correlationId: string, reason = 'rejected'): void {
-  const r = broker.store.respondToDecision(correlationId, 'reject', reason, 'cowork-user');
+  const r = broker.store.respondToDecision(correlationId, 'reject', reason, 'user-direct');
   if (!r.ok) throw new Error(`respondToDecision failed: ${(r as any).error}`);
 }
 

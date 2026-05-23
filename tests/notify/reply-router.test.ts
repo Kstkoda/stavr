@@ -55,7 +55,8 @@ describe('v0.6 ReplyRouter', () => {
 
   it('records late response when decision already responded', async () => {
     store.createDecision('dec-2', 'q', [{ id: 'yes', label: 'Approve' }], 60);
-    store.respondToDecision('dec-2', 'yes', 'fast click', 'operator');
+    // Phase 4.5 — operator-shape check requires a recognised label.
+    store.respondToDecision('dec-2', 'yes', 'fast click', 'user-direct');
 
     const actions: NotificationAction[] = [
       { label: 'Approve', action_id: 'decision:yes', kind: 'approve', target_id: 'dec-2' },
