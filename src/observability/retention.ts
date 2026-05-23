@@ -27,12 +27,14 @@
 export const OPERATIONAL_KINDS: ReadonlySet<string> = new Set([
   'daemon_memory',
   'daemon_eventloop',
+  'daemon_host_headroom',
   'worker_progress',
   'worker_log',
   'sse_session_opened',
   'sse_session_closed',
   'sse_session_force_removed',
   'mcp_session_deleted',
+  'mcp_oneshot_cleanup',
   'retention_swept',
   'perf_sample',
 ]);
@@ -138,6 +140,11 @@ export const AUDIT_KINDS: ReadonlySet<string> = new Set([
   'host_exec_started',
   'host_exec_completed',
   'host_exec_denied',
+  // Federation lineage — peer arrivals / departures and policy mutations
+  'peer_joined',
+  'peer_left',
+  'capability_override_changed',
+  'host_ceiling_os_cap',
 ]);
 
 export type RetentionClass = 'operational' | 'audit' | 'unknown';

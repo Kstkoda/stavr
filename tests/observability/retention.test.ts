@@ -22,6 +22,17 @@ describe('retentionClass', () => {
     expect(retentionClass('totally_made_up_kind_xyz')).toBe('unknown');
   });
 
+  it('classifies the previously-orphaned kinds correctly', () => {
+    // 2s-cadence telemetry + aggregated heartbeat — no audit value.
+    expect(retentionClass('daemon_host_headroom')).toBe('operational');
+    expect(retentionClass('mcp_oneshot_cleanup')).toBe('operational');
+    // Federation lineage + policy mutations — must be preserved.
+    expect(retentionClass('peer_joined')).toBe('audit');
+    expect(retentionClass('peer_left')).toBe('audit');
+    expect(retentionClass('capability_override_changed')).toBe('audit');
+    expect(retentionClass('host_ceiling_os_cap')).toBe('audit');
+  });
+
   it('partitions disjoint sets', () => {
     for (const k of OPERATIONAL_KINDS) {
       expect(AUDIT_KINDS.has(k)).toBe(false);
