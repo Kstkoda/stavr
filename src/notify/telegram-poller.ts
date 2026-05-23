@@ -89,6 +89,12 @@ export class TelegramPoller {
 
   start(): void {
     if (this.timer || !this.isConfigured()) return;
+    // Immediate first poll so inbound (callback_query / message) is live
+    // within seconds of daemon start instead of intervalMs (30s default)
+    // later. Guarded identically to the interval tick.
+    this.pollOnce().catch((err) =>
+      getLogger().warn('telegram-poller: tick failed', { error: (err as Error).message }),
+    );
     this.timer = setInterval(() => {
       this.pollOnce().catch((err) =>
         getLogger().warn('telegram-poller: tick failed', { error: (err as Error).message }),
