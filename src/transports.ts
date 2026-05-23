@@ -2,6 +2,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import type { Server as HttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
+import { STAVR_VERSION } from './version.generated.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
@@ -310,7 +311,13 @@ export async function mountTransports(
     });
 
     const daemonStartedAt = new Date();
-    const version = process.env.STAVR_VERSION ?? '0.1.0';
+    // Bombardment Phase 0 — version is baked at build time from
+    // package.json#version (see scripts/generate-version.mjs). Recon
+    // defect #5: pre-fix, /status reported '0.1.0' on every launch
+    // path because STAVR_VERSION was never populated. The build-time
+    // bake works in the SEA / sidecar / Windows Service where a
+    // runtime package.json read would not.
+    const version = STAVR_VERSION;
     const now = opts.now ?? Date.now;
 
     // Deep health endpoint (spec 44 §3). Anything that flips `ok` to false makes
