@@ -9,7 +9,7 @@
  * other in time stay near each other in the row order, regardless of
  * which side of the start/complete pair completed first.
  */
-import type Database from 'better-sqlite3';
+import type { Database } from '../../../db/index.js';
 import {
   type HistoryItem,
   type HistoryPage,
@@ -27,7 +27,7 @@ export interface HostExecHistoryQuery extends HistoryQuery {
 }
 
 export interface HostExecHistorySources {
-  db: Database.Database;
+  db: Database;
 }
 
 export interface HostExecPayload {

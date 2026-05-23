@@ -11,9 +11,10 @@
 import { describe, expect, it } from 'vitest';
 import { walkCorrelation, renderTraceHtml } from '../../../../src/dashboard/data/history/correlation.js';
 import { makeStore } from './helpers.js';
+import type { Database } from '../../../../src/db/index.js';
 
 let seq = 5000;
-function ev(db: import('better-sqlite3').Database, args: {
+function ev(db: Database, args: {
   id: string;
   kind: string;
   at: string;

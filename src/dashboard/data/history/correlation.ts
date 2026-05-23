@@ -23,7 +23,7 @@
  * mostly a chain in practice; we return a flattened DAG with
  * indent-depth annotations so the UI can render it as a tree.
  */
-import type Database from 'better-sqlite3';
+import type { Database } from '../../../db/index.js';
 import type { HistoryItem, HistoryKind } from './types.js';
 import { fetchDecisionsHistory } from './decisions.js';
 import { fetchScopesHistory } from './scopes.js';
@@ -56,7 +56,7 @@ export interface TraceResult {
 }
 
 export interface CorrelationSources {
-  db: Database.Database;
+  db: Database;
 }
 
 interface EventRow {
@@ -80,7 +80,7 @@ function safeJson<T>(s: string): T | null {
 function resolveCorrelationId(
   kind: string,
   id: string,
-  db: Database.Database,
+  db: Database,
 ): string | null {
   switch (kind) {
     case 'decision': {
@@ -119,7 +119,7 @@ function resolveCorrelationId(
  * (last 90d) so we don't drop rows older than the page's current view.
  */
 function fetchByCorrelation(
-  db: Database.Database,
+  db: Database,
   correlationId: string,
 ): HistoryItem[] {
   const wideRange = {
@@ -187,7 +187,7 @@ function fetchByCorrelation(
  * shaped like an EventRow; the caller may further translate it.
  */
 function resolveNotificationParent(
-  db: Database.Database,
+  db: Database,
   notificationId: string,
 ): EventRow | null {
   const row = db.prepare(

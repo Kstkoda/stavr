@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { fetchDecisionsHistory } from '../../../../src/dashboard/data/history/decisions.js';
 import { makeStore } from './helpers.js';
+import type { Database } from '../../../../src/db/index.js';
 
-function seed(db: import('better-sqlite3').Database, rows: Array<Partial<{
+function seed(db: Database, rows: Array<Partial<{
   correlation_id: string;
   question: string;
   options_json: string;

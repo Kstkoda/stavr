@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import Database from 'better-sqlite3';
 import { EventStore } from '../../src/persistence.js';
 import {
   AUDIT_KINDS,
@@ -87,7 +86,7 @@ describe('EventStore.pruneEvents', () => {
     });
     // Backdate the first row by 30 days.
     const oldIso = new Date(Date.now() - 30 * 86_400_000).toISOString();
-    const db: Database.Database = (store as unknown as { db: Database.Database }).db;
+    const db = store.rawDb;
     const ids = db.prepare(`SELECT id FROM events ORDER BY seq ASC`).all() as { id: string }[];
     db.prepare(`UPDATE events SET created_at = ? WHERE id = ?`).run(oldIso, ids[0].id);
 
@@ -147,7 +146,7 @@ describe('EventStore.pruneEvents', () => {
       source_agent: 'test',
       payload: { id: 'old' },
     });
-    const db: Database.Database = (store as unknown as { db: Database.Database }).db;
+    const db = store.rawDb;
     db.prepare(`UPDATE events SET created_at = ?`).run(new Date(Date.now() - 200 * 86_400_000).toISOString());
 
     const result = store.pruneEvents({ auditDays: 90 });

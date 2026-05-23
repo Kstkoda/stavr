@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { openDatabase, type Database } from './db/index.js';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -115,7 +115,7 @@ export interface EventStoreInitResult {
 }
 
 export class EventStore {
-  private db!: Database.Database;
+  private db!: Database;
   private responses = new EventEmitter();
   /** Set to the quarantined path if init() had to rebuild the DB from scratch. */
   recoveredCorruptDbPath?: string;
@@ -153,12 +153,12 @@ export class EventStore {
   }
 
   private openAndMigrate(dbPath: string): void {
-    this.db = new Database(dbPath);
+    this.db = openDatabase(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
-    // Quick integrity check — better-sqlite3 doesn't always throw on open even
-    // when pages are corrupt. If this fails, openAndMigrate's caller (init)
-    // catches and quarantines.
+    // Quick integrity check — the SQLite engine doesn't always throw on open
+    // even when pages are corrupt. If this fails, openAndMigrate's caller
+    // (init) catches and quarantines.
     const integrity = this.db.prepare(`PRAGMA integrity_check`).get() as { integrity_check: string };
     if (integrity && integrity.integrity_check !== 'ok') {
       throw new Error(`sqlite integrity_check failed: ${integrity.integrity_check}`);
@@ -696,7 +696,7 @@ export class EventStore {
   }
 
   /** Raw DB handle for the TrustStore sibling. Avoids reopening the SQLite file. */
-  get rawDb(): Database.Database {
+  get rawDb(): Database {
     return this.db;
   }
 

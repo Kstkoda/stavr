@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
+import { openDatabase } from '../../src/db/index.js';
 import { EventStore } from '../../src/persistence.js';
 
 function tmp(): { dbPath: string; cleanup: () => void } {
@@ -31,7 +31,7 @@ describe('workers.lifecycle_state additive migration', () => {
     const store = new EventStore();
     try {
       store.init(dbPath);
-      const db = new Database(dbPath);
+      const db = openDatabase(dbPath);
       const cols = db.prepare(`PRAGMA table_info(workers)`).all() as Array<{ name: string }>;
       db.close();
       const names = cols.map((c) => c.name);
@@ -48,7 +48,7 @@ describe('workers.lifecycle_state additive migration', () => {
     try {
       // Build a pre-migration workers table by hand to simulate an older
       // on-disk DB. This is the v0.6.5 schema (no lifecycle_state).
-      const old = new Database(dbPath);
+      const old = openDatabase(dbPath);
       old.exec(`
         CREATE TABLE workers (
           id TEXT PRIMARY KEY,
@@ -77,7 +77,7 @@ describe('workers.lifecycle_state additive migration', () => {
       store = new EventStore();
       store.init(dbPath);
 
-      const db = new Database(dbPath);
+      const db = openDatabase(dbPath);
       const cols = db.prepare(`PRAGMA table_info(workers)`).all() as Array<{ name: string }>;
       const legacy = db.prepare(`SELECT id, lifecycle_state FROM workers WHERE id='w1'`).get() as {
         id: string;

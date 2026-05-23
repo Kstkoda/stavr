@@ -8,12 +8,12 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type Database from 'better-sqlite3';
+import type { Database } from '../../../db/index.js';
 import { renderSafeMarkdown } from '../../components/history-drawer.js';
 import { renderSourceLink, gitHubCommitUrl, gitHubPrUrl } from '../../components/source-link.js';
 
 export interface DetailSources {
-  db: Database.Database;
+  db: Database;
   bomsDir: string;
   /** GitHub repo coords (owner/name) for commit/PR cross-links. Optional. */
   githubRepo?: string;
@@ -60,7 +60,7 @@ function renderBomFileDetail(id: string, bomsDir: string): DetailResult {
   };
 }
 
-function renderDecisionDetail(id: string, db: Database.Database): DetailResult {
+function renderDecisionDetail(id: string, db: Database): DetailResult {
   const row = db.prepare(`SELECT * FROM decisions WHERE correlation_id = ?`).get(id) as
     | {
         correlation_id: string;
@@ -98,7 +98,7 @@ function renderDecisionDetail(id: string, db: Database.Database): DetailResult {
   };
 }
 
-function renderScopeDetail(id: string, db: Database.Database): DetailResult {
+function renderScopeDetail(id: string, db: Database): DetailResult {
   const row = db.prepare(`SELECT * FROM trust_scopes WHERE id = ?`).get(id) as
     | {
         id: string;
@@ -143,7 +143,7 @@ function renderScopeDetail(id: string, db: Database.Database): DetailResult {
   };
 }
 
-function renderPlanDetail(id: string, db: Database.Database): DetailResult {
+function renderPlanDetail(id: string, db: Database): DetailResult {
   const row = db.prepare(`SELECT * FROM boms WHERE id = ?`).get(id) as
     | {
         id: string;
@@ -184,7 +184,7 @@ function renderPlanDetail(id: string, db: Database.Database): DetailResult {
   };
 }
 
-function renderHostExecDetail(id: string, db: Database.Database): DetailResult {
+function renderHostExecDetail(id: string, db: Database): DetailResult {
   const start = db.prepare(`SELECT * FROM events WHERE id = ?`).get(id) as
     | { id: string; kind: string; correlation_id: string | null; payload_json: string; at: string }
     | undefined;
@@ -233,7 +233,7 @@ function renderCommitDetail(id: string, repo?: string): DetailResult {
   };
 }
 
-function renderCiDetail(id: string, db: Database.Database): DetailResult {
+function renderCiDetail(id: string, db: Database): DetailResult {
   // CI runs aren't persisted in our DB — we only have the URL passed via
   // the page's runs array. The drawer surfaces a minimal "click out"
   // hint; the operator's primary affordance is the row's own ↗ link.
@@ -244,7 +244,7 @@ function renderCiDetail(id: string, db: Database.Database): DetailResult {
   };
 }
 
-function renderNotificationDetail(id: string, db: Database.Database): DetailResult {
+function renderNotificationDetail(id: string, db: Database): DetailResult {
   const row = db.prepare(`SELECT * FROM notifications WHERE id = ?`).get(id) as
     | {
         id: string;

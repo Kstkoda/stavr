@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { fetchPlansHistory } from '../../../../src/dashboard/data/history/plans.js';
 import { makeStore } from './helpers.js';
+import type { Database } from '../../../../src/db/index.js';
 
-function seedBom(db: import('better-sqlite3').Database, override: Partial<{
+function seedBom(db: Database, override: Partial<{
   id: string;
   goal: string;
   status: string;

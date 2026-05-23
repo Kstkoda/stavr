@@ -8,7 +8,7 @@
 //
 // Mirrors the WAL + foreign_keys pragmas EventStore uses (src/persistence.ts).
 
-import Database from 'better-sqlite3';
+import { openDatabase, type Database } from '../../db/index.js';
 import { mkdirSync, readFileSync, existsSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,7 +75,7 @@ function loadMigrationsMatching(prefix: string): MigrationFile[] {
  * Apply one set of migration files to a single DB. Idempotent: records each
  * version in schema_migrations and skips on re-run.
  */
-function applyMigrations(db: Database.Database, migrations: MigrationFile[]): void {
+function applyMigrations(db: Database, migrations: MigrationFile[]): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version TEXT PRIMARY KEY,
@@ -96,16 +96,16 @@ function applyMigrations(db: Database.Database, migrations: MigrationFile[]): vo
   }
 }
 
-function openWithPragmas(filePath: string): Database.Database {
+function openWithPragmas(filePath: string): Database {
   if (filePath !== ':memory:') mkdirSync(dirname(filePath), { recursive: true });
-  const db = new Database(filePath);
+  const db = openDatabase(filePath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');
   return db;
 }
 
-function makeMemoryStore(db: Database.Database): MemoryStore {
+function makeMemoryStore(db: Database): MemoryStore {
   const setWorkingStmt = db.prepare(
     `INSERT INTO working_memory (key, value_json, updated_at) VALUES (?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
@@ -179,7 +179,7 @@ function makeMemoryStore(db: Database.Database): MemoryStore {
   } satisfies MemoryStore;
 }
 
-function makeLessonsStore(db: Database.Database): LessonsStore {
+function makeLessonsStore(db: Database): LessonsStore {
   const insertStmt = db.prepare(
     `INSERT INTO lessons (id, title, body, source, distilled_from_json, created_at, status)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -230,7 +230,7 @@ function makeLessonsStore(db: Database.Database): LessonsStore {
   } satisfies LessonsStore;
 }
 
-function makePrefsStore(db: Database.Database): PrefsStore {
+function makePrefsStore(db: Database): PrefsStore {
   const getStmt = db.prepare(`SELECT value_json FROM prefs WHERE key = ?`);
   const setStmt = db.prepare(
     `INSERT INTO prefs (key, value_json, updated_at) VALUES (?, ?, ?)

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type Database from 'better-sqlite3';
+import type { Database } from '../db/index.js';
 import type { EventStore } from '../persistence.js';
 import { scopeCovers } from './matcher.js';
 import type {
@@ -51,7 +51,7 @@ export interface RecordedScopeAction {
 }
 
 export class TrustStore {
-  private readonly db: Database.Database;
+  private readonly db: Database;
 
   constructor(eventStore: EventStore) {
     this.db = eventStore.rawDb;

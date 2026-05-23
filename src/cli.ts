@@ -717,11 +717,7 @@ interface PermissionsStores {
 function openPermissionsStores(dbPath: string): PermissionsStores {
   const store = new EventStore();
   store.init(dbPath);
-  const db = (store as unknown as { db: import('better-sqlite3').Database }).db;
-  if (!db) {
-    store.close();
-    throw new Error('permissions CLI requires direct DB access — EventStore did not expose .db');
-  }
+  const db = store.rawDb;
   return {
     store,
     caps: new CapabilityOverrideStore(db),

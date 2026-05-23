@@ -7,6 +7,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventStore } from '../../src/persistence.js';
+import type { Database } from '../../src/db/index.js';
 import { renderHistoryDetail, gitHubCommitUrl, gitHubPrUrl } from '../../src/dashboard/data/history/detail.js';
 import {
   classifyLink,
@@ -78,7 +79,7 @@ describe('gitHubCommitUrl + gitHubPrUrl', () => {
 
 describe('renderHistoryDetail', () => {
   let store: EventStore;
-  let db: import('better-sqlite3').Database;
+  let db: Database;
   let bomsDir: string;
 
   beforeEach(() => {

@@ -14,7 +14,7 @@
 // auth — verify still requires the full signature, which we read from DB.
 
 import { request } from 'node:https';
-import type Database from 'better-sqlite3';
+import type { Database } from '../db/index.js';
 import type { Broker } from '../broker.js';
 import { getLogger } from '../log.js';
 import { verifyCorrelationId } from './correlation.js';
@@ -34,7 +34,7 @@ export interface TelegramPollerOpts {
   router: ReplyRouter;
   secret: string;
   /** DB handle for prefix→full-cid lookup. */
-  db: Database.Database;
+  db: Database;
   /** Test override for HTTPS. */
   transport?: TgTransport;
   /** Poll interval ms. */

@@ -20,7 +20,7 @@
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import type Database from 'better-sqlite3';
+import type { Database } from '../../../db/index.js';
 import {
   type HistoryItem,
   type HistoryPage,
@@ -33,7 +33,7 @@ export interface BomsHistorySources {
   /** Absolute path to the BOM directory (typically `<repo>/proposed`). */
   bomsDir: string;
   /** Optional DB handle — when present, the fetcher cross-refs boms.id. */
-  db?: Database.Database;
+  db?: Database;
 }
 
 export interface BomFilePayload {
@@ -76,7 +76,7 @@ function listBomFiles(dir: string): string[] {
   }
 }
 
-function fileToItem(abs: string, db: Database.Database | undefined): HistoryItem {
+function fileToItem(abs: string, db: Database | undefined): HistoryItem {
   const filename = basename(abs);
   // First read the file (we need frontmatter + title even when stat fails;
   // unlikely but defensive). If both fail we synthesize a missing-row.
