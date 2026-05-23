@@ -19,12 +19,16 @@
     "targets": "all",
     "category": "DeveloperTool",
     "shortDescription": "stavR Governor — supervises the stavR daemon",
-    "longDescription": "Tray companion for the stavR personal MCP gateway. Auto-restarts the daemon on crash with exponential backoff, surfaces health state via the tray icon, and (in v0.6.5 PR #2) renders OS-level toast notifications.",
+    "longDescription": "Tray companion for the stavR personal MCP gateway. Auto-restarts the daemon on crash with exponential backoff, surfaces health state via the tray icon, and renders OS-level toast notifications. As of Phase 4 of family-mode-phase-2, the installer carries the stavR daemon itself as a Tauri externalBin sidecar — one signed installer per OS is a complete stavR.",
     "icon": [
       "icons/raido-32.png",
       "icons/raido-128.png",
       "icons/raido-256.png",
       "icons/raido-icon.ico"
-    ]
+    ],
+    "externalBin": [
+      "binaries/stavr-daemon"
+    ],
+    "resources": []
   }
 }

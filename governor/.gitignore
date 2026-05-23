@@ -6,3 +6,7 @@ gen/
 # Cargo.lock IS committed for binary crates (reproducible release builds).
 *.icns
 **/.DS_Store
+# Tauri externalBin sidecar drop-zone — populated per-target by
+# governor-release.yml (Phase 4 of family-mode-phase-2). The actual SEA
+# binaries are large and target-specific; never commit them.
+binaries/

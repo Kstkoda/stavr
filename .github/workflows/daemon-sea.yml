@@ -3,6 +3,10 @@ name: daemon-sea
 # Phase 3 of family-mode-phase-2-bom.md — compile the daemon to a single
 # standalone executable per platform (Node Single Executable Application).
 #
+# The actual SEA build steps live in the composite action
+# `.github/actions/build-daemon-sea` so the governor-release workflow can
+# reuse the same logic when assembling Tauri sidecars (Phase 4).
+#
 # Possible now that Phase 2 swapped the persistence engine from
 # better-sqlite3 (native C++ addon) to node:sqlite (built into Node).
 # With no native addon to embed, SEA becomes the install story: one
@@ -12,30 +16,16 @@ name: daemon-sea
 # linux-x64. linux-arm64 / Raspberry Pi is optional — added later only
 # if a family machine needs it.
 #
-# Strategy:
-#   1. setup-node grabs Node 26.x on the host runner (build + blob
-#      generation tooling).
-#   2. esbuild bundles `dist/cli.js` (ESM, post-tsc) into a single CJS
-#      file. SEA requires one main script; `node:*` builtins and the
-#      dynamic `wincred` optional dep are marked external.
-#   3. `node --experimental-sea-config sea-config.json` produces
-#      `sea-prep.blob`.
-#   4. We download the target-arch Node release binary from nodejs.org
-#      (same version as the host's installed Node) — postject injects
-#      the blob into bytes, no execution of the target binary, so
-#      cross-arch injection works on a single host runner.
-#   5. macOS: re-sign ad-hoc after injection (the original code signature
-#      becomes invalid the moment we modify the Mach-O).
-#
 # Artifacts are uploaded as workflow artifacts (audit trail / inspection).
-# Signing + publishing the SEAs as release artifacts is a follow-up phase
-# (Phase 4 / governor-release.yml integration).
+# Signing + publishing the SEAs as release artifacts is the responsibility
+# of governor-release.yml (Phase 4).
 
 on:
   push:
     branches: [main]
     paths:
       - '.github/workflows/daemon-sea.yml'
+      - '.github/actions/build-daemon-sea/**'
       - 'sea-config.json'
       - 'package.json'
       - 'package-lock.json'
@@ -44,6 +34,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/daemon-sea.yml'
+      - '.github/actions/build-daemon-sea/**'
       - 'sea-config.json'
       - 'package.json'
       - 'package-lock.json'
@@ -54,12 +45,6 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  # Pinned in lockstep with ci.yml. `engines.node` floor stays >=25.7.
-  NODE_VERSION: '26.x'
-  ESBUILD_VERSION: '0.24.0'
-  POSTJECT_VERSION: '1.0.0-alpha.6'
 
 jobs:
   sea:
@@ -84,164 +69,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js (host build toolchain)
-        uses: actions/setup-node@v4
+      - name: Build SEA
+        id: sea
+        uses: ./.github/actions/build-daemon-sea
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Resolve Node release version
-        id: node
-        shell: bash
-        run: |
-          # The Node we just installed is the version whose binary we'll
-          # download for every target arch — keeps the host build
-          # toolchain and the embedded Node in lockstep.
-          NODE_RELEASE="v$(node -p 'process.versions.node')"
-          echo "release=${NODE_RELEASE}" >> "${GITHUB_OUTPUT}"
-          echo "Resolved Node release: ${NODE_RELEASE}"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: TypeScript build
-        run: npm run build
-
-      - name: Bundle daemon to single CJS file (esbuild)
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p build/sea
-          # SEA requires a single main script. esbuild bundles the entire
-          # daemon (200+ files under dist/) into one CJS file.
-          # Externals:
-          #   - node:*           — built into Node, must not be bundled.
-          #   - wincred          — optional native dep, dynamically
-          #                        imported via runtime-computed string;
-          #                        fallback path handles its absence.
-          npx --yes esbuild@${{ env.ESBUILD_VERSION }} \
-            dist/cli.js \
-            --bundle \
-            --platform=node \
-            --format=cjs \
-            --target=node26 \
-            --external:node:* \
-            --external:wincred \
-            --outfile=build/sea/stavr-daemon.cjs
-          ls -la build/sea/
-
-      - name: Generate SEA preparation blob
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --experimental-sea-config sea-config.json
-          ls -la build/sea/
-
-      - name: Download target Node binary (Unix)
-        if: matrix.target.bin_ext == ''
-        shell: bash
-        env:
-          NODE_RELEASE: ${{ steps.node.outputs.release }}
-          NODE_ARCH: ${{ matrix.target.node_arch }}
-        run: |
-          set -euo pipefail
-          ARCHIVE="node-${NODE_RELEASE}-${NODE_ARCH}.tar.gz"
-          curl -fsSL -o "build/sea/${ARCHIVE}" \
-            "https://nodejs.org/dist/${NODE_RELEASE}/${ARCHIVE}"
-          mkdir -p build/sea/node-target
-          tar -xzf "build/sea/${ARCHIVE}" -C build/sea/node-target
-          cp "build/sea/node-target/node-${NODE_RELEASE}-${NODE_ARCH}/bin/node" \
-             "build/sea/stavr-daemon"
-          chmod +x "build/sea/stavr-daemon"
-          ls -la build/sea/
-
-      - name: Download target Node binary (Windows)
-        if: matrix.target.bin_ext == '.exe'
-        shell: bash
-        env:
-          NODE_RELEASE: ${{ steps.node.outputs.release }}
-          NODE_ARCH: ${{ matrix.target.node_arch }}
-        run: |
-          set -euo pipefail
-          ARCHIVE="node-${NODE_RELEASE}-${NODE_ARCH}.zip"
-          curl -fsSL -o "build/sea/${ARCHIVE}" \
-            "https://nodejs.org/dist/${NODE_RELEASE}/${ARCHIVE}"
-          mkdir -p build/sea/node-target
-          unzip -q -d build/sea/node-target "build/sea/${ARCHIVE}"
-          cp "build/sea/node-target/node-${NODE_RELEASE}-${NODE_ARCH}/node.exe" \
-             "build/sea/stavr-daemon.exe"
-          ls -la build/sea/
-
-      - name: Strip macOS signature (pre-injection)
-        if: startsWith(matrix.target.node_arch, 'darwin-')
-        shell: bash
-        run: |
-          # Removing the original Node code signature is required before
-          # postject modifies the Mach-O — otherwise codesign refuses to
-          # re-sign a tampered binary.
-          codesign --remove-signature build/sea/stavr-daemon || true
-
-      - name: Inject SEA blob (postject, macOS)
-        if: startsWith(matrix.target.node_arch, 'darwin-')
-        shell: bash
-        run: |
-          set -euo pipefail
-          npx --yes postject@${{ env.POSTJECT_VERSION }} \
-            build/sea/stavr-daemon \
-            NODE_SEA_BLOB \
-            build/sea/sea-prep.blob \
-            --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 \
-            --macho-segment-name NODE_SEA
-
-      - name: Inject SEA blob (postject, Linux)
-        if: matrix.target.node_arch == 'linux-x64'
-        shell: bash
-        run: |
-          set -euo pipefail
-          npx --yes postject@${{ env.POSTJECT_VERSION }} \
-            build/sea/stavr-daemon \
-            NODE_SEA_BLOB \
-            build/sea/sea-prep.blob \
-            --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
-
-      - name: Inject SEA blob (postject, Windows)
-        if: matrix.target.bin_ext == '.exe'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Authenticode signature (if any) on the downloaded node.exe
-          # becomes invalid after injection. That's expected — release
-          # signing is a downstream concern, not Phase 3.
-          npx --yes postject@${{ env.POSTJECT_VERSION }} \
-            build/sea/stavr-daemon.exe \
-            NODE_SEA_BLOB \
-            build/sea/sea-prep.blob \
-            --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
-
-      - name: Re-sign macOS binary (ad-hoc)
-        if: startsWith(matrix.target.node_arch, 'darwin-')
-        shell: bash
-        run: |
-          # Ad-hoc signature so the kernel will load the modified Mach-O.
-          # Proper Developer ID signing happens downstream.
-          codesign --sign - --force build/sea/stavr-daemon
+          target-name: ${{ matrix.target.name }}
+          node-arch: ${{ matrix.target.node_arch }}
+          bin-ext: ${{ matrix.target.bin_ext }}
 
       - name: Smoke test (native arch only)
         if: matrix.target.smoke
         shell: bash
-        env:
-          BIN_EXT: ${{ matrix.target.bin_ext }}
         run: |
           set -euo pipefail
           # `--help` exits 0 via commander; if the SEA bundle is broken
           # (e.g. esbuild missed a require, ESM->CJS conversion failed)
           # this is where it surfaces.
-          "./build/sea/stavr-daemon${BIN_EXT}" --help
+          "./${{ steps.sea.outputs.binary-path }}" --help
 
       - name: Upload SEA artifact
         uses: actions/upload-artifact@v4
         with:
           name: stavr-daemon-${{ matrix.target.name }}
-          path: build/sea/stavr-daemon${{ matrix.target.bin_ext }}
+          path: ${{ steps.sea.outputs.binary-path }}
           if-no-files-found: error
           retention-days: 30
