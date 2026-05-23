@@ -1,0 +1,3 @@
+# Keep the bin/winsw/ directory tracked in git even before the operator
+# places StavrDaemon.exe. See README.md in this directory for placement
+# instructions + SHA256 pin.
