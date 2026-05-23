@@ -1,0 +1,73 @@
+name: peer-smoke
+
+# Bombardment Phase 0 — lifts tmp/perf/peer-smoke.mjs into CI as the
+# first slice of single-box federation testing. Spawns two stavR
+# daemons on different loopback ports with isolated STAVR_HOME +
+# pre-seeded peers.yaml, waits for /healthz, asserts mutual peer
+# visibility on /api/federation/peers, asserts federation health
+# endpoint shape, asserts dashboard pages render, asserts auth
+# endpoints respond.
+#
+# Catches recon defect #4 (federation merged but never worked
+# cross-machine) for the loopback-2-port slice. True cross-machine /
+# cross-subnet behaviour (mDNS-blocked segments via Linux netns +
+# netem) is Phase 3 of the bombardment rig — this is the cheap
+# defensive first step.
+#
+# Opt-in via STAVR_RUN_PEER_SMOKE=1 — set in this workflow so the job
+# always runs in CI, also discoverable to operators who want to run
+# the smoke locally with the same gate.
+#
+# Linux-only: peer-smoke spawns two daemons that both publish via
+# bonjour-service mDNS; on Windows the same-host service-name
+# collision produces noisy unhandled errors (the daemons survive but
+# the log is hard to triage). The Phase 3 netns work is also Linux-
+# only — keeping CI Linux for federation tests matches the trajectory.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  peer-smoke:
+    name: Two-instance federation smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      STAVR_RUN_PEER_SMOKE: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '>=25.7'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run peer-smoke (--observation-seconds 30)
+        # 30s observation keeps the run well under the 5-minute job
+        # ceiling. The default 60s is fine for operator-driven local
+        # runs but wasteful in CI where mutual visibility lands in
+        # the first poll cycle once both daemons are up.
+        run: node tmp/perf/peer-smoke.mjs --observation-seconds 30
+
+      - name: Upload peer-smoke artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: peer-smoke-artifacts
+          path: tmp/perf/peer-smoke-artifacts/
+          retention-days: 14
