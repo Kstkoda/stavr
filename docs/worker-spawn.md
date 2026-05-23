@@ -26,16 +26,27 @@ the worker-scripts target without relocating the whole STAVR_HOME, set
 the env var before the daemon starts:
 
 ```powershell
-# Windows — point worker scripts at an EDR-excluded folder
-$env:STAVR_WORKER_SCRIPT_DIR = "C:\stavr\trusted-scripts"
-pm2 restart stavr --update-env
+# Windows — point worker scripts at an EDR-excluded folder.
+# Edit bin\winsw\StavrDaemon.xml to add the env entry, then:
+.\bin\winsw\StavrDaemon.exe stop
+.\bin\winsw\StavrDaemon.exe start
 ```
 
 ```bash
-# Linux / macOS
-export STAVR_WORKER_SCRIPT_DIR="/srv/stavr/trusted-scripts"
-pm2 restart stavr --update-env
+# Linux — edit ~/.config/systemd/user/stavr.service to add the
+# Environment=STAVR_WORKER_SCRIPT_DIR=/srv/stavr/trusted-scripts line, then:
+systemctl --user daemon-reload
+systemctl --user restart stavr.service
 ```
+
+```bash
+# macOS — edit ~/Library/LaunchAgents/com.stavr.daemon.plist to add
+# the EnvironmentVariables entry, then:
+launchctl bootout   gui/$(id -u) ~/Library/LaunchAgents/com.stavr.daemon.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.stavr.daemon.plist
+```
+
+> Legacy PM2 install (deprecated): `$env:STAVR_WORKER_SCRIPT_DIR=... ; pm2 restart stavr --update-env`
 
 stavR creates the directory with `0o700` permissions on first use. The
 signing-key file (`spawn-signing.key`) stays under `${STAVR_HOME}/keys/`
@@ -191,19 +202,29 @@ want a fresh identity, or you suspect the key file leaked.
 
 ```powershell
 # Windows
-pm2 stop stavr
+.\bin\winsw\StavrDaemon.exe stop
 Remove-Item $env:USERPROFILE\.stavr\keys\spawn-signing.key
 Remove-Item $env:USERPROFILE\.stavr\worker-scripts\* -Force   # drop stale sidecars
-pm2 start stavr
+.\bin\winsw\StavrDaemon.exe start
 ```
 
 ```bash
-# Linux / macOS
-pm2 stop stavr
+# Linux (systemd --user)
+systemctl --user stop stavr.service
 rm ~/.stavr/keys/spawn-signing.key
 rm -f ~/.stavr/worker-scripts/*
-pm2 start stavr
+systemctl --user start stavr.service
 ```
+
+```bash
+# macOS (launchd)
+launchctl kill SIGTERM gui/$(id -u)/com.stavr.daemon
+rm ~/.stavr/keys/spawn-signing.key
+rm -f ~/.stavr/worker-scripts/*
+launchctl kickstart gui/$(id -u)/com.stavr.daemon
+```
+
+> Legacy PM2 install (deprecated): `pm2 stop stavr && rm ... && pm2 start stavr`
 
 The next worker spawn regenerates the key on disk. Old sidecars sign
 against the prior key and would fail with `pubkey_mismatch`; removing
@@ -374,8 +395,13 @@ After adding the exclusion, restart the worker that was failing. Watch
 the daemon log:
 
 ```bash
-pm2 logs stavr | grep -E "worker_blocked_by_av|worker_dispatch_failed"
+# Linux (systemd):  journalctl --user -u stavr.service | grep -E "..."
+# macOS (launchd):  tail -F ~/Library/Logs/stavr/stderr.log | grep -E "..."
+# Windows (WinSW):  Get-Content -Wait .\logs\StavrDaemon.err.log | Select-String "..."
+# Legacy (PM2, deprecated): pm2 logs stavr | grep -E "..."
 ```
+
+Filter for: `worker_blocked_by_av|worker_dispatch_failed`.
 
 If `worker_blocked_by_av` stops firing for fresh spawns, the exclusion
 is doing its job. If it still fires, the AV is matching the *binary the

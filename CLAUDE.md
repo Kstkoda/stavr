@@ -114,8 +114,12 @@ Sensitivity is orthogonal to the 4-tier action model. A `high` dispatch over `Ti
 
 - Daemon process is sacred. Anything that can leak/stall/crash lives in its own subprocess (Steward, Workers).
 - Don't add long-running logic to the daemon's request path.
-- `pm2 restart stavr` is fine after code change. `pm2 restart --update-env` does NOT reload `ecosystem.config.cjs` — use `pm2 start ecosystem.config.cjs --update-env` only if env changed.
-- `pm2 env stavr` doesn't take a name — use numeric id `pm2 env 0`.
+- **Supervisor is the OS init system** (os-native-governor BOM, retired PM2 from the install path):
+  - **Linux:** `systemctl --user restart stavr.service` (env changes: edit the unit file + `systemctl --user daemon-reload && systemctl --user restart stavr.service`)
+  - **macOS:** `launchctl kickstart -k gui/$(id -u)/com.stavr.daemon` (env changes: edit the plist + `launchctl bootout ... && launchctl bootstrap ...`)
+  - **Windows:** `.\bin\winsw\StavrDaemon.exe restart` (env changes: edit `bin/winsw/StavrDaemon.xml` + `StavrDaemon.exe stop && StavrDaemon.exe start`)
+- Logs: `journalctl --user -u stavr.service` (Linux), `tail -F ~/Library/Logs/stavr/stderr.log` (macOS), `Get-Content -Wait .\logs\StavrDaemon.err.log` (Windows).
+- Legacy PM2 setups (`pm2 start ecosystem.config.cjs`) still function during migration but are **deprecated** — see `ecosystem.config.cjs`'s deprecation banner and `proposed/os-native-governor-bom.md`.
 
 ---
 

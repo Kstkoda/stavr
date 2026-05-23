@@ -50,7 +50,11 @@ Rotating the secret invalidates every previously-minted correlation_id — old r
 Restart the daemon after setting:
 
 ```sh
-pm2 restart stavr   # or: stavr daemon stop && stavr daemon start --detach
+# Linux (systemd):  systemctl --user restart stavr.service
+# macOS (launchd):  launchctl kickstart -k gui/$(id -u)/com.stavr.daemon
+# Windows (WinSW):  .\bin\winsw\StavrDaemon.exe restart
+# Direct (any OS):  stavr daemon stop && stavr daemon start --detach
+# Legacy (PM2, deprecated): pm2 restart stavr
 ```
 
 Open the Settings page (`http://127.0.0.1:7777/dashboard/settings`). The new **Notification channels** panel appears. Until you configure individual channels below, all three show `NOT SET`.
@@ -215,7 +219,7 @@ sqlite3 ~/.stavr/events.db "SELECT * FROM events WHERE kind='progress' AND paylo
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Channel shows `NOT SET` after env vars set | Daemon not restarted | `pm2 restart stavr` |
+| Channel shows `NOT SET` after env vars set | Daemon not restarted | Restart via the per-platform service-control command (systemd/launchd/WinSW; see [README §Quick start](../README.md#quick-start)). PM2 `pm2 restart stavr` still works on deprecated legacy setups. |
 | Channel shows `CONFIGURED · STALE` | No successful send yet (or last success >24h ago) | Click **[Test]** |
 | Test push works but reply does nothing | `STAVR_NOTIFY_REPLY_BASE_URL` unset or unreachable | Set to a URL the phone can actually reach |
 | Email "From" rejected | SPF/DKIM mismatch | Use a domain your SMTP relay accepts |
