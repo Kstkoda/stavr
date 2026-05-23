@@ -186,7 +186,14 @@ export async function gatedAction<T>(opts: GatedActionOpts<T>): Promise<GatedAct
     { id: REJECT, label: 'Reject' },
   ];
 
-  opts.broker.store.createDecision(correlationId, question, options, effectiveTimeoutSec, REJECT);
+  opts.broker.store.createDecision(
+    correlationId,
+    question,
+    options,
+    effectiveTimeoutSec,
+    REJECT,
+    sourceAgent,
+  );
 
   await opts.broker.publish({
     kind: 'decision_request',

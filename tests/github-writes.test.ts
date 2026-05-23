@@ -121,18 +121,18 @@ async function approve(broker: Broker, correlationId: string): Promise<void> {
     correlationId,
     'approve',
     'test approve',
-    'user-direct',
+    'unstamped-loopback',
   );
   if (!r.ok) throw new Error(`approve failed: ${r.error}`);
   await broker.publish({
     kind: 'decision_response',
     at: r.result.responded_at,
     correlation_id: correlationId,
-    source_agent: 'user-direct',
+    source_agent: 'unstamped-loopback',
     payload: {
       chosen_option_id: 'approve',
       reason: 'test approve',
-      responder: 'user-direct',
+      responder: 'unstamped-loopback',
     },
   });
 }
@@ -142,18 +142,18 @@ async function reject(broker: Broker, correlationId: string): Promise<void> {
     correlationId,
     'reject',
     'test reject',
-    'user-direct',
+    'unstamped-loopback',
   );
   if (!r.ok) throw new Error(`reject failed: ${r.error}`);
   await broker.publish({
     kind: 'decision_response',
     at: r.result.responded_at,
     correlation_id: correlationId,
-    source_agent: 'user-direct',
+    source_agent: 'unstamped-loopback',
     payload: {
       chosen_option_id: 'reject',
       reason: 'test reject',
-      responder: 'user-direct',
+      responder: 'unstamped-loopback',
     },
   });
 }

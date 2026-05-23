@@ -160,12 +160,16 @@ const PATCH_TAG = Symbol.for('stavr.toolRegistry.patched');
 /** Pluggable gate used by `wrapServerForRegistry` to decide whether to run a handler. */
 export interface RuntimeToolGate {
   /**
-   * Called BEFORE the tool's handler runs. Return `{ allowed: true }` to
-   * delegate; return `{ allowed: false, reason }` to short-circuit with a
-   * `toolError`. Errors thrown by the gate are surfaced as `toolError` too
-   * — never propagated to the SDK (which would 500 the MCP session).
+   * Called BEFORE the tool's handler runs. Resolve `{ allowed: true }` to
+   * delegate; `{ allowed: false, reason }` to short-circuit with a
+   * `toolError`. Errors thrown / rejections from the gate are surfaced as
+   * `toolError` too — never propagated to the SDK (which would 500 the MCP
+   * session).
+   *
+   * Async signature (v0.7+) because the per-actor tier path may open an
+   * `await_decision` and block on operator response before resolving.
    */
-  check(toolId: string, args: unknown): { allowed: boolean; reason?: string };
+  check(toolId: string, args: unknown): Promise<{ allowed: boolean; reason?: string }>;
 }
 
 export function wrapServerForRegistry(
@@ -216,7 +220,7 @@ export function wrapHandlerWithGate(
   return async function (...args: unknown[]): Promise<unknown> {
     let decision: { allowed: boolean; reason?: string };
     try {
-      decision = gate.check(toolId, args[0]);
+      decision = await gate.check(toolId, args[0]);
     } catch (err) {
       decision = { allowed: false, reason: `gate error: ${(err as Error).message}` };
     }

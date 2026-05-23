@@ -80,4 +80,88 @@ describe('ActorPermissionStore', () => {
     const cwc = perms.resolve('cowork-claude', 'github_merge_pr');
     expect(cwc.source).toBe('default');
   });
+
+  // family-mode-phase-1 Phase 5.6 — operator-shape is an EXPLICIT
+  // ALLOWLIST; anything else falls through to default-deny.
+  describe('default-deny catch-all for non-operator-shape actors', () => {
+    it('returns NO_GO with source default-deny for a paired peer (peer:*)', () => {
+      const r = perms.resolve('peer:fresh-laptop', 'emit_event');
+      expect(r.tier).toBe('NO_GO');
+      expect(r.source).toBe('default-deny');
+    });
+
+    it('returns NO_GO with source default-deny for the transport\'s `unknown` stamp', () => {
+      // The transport stamps actor_id='unknown' for a non-loopback HTTP
+      // request without a verified device — reachable via the
+      // requireAuthWhenNonLocal: false escape hatch. Phase 5.5's
+      // denylist let this fall through to defaultTierFor (AUTO on
+      // get_events!); Phase 5.6's allowlist refuses it.
+      const r = perms.resolve('unknown', 'get_events');
+      expect(r.tier).toBe('NO_GO');
+      expect(r.source).toBe('default-deny');
+    });
+
+    it('returns NO_GO with source default-deny for any unrecognized actor_id shape', () => {
+      // Future-proofing: anything that isn't a loopback shape or a
+      // member of KNOWN_ACTORS resolves to default-deny. The catch-all
+      // means a new actor_id format introduced by a future BOM can't
+      // silently inherit operator defaults — the operator must
+      // explicitly grant tiers.
+      for (const actor of ['arbitrary-string', 'mystery-actor', 'webrtc:fed-peer', 'oauth:1234']) {
+        const r = perms.resolve(actor, 'emit_event');
+        expect(r.tier, actor).toBe('NO_GO');
+        expect(r.source, actor).toBe('default-deny');
+      }
+    });
+
+    it('does NOT inherit the AUTO default that operator-shape actors get', () => {
+      // Same tool, three actors: operator (default), peer (default-deny),
+      // unknown (default-deny). The operator gets AUTO; the others get
+      // NO_GO.
+      expect(perms.resolve('operator', 'emit_event').tier).toBe('AUTO');
+      expect(perms.resolve('peer:fresh-laptop', 'emit_event').tier).toBe('NO_GO');
+      expect(perms.resolve('unknown', 'emit_event').tier).toBe('NO_GO');
+    });
+
+    it('an explicit matrix row beats the default-deny fall-through', () => {
+      perms.set('peer:fresh-laptop', 'emit_event', 'AUTO', 'operator');
+      perms.set('unknown', 'emit_event', 'CONFIRM', 'operator');
+      expect(perms.resolve('peer:fresh-laptop', 'emit_event')).toEqual({
+        tier: 'AUTO',
+        source: 'matrix',
+      });
+      expect(perms.resolve('unknown', 'emit_event')).toEqual({
+        tier: 'CONFIRM',
+        source: 'matrix',
+      });
+    });
+
+    it('reset() returns a peer to default-deny (not defaultTierFor)', () => {
+      perms.set('peer:fresh-laptop', 'worker_spawn', 'CONFIRM', 'operator');
+      perms.reset('peer:fresh-laptop', 'worker_spawn');
+      const r = perms.resolve('peer:fresh-laptop', 'worker_spawn');
+      expect(r.tier).toBe('NO_GO');
+      expect(r.source).toBe('default-deny');
+    });
+
+    it('loopback-stamped actors resolve via defaultTierFor()', () => {
+      // The HTTP transport stamps loopback:<corr> for verified /mcp
+      // loopback callers; stdio sessions get unstamped-loopback. Both
+      // are on the allowlist.
+      expect(perms.resolve('unstamped-loopback', 'worker_spawn').source).toBe('default');
+      expect(perms.resolve('unstamped-loopback', 'worker_spawn').tier).toBe('CONFIRM');
+      expect(perms.resolve('loopback:abc-corr-1', 'host_exec').source).toBe('default');
+      expect(perms.resolve('loopback:abc-corr-1', 'host_exec').tier).toBe('EXPLICIT');
+      expect(perms.resolve('loopback:xyz', 'emit_event').tier).toBe('AUTO');
+    });
+
+    it('KNOWN_ACTORS members (operator, cc, cowork-claude, steward) resolve via defaultTierFor', () => {
+      // Sanity: Phase 5.6 KEEPS these on the allowlist — the dashboard
+      // matrix UI relies on them showing baseline tiers per row.
+      expect(perms.resolve('operator', 'worker_spawn').source).toBe('default');
+      expect(perms.resolve('cc', 'worker_spawn').source).toBe('default');
+      expect(perms.resolve('cowork-claude', 'worker_spawn').source).toBe('default');
+      expect(perms.resolve('steward', 'worker_spawn').source).toBe('default');
+    });
+  });
 });

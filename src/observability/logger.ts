@@ -23,6 +23,14 @@ import pino, { type Logger as PinoLogger } from 'pino';
 export interface LogCtx {
   correlation_id?: string;
   source_agent?: string;
+  /**
+   * Calling actor for the chokepoint gate (Phase 2). HTTP middleware stamps
+   * this from `req.device.name` for paired remote callers and
+   * `loopback:<correlation_id>` for local /mcp callers. stdio sessions
+   * inherit nothing and the gate falls through to its own default — see
+   * `src/server.ts` chokepoint construction.
+   */
+  actor_id?: string;
 }
 
 export const logContext = new AsyncLocalStorage<LogCtx>();
@@ -78,6 +86,7 @@ function buildPino(): PinoLogger {
       const out: Record<string, unknown> = {};
       if (ctx.correlation_id) out.correlation_id = ctx.correlation_id;
       if (ctx.source_agent) out.source_agent = ctx.source_agent;
+      if (ctx.actor_id) out.actor_id = ctx.actor_id;
       return out;
     },
     formatters: {

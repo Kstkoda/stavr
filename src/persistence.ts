@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { DecisionOption, Event, EventKindT } from './event-types.js';
 import { getLogger } from './log.js';
+import { isOperatorAuthorized } from './security/respond-policy.js';
 import {
   AUDIT_KINDS,
   OPERATIONAL_KINDS,
@@ -70,6 +71,28 @@ export interface DecisionRecord {
   responded_by?: string;
   chosen_option_id?: string;
   response_reason?: string;
+  /**
+   * family-mode-phase-1 Phase 4 — who requested the decision (`cc`,
+   * `cowork-claude`, `peer:<name>`, `loopback:<corr>`, etc). Stamped at
+   * createDecision time by every code path that opens a decision (the
+   * chokepoint, gatedAction, and the await_decision MCP tool). Used by
+   * respondToDecision to refuse self-approval. NULL on legacy rows
+   * created before this column existed; respond-time validation treats
+   * NULL as "cannot determine requester" and does not hard-fail.
+   */
+  source_agent?: string;
+  /**
+   * family-mode-phase-1 Phase 2 (introduced) + Phase 4 (persisted) +
+   * Phase 4.5 (rule widened) — tier the decision was opened at, when
+   * known. Only set for decisions opened by the chokepoint gate; the
+   * gatedAction path and ad-hoc await_decision calls leave this NULL.
+   * Phase 4 originally used this to enforce "EXPLICIT decisions require
+   * the operator"; Phase 4.5 widened the rule to operator-only at every
+   * tier, so the column is now retained for forensic context (which
+   * tier opened the decision) rather than rule dispatch. Surfaced in
+   * `decision_self_approval_rejected` audit payloads as `decision_tier`.
+   */
+  tier?: 'CONFIRM' | 'EXPLICIT';
 }
 
 export interface DecisionResponseResult {
@@ -191,6 +214,24 @@ export class EventStore {
       this.db.exec(`ALTER TABLE workers ADD COLUMN lifecycle_state TEXT`);
     }
 
+    // family-mode-phase-1 Phase 4 — additive source_agent + tier columns on
+    // decisions. Same pattern as lifecycle_state above: idempotent pragma
+    // probe, then ALTER for existing on-disk DBs; fresh DBs get the columns
+    // via the CREATE TABLE declaration below. Legacy rows keep NULL on
+    // both — respondToDecision treats NULL source_agent as cannot-determine
+    // and does not enforce the self-approval rule against it.
+    const decisionsCols = this.db.prepare(`PRAGMA table_info(decisions)`).all() as Array<{ name: string }>;
+    if (decisionsCols.length > 0) {
+      const hasSourceAgent = decisionsCols.some((r) => r.name === 'source_agent');
+      if (!hasSourceAgent) {
+        this.db.exec(`ALTER TABLE decisions ADD COLUMN source_agent TEXT`);
+      }
+      const hasTier = decisionsCols.some((r) => r.name === 'tier');
+      if (!hasTier) {
+        this.db.exec(`ALTER TABLE decisions ADD COLUMN tier TEXT`);
+      }
+    }
+
     this.db.exec(`
 
       CREATE TABLE IF NOT EXISTS decisions (
@@ -205,7 +246,13 @@ export class EventStore {
         responded_at TEXT,
         responded_by TEXT,
         chosen_option_id TEXT,
-        response_reason TEXT
+        response_reason TEXT,
+        -- family-mode-phase-1 Phase 4 — see DecisionRecord (persistence.ts)
+        -- for semantics. Both columns are additive nullables; existing rows
+        -- on disk keep NULL and the respond-time validator falls open on
+        -- those (cannot-determine ≠ self-approval).
+        source_agent TEXT,
+        tier TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_decisions_status ON decisions(status);
 
@@ -900,13 +947,15 @@ export class EventStore {
     options: DecisionOption[],
     timeoutSec: number,
     defaultOptionId?: string,
+    sourceAgent?: string,
+    tier?: 'CONFIRM' | 'EXPLICIT',
   ): void {
     const now = new Date();
     const expires = new Date(now.getTime() + timeoutSec * 1000);
     this.db
       .prepare(
-        `INSERT INTO decisions (correlation_id, question, options_json, default_option_id, timeout_sec, status, requested_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, 'open', ?, ?)`,
+        `INSERT INTO decisions (correlation_id, question, options_json, default_option_id, timeout_sec, status, requested_at, expires_at, source_agent, tier)
+         VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
       )
       .run(
         correlationId,
@@ -916,6 +965,8 @@ export class EventStore {
         timeoutSec,
         now.toISOString(),
         expires.toISOString(),
+        sourceAgent ?? null,
+        tier ?? null,
       );
   }
 
@@ -936,9 +987,13 @@ export class EventStore {
           responded_by: string | null;
           chosen_option_id: string | null;
           response_reason: string | null;
+          source_agent: string | null;
+          tier: string | null;
         }
       | undefined;
     if (!row) return undefined;
+    const tier =
+      row.tier === 'CONFIRM' || row.tier === 'EXPLICIT' ? row.tier : undefined;
     return {
       correlation_id: row.correlation_id,
       question: row.question,
@@ -952,6 +1007,8 @@ export class EventStore {
       responded_by: row.responded_by ?? undefined,
       chosen_option_id: row.chosen_option_id ?? undefined,
       response_reason: row.response_reason ?? undefined,
+      source_agent: row.source_agent ?? undefined,
+      tier,
     };
   }
 
@@ -985,7 +1042,18 @@ export class EventStore {
     chosenOptionId: string,
     reason: string,
     responder: string,
-  ): { ok: true; result: DecisionResponseResult } | { ok: false; error: 'not_found' | 'already_responded' | 'expired' | 'invalid_option' } {
+  ):
+    | { ok: true; result: DecisionResponseResult }
+    | {
+        ok: false;
+        error:
+          | 'not_found'
+          | 'already_responded'
+          | 'expired'
+          | 'invalid_option'
+          | 'responder_is_requester'
+          | 'operator_required';
+      } {
     const existing = this.getDecision(correlationId);
     if (!existing) return { ok: false, error: 'not_found' };
     if (existing.status === 'responded') return { ok: false, error: 'already_responded' };
@@ -993,6 +1061,49 @@ export class EventStore {
 
     const validIds = new Set(existing.options.map((o) => o.id));
     if (!validIds.has(chosenOptionId)) return { ok: false, error: 'invalid_option' };
+
+    // family-mode-phase-1 Phase 4.5 / Phase 4.6 — respond-time validation.
+    //
+    // The PRIMARY authorization gate lives in `src/security/respond-
+    // policy.ts::mayRespond` and runs at the call site (respond_to_decision
+    // MCP tool, /dashboard/.../respond HTTP route, notify reply-router),
+    // operating on a VERIFIED caller derived from logContext.actor_id or
+    // an HMAC-verified inbound channel — NEVER from any string the caller
+    // supplied. The store-level checks below are a consistency backstop
+    // aligned with that policy: they accept the SAME shape set
+    // mayRespond accepts (via `isOperatorAuthorized`), no broader. Phase
+    // 4.6 collapsed Phase 4.5's looser store-level set into this aligned
+    // fence so there is no parallel looser policy a future direct caller
+    // could land in.
+    //
+    // The synthetic `switch-default` responder is the timeout-fallback
+    // path (`runChokepointDecision`, `gatedAction`) and bypasses both
+    // checks — it is internal-only, never an actor, never collides with
+    // source_agent, and must remain able to close any open decision so
+    // the gate cannot hang past its deadline.
+    //
+    //   1. Self-approval: a non-NULL source_agent matching responder is
+    //      refused with `responder_is_requester`. Legacy rows (NULL
+    //      source_agent) fall open on this rule — they predate Phase 4
+    //      and have no requester identity to compare against.
+    //
+    //   2. Operator-shape: the responder must be one of the verified-
+    //      identity shapes `isOperatorAuthorized` accepts — today,
+    //      loopback (`unstamped-loopback`, `loopback:*`) or notify-
+    //      verified-remote (`notify:*`). Anything else (`cc`,
+    //      `cowork-user`, `peer:*`, arbitrary strings) is refused with
+    //      `operator_required`. To widen the policy (verified-remote
+    //      peer via WebAuthn, delegated approvers, per-tier responder
+    //      sets), edit `mayRespond` in respond-policy.ts; this fence
+    //      picks up the change automatically.
+    if (responder !== 'switch-default') {
+      if (existing.source_agent && responder === existing.source_agent) {
+        return { ok: false, error: 'responder_is_requester' };
+      }
+      if (!isOperatorShapedResponder(responder)) {
+        return { ok: false, error: 'operator_required' };
+      }
+    }
 
     const responded_at = new Date().toISOString();
     this.db
@@ -1954,4 +2065,22 @@ function workerRowToRecord(row: WorkerRow): WorkerRecord {
     exit_code: row.exit_code ?? undefined,
     lifecycle_state: row.lifecycle_state ?? undefined,
   };
+}
+
+/**
+ * family-mode-phase-1 Phase 4.6 — store-level consistency backstop.
+ * Aligned with `src/security/respond-policy.ts::isOperatorAuthorized`:
+ * the store accepts the SAME set of responder shapes the primary policy
+ * accepts, no broader. This is intentionally NOT a parallel looser
+ * policy — every accepted responder shape here corresponds to a code
+ * path that MUST have called `mayRespond` upstream (the MCP tool layer,
+ * the dashboard endpoint, or the notify reply-router). If a future
+ * caller is wired to `respondToDecision` directly, it must produce one
+ * of these shapes (via `mayRespond`) or be refused here too. Widening
+ * the policy is a single-function change in `respond-policy.ts`; this
+ * fence picks the change up automatically because it delegates to the
+ * canonical predicate.
+ */
+function isOperatorShapedResponder(responder: string): boolean {
+  return isOperatorAuthorized(responder);
 }

@@ -101,6 +101,15 @@ export class MdnsCoordinator extends EventEmitter {
       return;
     }
 
+    // bonjour-service signals "Service name is already in use" via an
+    // async 'error' event AFTER publish() returns (RFC 6762 §8.2 probe
+    // response). Without a listener that surfaces as uncaughtException
+    // and crashes the daemon. Forward into our own 'error' event which
+    // federation/index.ts already routes to log.warn.
+    (this.advertised as unknown as EventEmitter).on('error', (err: unknown) => {
+      this.emit('error', toError(err));
+    });
+
     this.browser = this.driver.find(
       { type: STAVR_SERVICE_TYPE, protocol: 'tcp' },
       (service: Service) => {
@@ -116,6 +125,10 @@ export class MdnsCoordinator extends EventEmitter {
     this.browser.on('down', (service: Service) => {
       const id = readTxtString(service.txt, 'peer_id') ?? service.name;
       this.emit('lost', id);
+    });
+
+    (this.browser as unknown as EventEmitter).on('error', (err: unknown) => {
+      this.emit('error', toError(err));
     });
 
     getLogger().info('mDNS coordinator started', { peer_id: opts.peerId, port: opts.port });

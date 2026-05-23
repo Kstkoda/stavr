@@ -37,6 +37,25 @@ export const KNOWN_ACTORS = [
 ] as const;
 export type KnownActor = (typeof KNOWN_ACTORS)[number];
 
+/**
+ * Phase 5.6 — explicit allowlist predicate. An actor is operator-shape
+ * iff it is a loopback-stamped identity (verified by the kernel boundary
+ * or the stdio default) OR one of the well-known agent labels in
+ * KNOWN_ACTORS. Everything else (paired peers `peer:*`, the transport's
+ * `'unknown'` stamp, any future unrecognized actor_id shape) is NOT
+ * operator-shape and falls through to default-deny in `resolve()`.
+ *
+ * Inlined here (rather than imported from src/security/respond-policy.ts)
+ * to keep this module's import surface minimal — actor-permissions has
+ * no other dependencies on respond-policy, and the loopback-shape check
+ * is two string operations.
+ */
+function isOperatorShapeActor(actorId: string): boolean {
+  if (actorId === 'unstamped-loopback') return true;
+  if (actorId.startsWith('loopback:')) return true;
+  return (KNOWN_ACTORS as readonly string[]).includes(actorId);
+}
+
 export interface ActorPermissionRow {
   actor_id: string;
   tool_id: string;
@@ -48,8 +67,31 @@ export interface ActorPermissionRow {
 export interface ResolvedTier {
   /** The tier in force for (actor, tool). */
   tier: Tier;
-  /** Where it came from — for the UI to label "default" vs "operator-set". */
-  source: 'default' | 'matrix';
+  /**
+   * Where the tier came from — for the UI to label correctly and for
+   * audit reasons in chokepoint deny messages.
+   *
+   *   `matrix`        — operator set this cell explicitly.
+   *   `default`       — operator-shape actor (loopback-stamped, the
+   *                     `unstamped-loopback` stdio default, or one of
+   *                     the well-known agent labels in `KNOWN_ACTORS`:
+   *                     operator, cc, cowork-claude, steward) with no
+   *                     matrix row → falls through to `defaultTierFor()`
+   *                     (categories.ts conservative bias).
+   *   `default-deny`  — anything else with no matrix row: paired peer
+   *                     (`peer:*`), the transport's `'unknown'` stamp
+   *                     for non-loopback requests without a verified
+   *                     device, or any future unrecognized actor_id
+   *                     shape. Phase 5.6 made the operator branch an
+   *                     explicit allowlist; this is the catch-all
+   *                     default-deny that resolves to NO_GO so the
+   *                     chokepoint hard-denies until the operator
+   *                     explicitly grants a tier via the matrix UI.
+   *                     (Was `default-deny-peer` in Phase 5.5 when the
+   *                     branch only covered paired peers; Phase 5.6
+   *                     widened the catch-all and renamed accordingly.)
+   */
+  source: 'default' | 'matrix' | 'default-deny';
 }
 
 export class ActorPermissionStore {
@@ -104,14 +146,39 @@ export class ActorPermissionStore {
   }
 
   /**
-   * Resolve the effective tier for (actor, tool). Matrix row beats the
-   * registered default; if no matrix row exists, returns the default with
-   * `source = 'default'`.
+   * Resolve the effective tier for (actor, tool). Matrix row beats every
+   * fall-through. With no row, the operator-shape check is an EXPLICIT
+   * ALLOWLIST (Phase 5.6) — anything not on the list resolves to
+   * default-deny.
+   *
+   * Operator-shape (defaultTierFor):
+   *   - Loopback-stamped actors: `loopback:<corr>` (HTTP /mcp loopback
+   *     verified by the transport) or `unstamped-loopback` (the stdio
+   *     default when no HTTP middleware runs). Loopback is the kernel-
+   *     enforced ADR-006 boundary; a peer cannot fake it.
+   *   - Well-known agent labels in KNOWN_ACTORS: `operator`,
+   *     `cowork-claude`, `cc`, `steward`. These are operator-proxies
+   *     that run in-process on the daemon host; the dashboard matrix
+   *     UI relies on them resolving to defaultTierFor so the operator
+   *     can see and edit baseline tiers per row.
+   *
+   * Anything else (paired peers `peer:*`, the transport's `'unknown'`
+   * stamp for non-loopback requests without a verified device, future
+   * unrecognized actor_id shapes) → default-deny: tier NO_GO, source
+   * `'default-deny'`. The chokepoint hard-denies NO_GO before the
+   * gatedAction trust-scope check runs, matching the existing "NO_GO
+   * is a hard floor regardless of scope" semantics in
+   * src/tools/categories.ts. Trust-scope-driven authorization for
+   * default-denied actors would be a future widening (chokepoint
+   * scope-aware override or a new tier-resolution layer).
    */
   resolve(actorId: string, toolId: string): ResolvedTier {
     const row = this.get(actorId, toolId);
     if (row) return { tier: row.tier, source: 'matrix' };
-    return { tier: defaultTierFor(toolId), source: 'default' };
+    if (isOperatorShapeActor(actorId)) {
+      return { tier: defaultTierFor(toolId), source: 'default' };
+    }
+    return { tier: 'NO_GO', source: 'default-deny' };
   }
 
   /**

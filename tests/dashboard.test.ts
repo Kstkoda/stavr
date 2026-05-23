@@ -179,7 +179,10 @@ describe('Spec 40 Phase 3 — dashboard HTTP', () => {
   it('GET /dashboard/decisions returns open decisions only by default', async () => {
     h.store.createDecision('d-1', 'approve?', [{ id: 'yes', label: 'Yes' }, { id: 'no', label: 'No' }], 300, 'no');
     h.store.createDecision('d-2', 'approve?', [{ id: 'yes', label: 'Yes' }, { id: 'no', label: 'No' }], 300, 'no');
-    h.store.respondToDecision('d-2', 'yes', 'because', 'someone');
+    // Phase 4.6 — store-level operator-shape check is now aligned with
+    // mayRespond (loopback OR notify-verified-remote). Use the canonical
+    // stdio loopback shape for direct-store callers in tests.
+    h.store.respondToDecision('d-2', 'yes', 'because', 'unstamped-loopback');
 
     const openR = await fetch(`${h.base}/dashboard/decisions`);
     const open = await openR.json();
@@ -202,14 +205,20 @@ describe('Spec 40 Phase 3 — dashboard HTTP', () => {
     const j = await r.json();
     expect(j.ok).toBe(true);
 
+    // Phase 4.5 — the /dashboard/.../respond endpoint ignores body.responder
+    // for authorization and records the VERIFIED actor (loopback:<corr> from
+    // the transport's actor_id middleware) in responded_by. The supplied
+    // 'kenneth' is advisory only.
     const after = h.store.getDecision('d-X');
     expect(after?.status).toBe('responded');
     expect(after?.chosen_option_id).toBe('approve');
-    expect(after?.responded_by).toBe('kenneth');
+    expect(after?.responded_by).toMatch(/^loopback:/);
 
     const evs = h.store.getEvents({ kinds: ['decision_response'] }).events;
     expect(evs.length).toBe(1);
-    expect((evs[0].payload as { responder: string }).responder).toBe('kenneth');
+    // Phase 4.5 — responder in the event is the verified identity, not
+    // the body.responder arg.
+    expect((evs[0].payload as { responder: string }).responder).toMatch(/^loopback:/);
   });
 
   it('POST /dashboard/decisions/:id/respond 404s for unknown id', async () => {

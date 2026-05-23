@@ -13,6 +13,13 @@ export const EventKind = z.enum([
   'decision_request',
   'decision_response',
   'decision_late_response',
+  // family-mode-phase-1 Phase 4 — emitted by respond_to_decision when a
+  // response is refused for policy (responder === source_agent, or
+  // EXPLICIT decision answered by a non-operator actor). The attempt is
+  // not destructive — the decision stays open — but it is loud in the
+  // audit log because an agent trying to self-approve a gated action is
+  // exactly the signal Phase 4 exists to surface.
+  'decision_self_approval_rejected',
   'error',
   'checkpoint',
   'session_ended',
@@ -53,6 +60,13 @@ export const EventKind = z.enum([
   'no_go_match',
   'no_go_authorized',
   'no_go_blocked',
+  // family-mode-phase-1 Phase 2 hardening — the chokepoint decision gate
+  // exposes a test-only auto-approve seam (STAVR_CHOKEPOINT_TEST_AUTO_APPROVE)
+  // so vitest doesn't hang on CONFIRM-tier tools. Every bypass emits this
+  // event so its use is observable in the audit trail; the seam is also
+  // structurally blocked from firing in production by a boot-time guard
+  // in src/daemon.ts. See src/security/decision-gate.ts.
+  'decision_chokepoint_test_bypass',
   // Spec 49 Layer 1 — daemon-hosted Steward
   'steward_started',
   'steward_stopped',
@@ -143,6 +157,11 @@ export const EventKind = z.enum([
   // WebAuthn coordinator on every successful Tier 3 verification so
   // forensic review can correlate assertions to the actions they gated.
   'tier3_assertion_recorded',
+  // family-mode-phase-1 Phase 3 — the chokepoint gate denies an EXPLICIT-
+  // tier tool call when no recent WebAuthn assertion is on file and emits
+  // this so the dashboard can prompt the operator to authenticate. Caller
+  // (CC etc) retries after the operator completes the passkey ceremony.
+  'tier3_assertion_required',
   // Host-resource ceiling (proposed/host-resource-ceiling-bom.md).
   // daemon_host_headroom: per-tick host RAM/CPU sample from the headroom
   //   poller (Phase 2).

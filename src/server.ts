@@ -36,6 +36,7 @@ import { createFederation, type FederationSubsystem } from './federation/index.j
 import { attachFederationReporter } from './federation/reporter.js';
 import { STAVR_MCP_ICONS, STAVR_MCP_DESCRIPTION, STAVR_WEBSITE_URL } from './dashboard/components/stavr-icon.js';
 import { ToolRegistry, wrapServerForRegistry } from './tools/registry.js';
+import { buildChokepointGate } from './security/decision-gate.js';
 import { Notifier } from './notify/notifier.js';
 import { NtfyChannel } from './notify/channels/ntfy.js';
 import { EmailChannel } from './notify/channels/email.js';
@@ -365,21 +366,41 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   // tools. Idempotent across sessions — wrapServerForRegistry tags the
   // patched method and bails on a second call.
   //
-  // v0.6.9 PR #2 — also wire the Layer 0 runtime gate. Every tool
-  // handler is wrapped to hit `CapabilityOverrideStore.check(toolId)`
-  // BEFORE the user-supplied handler runs. If the operator has
-  // disabled the tool via the dashboard, the call returns toolError
-  // immediately without touching the subsystem code.
+  // family-mode-phase-1 Phases 2 / 3 / 4 / 4.5 / 4.6 — the structural
+  // chokepoint. The gate here is the single point every MCP tool call
+  // passes through; what it consults is "the permission model." Layer
+  // order (top denies first):
+  //   1. No-Go list                  — hard deny, identity-blind
+  //   2. Layer 0 capability switch   — operator runtime kill switch
+  //   3. Per-actor permission tier   — AUTO / CONFIRM / EXPLICIT / NO_GO
+  //   3a. EXPLICIT also requires a recent WebAuthn assertion (Phase 3)
+  //       — see decision-gate.ts::buildChokepointGate's EXPLICIT branch.
+  //
+  // Phases 4 / 4.5 / 4.6 close the loop at respond time: every decision
+  // opened from here is stamped with `source_agent` (the actor below) +
+  // `tier`, and respondToDecision enforces no-self-approval + operator-
+  // only on a VERIFIED identity (see src/security/respond-policy.ts).
+  //
+  // Actor identity comes from the AsyncLocalStorage `logContext.actor_id`
+  // (HTTP middleware stamps it per request — see transports.ts). Stdio
+  // sessions and any other unstamped path fall through to the actor id
+  // `'unstamped-loopback'`, which resolves via defaultTierFor() — so the
+  // conservative bias in `src/tools/categories.ts` becomes the enforced
+  // floor without per-test plumbing.
   const toolRegistry = getOrCreateToolRegistry(broker);
   const capabilityStore = getOrCreateCapabilityOverrideStore(broker);
-  wrapServerForRegistry(server, toolRegistry, 'server.ts', {
-    check(toolId: string): { allowed: boolean; reason?: string } {
-      const res = capabilityStore.check(toolId);
-      return res.allowed
-        ? { allowed: true }
-        : { allowed: false, reason: res.reason };
-    },
-  });
+  const actorPermissionStore = getOrCreateActorPermissionStore(broker);
+  const identityStore = getOrCreateIdentityStore(broker);
+  wrapServerForRegistry(
+    server,
+    toolRegistry,
+    'server.ts',
+    buildChokepointGate(broker, {
+      capability: capabilityStore,
+      actorPermissions: actorPermissionStore,
+      identity: identityStore,
+    }),
+  );
 
   const trustStore = getOrCreateTrustStore(broker);
   const stewardStore = getOrCreateStewardStore(broker);

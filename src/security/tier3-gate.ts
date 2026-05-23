@@ -8,22 +8,32 @@
  * caller can surface to the operator (typically a redirect to the
  * dashboard's "Re-authenticate" prompt).
  *
- * Where this is wired (and where it isn't, intentionally):
+ * Where this is wired (family-mode-phase-1 Phase 3 — confirmed by code,
+ * not by Phase-0 recon docs):
  *
- *   wired in Phase 3:
- *     - cross-peer federation events that carry a Tier 3 action
- *     - the docs example in `docs/family-mode.md` Phase 7
+ *   - The structural chokepoint's EXPLICIT branch
+ *     (`src/security/decision-gate.ts::buildChokepointGate`). Every MCP
+ *     tool call whose per-actor tier resolves to EXPLICIT — including
+ *     host_exec, worker_spawn / dispatch / terminate when matrix-
+ *     escalated, and anything else the operator marks EXPLICIT —
+ *     passes through `requireRecentTier3Assertion` BEFORE the
+ *     operator-confirmation decision opens. On miss the chokepoint
+ *     denies the call and emits `tier3_assertion_required` so the
+ *     dashboard can prompt; on hit it falls through to the decision
+ *     route. Phases 4.5 / 4.6 then enforce operator-only respond for
+ *     every tier (loopback OR notify-verified-remote) on a verified
+ *     identity, with mayRespond as the single authority.
  *
- *   NOT wired in Phase 3 (deferred to v0.7.1):
- *     - host_exec's EXPLICIT-tagged paths — that's the
- *       v0_7-tier-3-explicit-consent BOM's domain. Per Phase 0 findings,
- *       passkey + typed-friction-string are complementary: passkey
- *       proves presence (this module), friction proves target
- *       articulation (the deferred BOM).
- *     - the orchestrator's worker_spawn/dispatch gate — Worker tiers
- *       resolve to 'auto'|'confirm'|'never' in the spawner contract,
- *       which doesn't currently surface EXPLICIT. v0.7.1 adds the
- *       resolved-via-categories.ts path so this gate can be applied.
+ * Out of scope for this BOM (still deferred to the
+ * `v0_7-tier-3-explicit-consent` BOM):
+ *
+ *   - The typed-friction-string ceremony. Passkey + typed-friction are
+ *     complementary: passkey proves presence (this module + the
+ *     chokepoint EXPLICIT branch); friction proves articulation of the
+ *     specific target. The Phase 4.5 + 4.6 verified-identity respond
+ *     rule (mayRespond) is the BOM's interim substitute for the typed-
+ *     friction string at respond time — when the dedicated BOM lands,
+ *     it replaces this substitute with the real ceremony.
  */
 import type { IdentityStore, Tier3Assertion } from './identity-store.js';
 import { DEFAULT_TIER3_ASSERTION_TTL_MS } from './webauthn.js';
