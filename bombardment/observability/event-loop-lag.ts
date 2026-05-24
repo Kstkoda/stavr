@@ -28,9 +28,14 @@ export interface LagSampler {
 
 export function startEventLoopLagSampler(targetMs = 50): LagSampler {
   const samples: number[] = [];
-  let last = Date.now();
+  // Monotonic clock via perf_hooks. Date.now() can step (NTP, DST, VM
+  // suspend/resume): a forward step pollutes p99/max with a one-shot
+  // huge "lag" sample; a backward step yields negative lag clamped to 0,
+  // silently HIDING a real wedge in that interval. performance.now() is
+  // not affected by wall-clock adjustments.
+  let last = performance.now();
   const handle = setInterval(() => {
-    const now = Date.now();
+    const now = performance.now();
     const lag = now - last - targetMs;
     samples.push(Math.max(0, lag));
     last = now;
