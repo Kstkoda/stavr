@@ -1,0 +1,94 @@
+# Bombardment Phase 3c — Pumba netem chaos sidecar overlay.
+#
+# Apply this on top of the base compose file:
+#
+#   docker compose -f docker-compose.yml -f pumba.yml up -d
+#
+# Pumba (github.com/alexei-led/pumba) drives `tc qdisc netem` against
+# the container's veth interface from outside the container — no need
+# to install iproute2 inside the daemon image. The Docker socket is
+# bind-mounted into the Pumba container so it can locate targets by
+# name + apply the impairment.
+#
+# This overlay declares three impairments. They run as one-shot
+# containers that exit when --duration is up; bring them down with
+# `docker compose down` or let them self-terminate.
+#
+#   pumba-delay-a   — 50ms ± 10ms RTT added at peer-a's veth
+#   pumba-loss-b    — 1% packet loss at peer-b's veth
+#   pumba-jitter-hub — 20ms jitter at the hub's veth
+#
+# Phase 3c keeps the impairment budget modest — the oracle layer
+# must still pass under it. Phase 4 will extend the same pattern to
+# kills, stops, and full partitions; those go in a separate overlay
+# so the chaos surface stays composable.
+
+services:
+  pumba-delay-a:
+    image: gaiaadm/pumba:0.11.7
+    container_name: stavr-pumba-delay-a
+    # Pumba reads from /var/run/docker.sock to drive `tc` against the
+    # target container's namespace.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # `netem` is the qdisc; `--duration` bounds the impairment so the
+    # CI run can't get stuck if the runner script dies before cleanup.
+    # 90s comfortably covers a full oracle pass at one-shot cadence.
+    command:
+      - "--log-level=info"
+      - "netem"
+      - "--duration=90s"
+      - "--tc-image=gaiadocker/iproute2"
+      - "delay"
+      - "--time=50"
+      - "--jitter=10"
+      - "--distribution=normal"
+      - "stavr-peer-a"
+    depends_on:
+      - peer-a
+    restart: "no"
+    labels:
+      com.stavr.role: "pumba"
+      com.stavr.impairment: "delay"
+
+  pumba-loss-b:
+    image: gaiaadm/pumba:0.11.7
+    container_name: stavr-pumba-loss-b
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      - "--log-level=info"
+      - "netem"
+      - "--duration=90s"
+      - "--tc-image=gaiadocker/iproute2"
+      - "loss"
+      - "--percent=1"
+      - "stavr-peer-b"
+    depends_on:
+      - peer-b
+    restart: "no"
+    labels:
+      com.stavr.role: "pumba"
+      com.stavr.impairment: "loss"
+
+  pumba-jitter-hub:
+    image: gaiaadm/pumba:0.11.7
+    container_name: stavr-pumba-jitter-hub
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      - "--log-level=info"
+      - "netem"
+      - "--duration=90s"
+      - "--tc-image=gaiadocker/iproute2"
+      - "delay"
+      - "--time=10"
+      - "--jitter=20"
+      - "--distribution=normal"
+      - "stavr-hub"
+    depends_on:
+      - hub
+    restart: "no"
+    labels:
+      com.stavr.role: "pumba"
+      com.stavr.impairment: "jitter"

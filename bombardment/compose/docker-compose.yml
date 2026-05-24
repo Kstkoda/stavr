@@ -1,0 +1,151 @@
+# Bombardment Phase 3b — docker-compose federation topology.
+#
+# Three stavR daemons on two Docker networks. Each container is its own
+# network namespace; each Docker network is its own L2 segment (so mDNS
+# multicast does NOT cross — discovery is forced through peers.yaml,
+# the trust root, which is exactly the BOM's "real cross-subnet failure
+# shape").
+#
+#                                ┌──────────────┐
+#         stavr_site_a           │              │           stavr_site_b
+#         (172.30.10.0/24)       │     hub      │           (172.30.20.0/24)
+#                                │  (relay)     │
+#       ┌──────────┐             │              │             ┌──────────┐
+#       │  peer-a  │ ─────────── │              │ ─────────── │  peer-b  │
+#       └──────────┘             └──────────────┘             └──────────┘
+#
+# What's reachable from where:
+#   - Inside site_a: peer-a <-> hub via Docker DNS (`hub:7777`)
+#   - Inside site_b: peer-b <-> hub via Docker DNS (`hub:7777`)
+#   - Across sites:  peer-a CANNOT reach peer-b directly (different
+#     networks, no routing) — the only path is through the hub. The
+#     daemons today don't forward federation events (Phase 2-trimmed),
+#     so cross-site peers in peers.yaml stay "configured: true,
+#     state: offline" — the exact peer_unreachable shape Phase 3d's
+#     oracle is built to detect.
+#
+# Run:
+#   cd bombardment/compose
+#   docker compose up -d
+#   docker compose ps
+#   curl http://localhost:17777/api/federation/peers   # peer-a
+#   curl http://localhost:17778/api/federation/peers   # peer-b
+#   curl http://localhost:17779/api/federation/peers   # hub
+#   docker compose down -v
+#
+# The image is built once by the top-level Dockerfile; this compose
+# file pulls `stavr:ci` (the tag the bombardment-docker workflow
+# builds). For local runs, `docker build -t stavr:ci ..` from the
+# repo root first.
+
+name: stavr-bombardment
+
+services:
+  peer-a:
+    image: stavr:ci
+    container_name: stavr-peer-a
+    hostname: peer-a
+    networks:
+      site_a:
+        aliases: [peer-a]
+    ports:
+      - "17777:7777"
+    environment:
+      STAVR_PEER_ID: peer-a
+      STAVR_PORT: "7777"
+      STAVR_BIND_HOST: "0.0.0.0"
+      STAVR_ALLOW_NON_LOCAL_WITHOUT_AUTH: "1"
+      STAVR_LOG_FORMAT: json
+      STAVR_HARDENING_SEED: "${STAVR_HARDENING_SEED:-42}"
+    volumes:
+      - peer_a_home:/home/stavr/.stavr
+      - ./peers-a.yaml:/home/stavr/.stavr/peers.yaml:ro
+    restart: unless-stopped
+    # com.stavr.role labels let oracles + Pumba target containers by
+    # role (peer vs hub) without hard-coding container names.
+    labels:
+      com.stavr.role: "peer"
+      com.stavr.site: "site_a"
+
+  peer-b:
+    image: stavr:ci
+    container_name: stavr-peer-b
+    hostname: peer-b
+    networks:
+      site_b:
+        aliases: [peer-b]
+    ports:
+      - "17778:7777"
+    environment:
+      STAVR_PEER_ID: peer-b
+      STAVR_PORT: "7777"
+      STAVR_BIND_HOST: "0.0.0.0"
+      STAVR_ALLOW_NON_LOCAL_WITHOUT_AUTH: "1"
+      STAVR_LOG_FORMAT: json
+      STAVR_HARDENING_SEED: "${STAVR_HARDENING_SEED:-42}"
+    volumes:
+      - peer_b_home:/home/stavr/.stavr
+      - ./peers-b.yaml:/home/stavr/.stavr/peers.yaml:ro
+    restart: unless-stopped
+    labels:
+      com.stavr.role: "peer"
+      com.stavr.site: "site_b"
+
+  hub:
+    image: stavr:ci
+    container_name: stavr-hub
+    hostname: hub
+    # The relay-hub is multi-homed: it sits on both per-site networks.
+    # That's what gives the rig a path from site_a to site_b at the
+    # IP layer (the daemon doesn't relay events at the app layer yet —
+    # that's the eventStore + federation/event work). Until it does,
+    # the hub is still the only container that can probe both sites'
+    # /api/federation/health.
+    networks:
+      site_a:
+        aliases: [hub]
+      site_b:
+        aliases: [hub]
+    ports:
+      - "17779:7777"
+    environment:
+      STAVR_PEER_ID: hub
+      STAVR_PORT: "7777"
+      STAVR_BIND_HOST: "0.0.0.0"
+      STAVR_ALLOW_NON_LOCAL_WITHOUT_AUTH: "1"
+      STAVR_LOG_FORMAT: json
+      STAVR_HARDENING_SEED: "${STAVR_HARDENING_SEED:-42}"
+    volumes:
+      - hub_home:/home/stavr/.stavr
+      - ./peers-hub.yaml:/home/stavr/.stavr/peers.yaml:ro
+    restart: unless-stopped
+    labels:
+      com.stavr.role: "hub"
+      com.stavr.site: "both"
+
+networks:
+  # internal: true would block egress; we keep that off so DNS
+  # resolution + `apt-get update` inside the entrypoint still works.
+  # The cross-subnet *isolation* between peer-a and peer-b is enforced
+  # by them being on disjoint user-defined networks (Docker does not
+  # route between user networks; only the multi-homed hub bridges).
+  site_a:
+    name: stavr_site_a
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+  site_b:
+    name: stavr_site_b
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.20.0/24
+
+volumes:
+  peer_a_home:
+    name: stavr_peer_a_home
+  peer_b_home:
+    name: stavr_peer_b_home
+  hub_home:
+    name: stavr_hub_home

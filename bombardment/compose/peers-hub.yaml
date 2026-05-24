@@ -1,0 +1,20 @@
+# peers.yaml for hub. The hub is multi-homed (site_a + site_b) so it
+# can reach both peer-a and peer-b directly — it's the only container
+# that can. Federation oracles use this as the cross-site reachability
+# probe surface.
+
+self_id: hub
+self_display_name: "Hub (bombardment)"
+
+peers:
+  - id: peer-a
+    display_name: "Peer A (bombardment)"
+    hostname: peer-a
+    port: 7777
+    trust: verified
+
+  - id: peer-b
+    display_name: "Peer B (bombardment)"
+    hostname: peer-b
+    port: 7777
+    trust: verified
