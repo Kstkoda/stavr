@@ -24,19 +24,70 @@ pub fn dashboard_base() -> String {
     raw.trim_end_matches('/').to_string()
 }
 
-/// Resolve the operator-facing log file path. PM2 writes daemon stdout to
-/// `tmp/pm2-stavr.out.log` relative to the repo root by default. The
-/// `STAVR_LOG_PATH` env var lets the P6 installer pin this to the absolute
-/// path the daemon was started from, since cwd at Governor launch is not
-/// guaranteed to be the repo root.
+/// Resolve the operator-facing log file path.
+///
+/// Per-platform defaults follow what the OS-native service installers
+/// actually write (`bin/install-{windows-service.ps1,launchd.sh,
+/// systemd.sh}` + their templates):
+///   - Windows: `<install-dir>\logs\StavrDaemon.err.log` — the WinSW
+///     `<logpath>` in `bin/StavrDaemon.xml.template`.
+///     `STAVR_INSTALL_DIR` set by the install script wins; otherwise
+///     falls back to `<cwd>\logs\StavrDaemon.err.log`.
+///   - macOS:   `~/Library/Logs/stavr/stderr.log` — the plist
+///     `StandardErrorPath`.
+///   - Linux:   systemd journals don't have a static file path. We
+///     return a sentinel under `~/.local/share/stavr/` so the
+///     file-opener has something concrete to fail on; `open_logs()`
+///     surfaces the journalctl recipe via a log warning when the
+///     sentinel is absent.
+/// `STAVR_LOG_PATH` overrides on every platform.
 pub fn log_path() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("STAVR_LOG_PATH") {
         return std::path::PathBuf::from(p);
     }
-    std::env::current_dir()
-        .map(|d| d.join("tmp").join("pm2-stavr.out.log"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("tmp/pm2-stavr.out.log"))
+    default_log_path()
 }
+
+#[cfg(windows)]
+fn default_log_path() -> std::path::PathBuf {
+    if let Ok(install) = std::env::var("STAVR_INSTALL_DIR") {
+        return std::path::PathBuf::from(install)
+            .join("logs")
+            .join("StavrDaemon.err.log");
+    }
+    std::env::current_dir()
+        .map(|d| d.join("logs").join("StavrDaemon.err.log"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("logs/StavrDaemon.err.log"))
+}
+
+#[cfg(target_os = "macos")]
+fn default_log_path() -> std::path::PathBuf {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/"));
+    home.join("Library").join("Logs").join("stavr").join("stderr.log")
+}
+
+#[cfg(target_os = "linux")]
+fn default_log_path() -> std::path::PathBuf {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/"));
+    home.join(".local").join("share").join("stavr").join("stavr.log")
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn default_log_path() -> std::path::PathBuf {
+    std::path::PathBuf::from("stavr.log")
+}
+
+/// Operator-facing recipe for tailing the daemon's logs when no static
+/// file is available (Linux/systemd). Surfaced by `open_logs()` so the
+/// operator has an actionable next step instead of "file not found."
+#[cfg(target_os = "linux")]
+pub const JOURNALCTL_HINT: &str =
+    "On Linux the daemon logs to the systemd journal; tail with: \
+     journalctl --user -u stavr.service -f";
 
 /// Open a URL in the OS-default browser via the opener plugin. Errors are
 /// logged but never propagated.
@@ -57,6 +108,8 @@ pub fn open_logs<R: Runtime>(app: &AppHandle<R>) {
             "actions: log file not found at {:?} — operator may need to set STAVR_LOG_PATH or wait for the daemon to emit",
             path
         );
+        #[cfg(target_os = "linux")]
+        log::warn!("actions: {}", JOURNALCTL_HINT);
         // Fall through and open anyway — the OS handler will surface the
         // "file not found" message in a user-visible dialog, which is the
         // right operator signal.
@@ -124,32 +177,73 @@ mod tests {
     }
 
     /// Exercises both branches of `log_path()` — env-override and the
-    /// repo-relative fallback — in a single test. Previously these were two
-    /// separate `#[test]` fns, but `cargo test` runs them in parallel inside
-    /// the same binary, and `std::env::{set_var, remove_var}` is process-
-    /// wide. The two tests raced on `STAVR_LOG_PATH` — one's `remove_var`
-    /// would wipe out the value the other had just set, producing a
-    /// flaky failure (seen on the win-x86_64 CI runner where scheduling
-    /// happened to interleave them; local was luck). Merging both branches
-    /// into one sequential test removes the race without pulling in a
-    /// `serial_test` dependency.
+    /// per-platform default — in a single test. Same parallel-env-mutation
+    /// race rationale as `dashboard_base_env_override_and_fallback` above.
+    ///
+    /// Cluster B (audit #5): the default is per-platform and points at
+    /// the OS-native service's actual log destination, not the legacy
+    /// PM2 tmp path. Windows: <install>\logs\StavrDaemon.err.log (or
+    /// cwd-relative). macOS: ~/Library/Logs/stavr/stderr.log. Linux:
+    /// ~/.local/share/stavr/stavr.log (with a journalctl recipe surfaced
+    /// from `open_logs` when the sentinel doesn't exist).
     #[test]
-    fn log_path_env_override_and_fallback() {
-        // Branch 1 — env-override wins.
+    fn log_path_env_override_and_per_platform_default() {
+        // Branch 1 — env-override wins (also pin: NO PM2 strings appear
+        // anywhere in the default-resolver source; the audit point is
+        // that PM2 must be off the operator's log surface).
         std::env::set_var("STAVR_LOG_PATH", "/tmp/custom/stavr.log");
         assert_eq!(
             log_path(),
             std::path::PathBuf::from("/tmp/custom/stavr.log"),
         );
 
-        // Branch 2 — fallback when the env var is absent.
+        // Branch 2 — per-platform default. We assert on the platform
+        // we're actually running on, plus a source-level scan that none
+        // of the OTHER platforms' code drifted back to a PM2 path.
         std::env::remove_var("STAVR_LOG_PATH");
         let p = log_path();
-        let s = p.to_string_lossy();
-        assert!(
-            s.ends_with("tmp/pm2-stavr.out.log") || s.ends_with("tmp\\pm2-stavr.out.log"),
-            "default log path should end with tmp/pm2-stavr.out.log; got {s}",
-        );
+        let s = p.to_string_lossy().replace('\\', "/");
+        if cfg!(windows) {
+            assert!(
+                s.ends_with("logs/StavrDaemon.err.log"),
+                "Windows default log path should end with logs/StavrDaemon.err.log; got {s}"
+            );
+        } else if cfg!(target_os = "macos") {
+            assert!(
+                s.ends_with("Library/Logs/stavr/stderr.log"),
+                "macOS default log path should end with Library/Logs/stavr/stderr.log; got {s}"
+            );
+        } else if cfg!(target_os = "linux") {
+            assert!(
+                s.ends_with(".local/share/stavr/stavr.log"),
+                "Linux default log path should end with .local/share/stavr/stavr.log; got {s}"
+            );
+        }
+
+        // Belt-and-braces: NO PM2 reference must survive in actions.rs
+        // production code (the audit's stated regression vector).
+        let src = include_str!("actions.rs");
+        let prod = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("actions.rs non-test prelude");
+        for forbidden in ["pm2-stavr", "pm2_stavr", "pm2/stavr"] {
+            assert!(
+                !prod.contains(forbidden),
+                "actions.rs prod code must not reference {forbidden:?} (PM2 path is off the View Logs surface)"
+            );
+        }
+    }
+
+    /// Linux-only: the journalctl recipe is exposed as a constant so
+    /// `open_logs` can surface it, and so a future log-surface revamp
+    /// doesn't have to re-derive the recipe.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn journalctl_hint_is_exposed_and_actionable() {
+        assert!(JOURNALCTL_HINT.contains("journalctl"));
+        assert!(JOURNALCTL_HINT.contains("--user"));
+        assert!(JOURNALCTL_HINT.contains("stavr.service"));
     }
 
     #[test]
