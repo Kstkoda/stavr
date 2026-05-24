@@ -22,6 +22,9 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use stavr_governor::event_bridge::{EventBridge, EventSink, UreqFetcher, DEFAULT_STREAM_URL};
 use stavr_governor::event_router::EventRouter;
+use stavr_governor::heartbeat::{
+    self, HeartbeatPayload, HeartbeatSender, UreqSender, DEFAULT_HEARTBEAT_URL, HEARTBEAT_INTERVAL,
+};
 use stavr_governor::icons;
 use stavr_governor::notification::TauriToastRenderer;
 use stavr_governor::service::{ServiceQuery, ServiceStatus, SystemServiceQuery};
@@ -85,6 +88,30 @@ fn main() {
 
     let stream_url =
         std::env::var("STAVR_STREAM_URL").unwrap_or_else(|_| DEFAULT_STREAM_URL.to_string());
+
+    // governor-polish Cluster C — Governor → daemon heartbeat. Every
+    // HEARTBEAT_INTERVAL we POST /governor/heartbeat so the daemon's
+    // Diagnostics tile knows the Governor is alive. Failures are
+    // logged and absorbed (the daemon may be restarting or stopped).
+    let heartbeat_url = std::env::var("STAVR_HEARTBEAT_URL")
+        .unwrap_or_else(|_| DEFAULT_HEARTBEAT_URL.to_string());
+    let heartbeat_payload = HeartbeatPayload::from_build_env();
+    let heartbeat_sender: Arc<dyn HeartbeatSender> = Arc::new(UreqSender);
+    log::info!(
+        "heartbeat sender will POST {heartbeat_url} every {:?} (version {}, signing {})",
+        HEARTBEAT_INTERVAL,
+        heartbeat_payload.version,
+        heartbeat_payload.signing.as_deref().unwrap_or("unsigned"),
+    );
+    {
+        let sender = heartbeat_sender.clone();
+        let url = heartbeat_url.clone();
+        let payload = heartbeat_payload.clone();
+        std::thread::Builder::new()
+            .name("heartbeat-sender".to_string())
+            .spawn(move || heartbeat::run_forever(sender, url, payload, HEARTBEAT_INTERVAL))
+            .expect("spawn heartbeat-sender thread");
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())

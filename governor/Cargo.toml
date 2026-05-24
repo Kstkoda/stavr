@@ -1,6 +1,6 @@
 [package]
 name = "stavr-governor"
-version = "0.6.5"
+version = "0.6.11"
 edition = "2021"
 description = "stavR Governor — Tauri 2 tray companion for the stavR daemon (observation, approval notifications, operator-triggered control)."
 authors = ["stavR contributors"]

@@ -18,7 +18,7 @@ use tauri::{
     image::Image,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{TrayIcon, TrayIconBuilder},
-    AppHandle, Manager, Runtime,
+    AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::ManagerExt;
 
@@ -78,6 +78,17 @@ pub const MENU_ID_RESTART_DAEMON: &str = "restart_daemon";
 pub const MENU_ID_UPGRADE_DAEMON: &str = "upgrade_daemon";
 /// Phase 5 — login auto-start toggle.
 pub const MENU_ID_AUTOSTART: &str = "autostart";
+/// Cluster B (governor-polish) — About stavᚱ Governor.
+pub const MENU_ID_ABOUT: &str = "about";
+
+/// Canonical id of the About webview window. Resolved by
+/// `app.get_webview_window(ABOUT_WINDOW_ID)` so repeat clicks focus the
+/// existing window instead of opening a second one.
+pub const ABOUT_WINDOW_ID: &str = "about";
+
+/// Default repository URL surfaced as "View on GitHub" in the About
+/// dialog. Override via `STAVR_REPO_URL` (e.g. for a fork).
+pub const DEFAULT_REPO_URL: &str = "https://github.com/stavR/stavr";
 
 /// Build the Governor tray icon and attach it to the running Tauri app.
 ///
@@ -148,8 +159,103 @@ pub fn handle_menu_event<R: Runtime>(
         MENU_ID_RESTART_DAEMON => trigger_restart(app),
         MENU_ID_UPGRADE_DAEMON => trigger_upgrade(app),
         MENU_ID_AUTOSTART => toggle_autostart(app),
+        MENU_ID_ABOUT => trigger_about(app),
         _ => {}
     }
+}
+
+/// Operator clicked "About stavᚱ Governor". Build the About webview
+/// window on demand. If the window already exists, focus it instead of
+/// stacking duplicates. The daemon's version is fetched live from
+/// `/healthz` with a 1 s timeout; failures surface as "daemon
+/// unreachable" in the dialog rather than blocking the open. The fetch
+/// runs on a worker thread so the menu-event dispatcher (which is on
+/// the Tauri main thread) doesn't stall.
+fn trigger_about<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(existing) = app.get_webview_window(ABOUT_WINDOW_ID) {
+        if let Err(e) = existing.set_focus() {
+            log::warn!("tray: About set_focus failed: {e}");
+        }
+        return;
+    }
+    let app = app.clone();
+    std::thread::Builder::new()
+        .name("about-window".to_string())
+        .spawn(move || {
+            let daemon = fetch_daemon_version_for_about();
+            if let Err(e) = build_about_window(&app, daemon.as_deref()) {
+                log::warn!("tray: About window build failed: {e}");
+            }
+        })
+        .expect("spawn about-window thread");
+}
+
+/// Best-effort GET `/healthz`, return the daemon's `version` field if
+/// the call succeeds within 1 s and the response is well-formed.
+/// Anything else (network, decode, missing field) returns `None`, which
+/// the About window renders as "daemon unreachable".
+fn fetch_daemon_version_for_about() -> Option<String> {
+    let base = std::env::var("STAVR_DASHBOARD_BASE")
+        .unwrap_or_else(|_| stavr_governor::actions::DEFAULT_DASHBOARD_BASE.to_string());
+    let url = format!("{}/healthz", base.trim_end_matches('/'));
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_millis(500))
+        .timeout_read(std::time::Duration::from_millis(800))
+        .timeout_write(std::time::Duration::from_millis(500))
+        .build();
+    let body = agent.get(&url).call().ok()?.into_string().ok()?;
+    let json: serde_json::Value = serde_json::from_str(&body).ok()?;
+    json.get("version").and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
+/// Create the About webview window with `?gov=&daemon=&rust=&repo=` URL
+/// params populated from build-time + runtime values. Sized for the
+/// content; not resizable; closing it leaves the tray alive.
+fn build_about_window<R: Runtime>(
+    app: &AppHandle<R>,
+    daemon_version: Option<&str>,
+) -> tauri::Result<()> {
+    let gov = env!("CARGO_PKG_VERSION");
+    let rust = option_env!("RUSTC_VERSION").unwrap_or("");
+    let daemon_label = daemon_version
+        .map(|v| format!("v{v}"))
+        .unwrap_or_else(|| "daemon unreachable".to_string());
+    let repo = std::env::var("STAVR_REPO_URL").unwrap_or_else(|_| DEFAULT_REPO_URL.to_string());
+    let qs = format!(
+        "?gov={}&daemon={}&rust={}&repo={}",
+        url_encode(gov),
+        url_encode(&daemon_label),
+        url_encode(rust),
+        url_encode(&repo),
+    );
+    let url_path = format!("about.html{qs}");
+    WebviewWindowBuilder::new(app, ABOUT_WINDOW_ID, WebviewUrl::App(url_path.into()))
+        .title("About stavR Governor")
+        .inner_size(420.0, 460.0)
+        .resizable(false)
+        .minimizable(false)
+        .maximizable(false)
+        .center()
+        .focused(true)
+        .visible(true)
+        .build()?;
+    Ok(())
+}
+
+/// Minimal percent-encoder for URL query values. The About dialog only
+/// puts SemVer strings, a SHA, a Rust version and a URL through here;
+/// the spec-correct heavyweight crates aren't worth pulling for that.
+fn url_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
 }
 
 /// Operator toggled "Start at login". Flips the autostart plugin state
@@ -348,7 +454,7 @@ fn apply_mute<R: Runtime>(app: &AppHandle<R>, window: MuteWindow) {
     }
 }
 
-/// Build the Phase-5 tray menu.
+/// Build the tray menu (governor-polish layout).
 ///
 /// ```text
 /// Open Dashboard
@@ -364,6 +470,7 @@ fn apply_mute<R: Runtime>(app: &AppHandle<R>, window: MuteWindow) {
 /// ───────────────
 /// ☑ Start at login          (CheckMenuItem; live-updates on toggle)
 /// ───────────────
+/// About stavᚱ Governor      (Cluster B — opens on-demand WebviewWindow)
 /// Quit Governor
 /// ```
 pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -427,6 +534,13 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         None::<&str>,
     )?;
     let sep4 = PredefinedMenuItem::separator(app)?;
+    let about = MenuItem::with_id(
+        app,
+        MENU_ID_ABOUT,
+        "About stavᚱ Governor",
+        true,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, MENU_ID_QUIT, "Quit Governor", true, None::<&str>)?;
     Menu::with_items(
         app,
@@ -444,6 +558,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &sep3,
             &autostart,
             &sep4,
+            &about,
             &quit,
         ],
     )
@@ -554,8 +669,9 @@ fn pip_color_from_state_only(state: DaemonState) -> PipColor {
     }
 }
 
-/// Map a PipColor to the icon variant used by Tauri's tray renderer. The
-/// existing halo set covers all four colors directly; no new assets needed.
+/// Map a PipColor to the icon variant used by Tauri's tray renderer.
+/// Concept 6 (bare glyph): the entire rune is recoloured per status —
+/// see `governor/icons.rs` module doc + `design-mockups/dock-icon-mockups.html`.
 pub fn pip_icon(color: PipColor) -> IconVariant {
     match color {
         PipColor::Green => IconVariant::Healthy,
@@ -646,6 +762,7 @@ mod tests {
             MENU_ID_MUTE_1D,
             MENU_ID_UNMUTE,
             MENU_ID_AUTOSTART,
+            MENU_ID_ABOUT,
             MENU_ID_QUIT,
         ]
     }
@@ -790,7 +907,7 @@ mod tests {
     // ---- Phase 2: pip color ---------------------------------------------
 
     /// Running service + Healthy daemon = green. The BOM Phase 2 green
-    /// case — must be the only path that lights the green halo.
+    /// case — must be the only path that paints the rune green.
     #[test]
     fn pip_color_green_only_when_service_running_and_daemon_healthy() {
         assert_eq!(
@@ -798,7 +915,7 @@ mod tests {
             PipColor::Green
         );
         // Stopped / NotInstalled NEVER produce green — only the running
-        // service can light the green halo. (Unknown deliberately defers
+        // service can paint the rune green. (Unknown deliberately defers
         // to the daemon state so a missing `sc`/`systemctl`/`launchctl`
         // still gives the operator a useful pip; that's covered
         // separately in `pip_color_unknown_service_defers_to_daemon_state`.)
@@ -897,19 +1014,20 @@ mod tests {
     }
 
     #[test]
-    fn pip_icon_maps_colors_to_existing_halo_assets() {
+    fn pip_icon_maps_colors_to_status_glyph_variants() {
         assert_eq!(pip_icon(PipColor::Green), IconVariant::Healthy);
         assert_eq!(pip_icon(PipColor::Amber), IconVariant::Degraded);
         assert_eq!(pip_icon(PipColor::Red), IconVariant::Down);
         assert_eq!(pip_icon(PipColor::Grey), IconVariant::StoppedManually);
     }
 
-    /// Menu contract after Phase 5: 10 ids. Phase-4 surface plus the
-    /// login-autostart toggle.
+    /// Menu contract after governor-polish Cluster B: 11 ids. Adds the
+    /// "About stavᚱ Governor" item just above Quit; everything else from
+    /// the observe-only refactor stays.
     #[test]
-    fn menu_ids_expose_phase_five_surface() {
+    fn menu_ids_expose_governor_polish_surface() {
         let ids = menu_ids();
-        assert_eq!(ids.len(), 10, "expected 10 menu ids after Phase 5, got {ids:?}");
+        assert_eq!(ids.len(), 11, "expected 11 menu ids after Cluster B, got {ids:?}");
         for required in [
             MENU_ID_OPEN_DASHBOARD,
             MENU_ID_VIEW_LOGS,
@@ -920,6 +1038,7 @@ mod tests {
             MENU_ID_MUTE_1D,
             MENU_ID_UNMUTE,
             MENU_ID_AUTOSTART,
+            MENU_ID_ABOUT,
             MENU_ID_QUIT,
         ] {
             assert!(ids.contains(&required), "menu_ids missing {required}");
@@ -928,6 +1047,7 @@ mod tests {
         assert_eq!(MENU_ID_RESTART_DAEMON, "restart_daemon");
         assert_eq!(MENU_ID_UPGRADE_DAEMON, "upgrade_daemon");
         assert_eq!(MENU_ID_AUTOSTART, "autostart");
+        assert_eq!(MENU_ID_ABOUT, "about");
     }
 
     #[test]
@@ -999,6 +1119,68 @@ mod tests {
         assert!(
             prod.contains("match tooltip_override"),
             "apply_state must short-circuit to the override when Some(_)"
+        );
+    }
+
+    /// Cluster B — `url_encode` percent-encodes everything outside the
+    /// RFC 3986 unreserved set. Names with `+`, `/`, spaces, `&`, `?`
+    /// must all survive the trip through `?gov=…&daemon=…` without
+    /// flipping the parser.
+    #[test]
+    fn url_encode_escapes_reserved_chars() {
+        assert_eq!(url_encode("0.6.11"), "0.6.11");
+        assert_eq!(url_encode("v1.0+sha.abc"), "v1.0%2Bsha.abc");
+        assert_eq!(url_encode("daemon unreachable"), "daemon%20unreachable");
+        assert_eq!(url_encode("a&b=c?d"), "a%26b%3Dc%3Fd");
+        // Unreserved characters round-trip untouched.
+        assert_eq!(url_encode("A-Za-z0-9._~"), "A-Za-z0-9._~");
+    }
+
+    /// Cluster B — repeat About clicks must focus the existing window
+    /// rather than opening a second. Anchor `trigger_about`'s early-return
+    /// path so a future refactor can't drop it (which would re-introduce
+    /// the "stack of identical About windows" failure mode the BOM calls
+    /// out as "exactly one, not at startup").
+    #[test]
+    fn trigger_about_focuses_existing_window_before_spawning() {
+        let src = include_str!("tray.rs");
+        let prod = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("tray.rs non-test prelude");
+        assert!(
+            prod.contains("app.get_webview_window(ABOUT_WINDOW_ID)"),
+            "trigger_about must look up the existing window via ABOUT_WINDOW_ID"
+        );
+        assert!(
+            prod.contains("set_focus()"),
+            "trigger_about must focus the existing window on repeat clicks"
+        );
+        assert!(
+            prod.contains("WebviewWindowBuilder::new(app, ABOUT_WINDOW_ID,"),
+            "build_about_window must register the window under ABOUT_WINDOW_ID"
+        );
+        // The About fetch path must not block the menu-event dispatcher
+        // (Tauri main thread). Anchor the worker-thread spawn.
+        assert!(
+            prod.contains("name(\"about-window\".to_string())"),
+            "About window build must spawn a worker thread so /healthz fetch doesn't stall the UI"
+        );
+    }
+
+    /// Cluster B — daemon-unreachable text is the label the About dialog
+    /// renders when /healthz times out. Anchor it so a future refactor
+    /// can't silently change the operator-visible string.
+    #[test]
+    fn about_daemon_label_falls_back_to_unreachable_string() {
+        let src = include_str!("tray.rs");
+        let prod = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("tray.rs non-test prelude");
+        assert!(
+            prod.contains("\"daemon unreachable\""),
+            "About window must surface 'daemon unreachable' on /healthz failure"
         );
     }
 

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stavR dock icon — concepts</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI",system-ui,sans-serif; background:#f4f1ea; color:#26262c; padding:40px 24px; }
+  .wrap { max-width:1000px; margin:0 auto; }
+  h1 { font-weight:600; font-size:26px; margin:0 0 6px; }
+  .sub { color:#6b675f; font-size:15px; margin:0 0 30px; line-height:1.55; }
+  .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:20px; }
+  .card { border:1px solid #d8d2c4; border-radius:14px; background:#fff; overflow:hidden; }
+  .card-head { padding:14px 18px; border-bottom:1px solid #ece7db; }
+  .card-name { font-weight:600; font-size:16px; }
+  .card-desc { color:#6b675f; font-size:13px; margin-top:4px; line-height:1.5; }
+  .swatches { display:flex; }
+  .swatch { flex:1; display:flex; align-items:flex-end; justify-content:center; gap:18px; padding:24px 0; }
+  .light-bg { background:#e9e4d8; }
+  .dark-bg { background:#1b1b1f; }
+  .dock-label { color:#6b675f; font-size:14px; margin:38px 0 8px; }
+  .dockbar { background:#15151a; border-radius:20px; padding:13px 22px; display:flex; align-items:center; justify-content:center; gap:14px; }
+  .rec { margin-top:24px; padding:18px 20px; background:#fff; border:1px solid #d8d2c4; border-radius:14px; font-size:14px; line-height:1.65; color:#3a3a3a; }
+  .rec b { font-weight:600; color:#26262c; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>stavR dock icon — concepts</h1>
+  <p class="sub">Six directions for the Governor app icon — all built on the Raido rune, none using a circle. Each is shown large on a light and a dark surface, plus a small dock-size render, so you can see how it holds up tiny.</p>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+    <g id="rune" fill="none" stroke="currentColor" stroke-width="11" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="38" y1="20" x2="38" y2="80"/>
+      <path d="M38 20 L68 33 L38 50"/>
+      <line x1="38" y1="50" x2="68" y2="80"/>
+    </g>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+      <rect x="0" y="0" width="100" height="100" fill="#fff"/>
+      <use href="#rune" style="color:#000"/>
+    </mask>
+    <g id="ic1"><rect x="6" y="6" width="88" height="88" rx="21" fill="#26262c"/><use href="#rune" style="color:#c2603a"/></g>
+    <g id="ic2"><rect x="6" y="6" width="88" height="88" rx="21" fill="#c2603a"/><use href="#rune" style="color:#f0e8d8"/></g>
+    <g id="ic3"><rect x="6" y="6" width="88" height="88" rx="21" fill="#c2603a" mask="url(#cut)"/></g>
+    <g id="ic4"><rect x="19" y="8" width="62" height="84" rx="11" fill="#26262c" stroke="#524d40" stroke-width="1.5"/><use href="#rune" style="color:#c2603a"/></g>
+    <g id="ic5"><polygon points="72,12 94,50 72,88 28,88 6,50 28,12" fill="#26262c"/><use href="#rune" style="color:#c2603a"/></g>
+    <g id="ic6"><use href="#rune" style="color:#c2603a"/></g>
+    <g id="gen1"><rect x="6" y="6" width="88" height="88" rx="21" fill="#5b6470"/></g>
+    <g id="gen2"><rect x="6" y="6" width="88" height="88" rx="21" fill="#3a7bd0"/></g>
+  </defs></svg>
+
+  <div class="grid">
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-name">1 &middot; Iron squircle</div>
+        <div class="card-desc">The modern OS-standard tile — the literal shape of every current macOS and Windows app icon. Restrained, premium, and it answers "not a circle" directly.</div>
+      </div>
+      <div class="swatches">
+        <div class="swatch light-bg"><svg width="104" height="104" viewBox="0 0 100 100"><use href="#ic1"/></svg><svg width="40" height="40" viewBox="0 0 100 100"><use href="#ic1"/></svg></div>
+        <div class="swatch dark-bg"><svg width="104" height="104" viewBox="0 0 100 100"><use href="#ic1"/></svg><svg width="40" height="40" viewBox="0 0 100 100"><use href="#ic1"/></svg></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-name">2 &middot; Rust squircle</div>
+        <div class="card-desc">Same modern tile, but rust is the fill — the brand colour carries the whole icon. Warmer, more vivid, harder to miss in a crowded dock.</div>
+      </div>
+      <div class="swatches">
+        <div class="swatch light-bg"><svg width="104" height="104" viewBox="0 0 100 100"><use href="#ic2"/></svg><svg width="40" height="40" viewBox="0 0 100 100"><use href="#ic2"/></svg></div>
+        <div class="swatch dark-bg"><svg width="104" height="104" viewBox="0 0 100 100"><use href="#ic2"/></svg><svg width="40" height="40" viewBox="0 0 100 100"><use href="#ic2"/></svg></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-name">3 &middot; Negative cutout</div>
+        <div class="card-desc">A rust tile with the rune knocked out — defined by absence. Distinctive and deliberate; the rune shifts with whatever surface sits behind it.</div>
+      </div>
+      <div class="swatches">
+        <div class="swatch light-bg"><svg width="104" height="104" viewBox="0 0 100 100"><use href="#ic3"/></svg><svg width="40" height="40" viewBox="0 0 100 100"><use href="#ic3"/></svg></div>
+        <div class="swatch dark-bg"><svg width="104" height="104" viewBox="0 0 100 100"><use href="#ic3"/></svg><svg width="40" height="40" viewBox="0 0 100 100"><use href="#ic3"/></svg></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-name">4 &middot; Runestone slab</div>
+        <div class="card-desc">A tall iron tablet — the most literal nod to the runestone heritage. Strong brand story, but a slab shape sits a little oddly among square dock neighbours.</div>
+      </div>
+      <div class="swatches">
+        <div class="swatch light-bg"><svg width="104" height="104" viewBox="0 0 100 100"><use href="#ic4"/></svg><svg width="40" height="40" viewBox="0 0 100 100"><use href="#ic4"/></svg></div>
+        <div class="swatch dark-bg"><svg width="104" height="104" viewBox="0 0 100 100"><use href="#ic4"/></svg><svg width="40" height="40" viewBox="0 0 100 100"><use href="#ic4"/></svg></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-name">5 &middot; Hexagon</div>
+        <div class="card-desc">The rune in a hex tile — a callback to the topology dashboard's node language. Geometric and techy; ties the app icon to the product's own visual world.</div>
+      </div>
+      <div class="swatches">
+        <div class="swatch light-bg"><svg width="104" height="104" viewBox="0 0 100 100"><use href="#ic5"/></svg><svg width="40" height="40" viewBox="0 0 100 100"><use href="#ic5"/></svg></div>
+        <div class="swatch dark-bg"><svg width="104" height="104" viewBox="0 0 100 100"><use href="#ic5"/></svg><svg width="40" height="40" viewBox="0 0 100 100"><use href="#ic5"/></svg></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-name">6 &middot; Bare glyph</div>
+        <div class="card-desc">Just the rune, no tile. Minimal and iconic in isolation — but it floats in a dock and is a weaker click target next to solid neighbours.</div>
+      </div>
+      <div class="swatches">
+        <div class="swatch light-bg"><svg width="104" height="104" viewBox="0 0 100 100"><use href="#ic6"/></svg><svg width="40" height="40" viewBox="0 0 100 100"><use href="#ic6"/></svg></div>
+        <div class="swatch dark-bg"><svg width="104" height="104" viewBox="0 0 100 100"><use href="#ic6"/></svg><svg width="40" height="40" viewBox="0 0 100 100"><use href="#ic6"/></svg></div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="dock-label">All six at dock size, between two generic app icons:</p>
+  <div class="dockbar">
+    <svg width="46" height="46" viewBox="0 0 100 100"><use href="#gen1"/></svg>
+    <svg width="46" height="46" viewBox="0 0 100 100"><use href="#ic1"/></svg>
+    <svg width="46" height="46" viewBox="0 0 100 100"><use href="#ic2"/></svg>
+    <svg width="46" height="46" viewBox="0 0 100 100"><use href="#ic3"/></svg>
+    <svg width="46" height="46" viewBox="0 0 100 100"><use href="#ic4"/></svg>
+    <svg width="46" height="46" viewBox="0 0 100 100"><use href="#ic5"/></svg>
+    <svg width="46" height="46" viewBox="0 0 100 100"><use href="#ic6"/></svg>
+    <svg width="46" height="46" viewBox="0 0 100 100"><use href="#gen2"/></svg>
+  </div>
+
+  <p class="dock-label">Tray / menu-bar icon &mdash; where engine status lives. The launcher (concept 6) stays a clean glyph; the always-on tray icon adds a corner status dot.</p>
+  <div style="display:flex;gap:14px;">
+    <div style="flex:1;background:#1b1b1f;border-radius:12px;padding:20px 0;display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <div style="display:flex;align-items:flex-end;gap:16px;">
+        <svg width="74" height="74" viewBox="0 0 100 100"><use href="#rune" style="color:#c2603a"/><circle cx="79" cy="77" r="15" fill="#46b25e" stroke="#15151a" stroke-width="3"/></svg>
+        <svg width="26" height="26" viewBox="0 0 100 100"><use href="#rune" style="color:#c2603a"/><circle cx="79" cy="77" r="15" fill="#46b25e" stroke="#15151a" stroke-width="3"/></svg>
+      </div>
+      <div style="color:#8a857c;font-size:12.5px;">ok &mdash; engine green</div>
+    </div>
+    <div style="flex:1;background:#1b1b1f;border-radius:12px;padding:20px 0;display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <div style="display:flex;align-items:flex-end;gap:16px;">
+        <svg width="74" height="74" viewBox="0 0 100 100"><use href="#rune" style="color:#c2603a"/><circle cx="79" cy="77" r="15" fill="#e0922f" stroke="#15151a" stroke-width="3"/></svg>
+        <svg width="26" height="26" viewBox="0 0 100 100"><use href="#rune" style="color:#c2603a"/><circle cx="79" cy="77" r="15" fill="#e0922f" stroke="#15151a" stroke-width="3"/></svg>
+      </div>
+      <div style="color:#8a857c;font-size:12.5px;">warn &mdash; engine amber</div>
+    </div>
+    <div style="flex:1;background:#1b1b1f;border-radius:12px;padding:20px 0;display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <div style="display:flex;align-items:flex-end;gap:16px;">
+        <svg width="74" height="74" viewBox="0 0 100 100"><use href="#rune" style="color:#c2603a"/><circle cx="79" cy="77" r="15" fill="#d8463f" stroke="#15151a" stroke-width="3"/></svg>
+        <svg width="26" height="26" viewBox="0 0 100 100"><use href="#rune" style="color:#c2603a"/><circle cx="79" cy="77" r="15" fill="#d8463f" stroke="#15151a" stroke-width="3"/></svg>
+      </div>
+      <div style="color:#8a857c;font-size:12.5px;">crit &mdash; engine red</div>
+    </div>
+  </div>
+
+  <div class="rec">
+    <b>My read</b> — a squircle tile is the correct modern default: it is the literal shape of every current macOS and Windows app icon, and it fixes the circle directly (concepts 1 and 2). For something more distinctive that is still a proper, clickable tile, the <b>negative cutout (3)</b> is the strongest — the rune defined by absence reads as deliberate and premium. The runestone slab (4) carries the most brand story but sits awkwardly among square dock neighbours; the hexagon (5) ties the icon to the dashboard's node language; and I would steer away from the bare glyph (6) for a dock icon — elegant alone, but it floats. <b>My pick: 3 for distinctiveness, or 1 if you want restrained.</b> Whichever you choose becomes the basis for the full icon set at every resolution macOS and Windows need. Colours here are placeholders from the iron palette — they get tuned in the real asset.
+  </div>
+</div>
+</body>
+</html>

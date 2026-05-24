@@ -3,9 +3,12 @@
 
 Source of truth is `icons/raido-base.svg`; this script renders the same
 geometry via PIL so we don't need a headless SVG renderer in CI. Output:
-  - PNGs at 16, 32, 64, 128, 256, 512, 1024 (transparent background)
+  - PNGs at 16, 32, 64, 128, 256, 512, 1024 (transparent background, rust)
   - ICO bundle (16/32/48/64/128/256) for Windows tray + bundler
-  - Halo color variants for state-driven swapping (green/yellow/red/gray/orange)
+  - Status-colour variants (green/yellow/red/gray) at 16/32 — the whole
+    rune is recoloured (governor-polish BOM Cluster A, concept 6 bare
+    glyph). No tile, no halo, no circle — status is the colour of the
+    glyph itself.
 
 Run from repo root:  python governor/scripts/gen_icons.py
 """
@@ -18,17 +21,17 @@ ICONS = Path(__file__).resolve().parent.parent / "icons"
 SIZES = [16, 32, 64, 128, 256, 512, 1024]
 ICO_SIZES = [16, 32, 48, 64, 128, 256]
 
-# Iron palette
-RUST_ORANGE = (250, 156, 76, 255)   # #fa9c4c — default brand
+# Iron palette — match the dashboard tokens. Brand stays rust; the four
+# status colours recolour the entire glyph (concept 6, no halo).
+RUST_ORANGE = (250, 156, 76, 255)   # #fa9c4c — Brand / idle
 GREEN       = (95, 217, 135, 255)   # #5fd987 — Healthy
 YELLOW      = (255, 217, 90, 255)   # #ffd95a — Degraded
 RED         = (255, 122, 122, 255)  # #ff7a7a — Down / GiveUp
 GRAY        = (138, 138, 138, 255)  # #8a8a8a — StoppedManually
-PULSE_DIM   = (250, 156, 76, 110)   # rust orange, low-alpha — Restarting frame 2
 
-# Geometry expressed at 128x128, scaled per output size.
-BASE = 128.0
-STROKE_BASE = 14.0  # at 128x128
+# Geometry expressed on a 100-unit grid (matches design-mockups/dock-icon-mockups.html `#rune`).
+BASE = 100.0
+STROKE_BASE = 11.0  # at 100x100
 
 
 def _scale(p: tuple[float, float], size: int) -> tuple[float, float]:
@@ -37,38 +40,47 @@ def _scale(p: tuple[float, float], size: int) -> tuple[float, float]:
 
 
 def _stroke_width(size: int) -> int:
-    # keep stroke proportional but readable at small sizes
+    # Keep stroke proportional but readable at tray sizes.
     w = max(2.0, STROKE_BASE * (size / BASE))
     return int(round(w))
 
 
 def _draw_rune(size: int, color: tuple[int, int, int, int]) -> Image.Image:
+    """Render the concept-6 bare rune at `size` px in `color`.
+
+    Geometry mirrors the dock-icon-mockup SVG: staff (38,20)→(38,80);
+    bow (38,20)→(68,33)→(38,50); leg (38,50)→(68,80). Round caps/joins
+    are stamped manually because PIL's `Image.Draw.line` doesn't expose
+    a stroke-linejoin parameter.
+    """
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     sw = _stroke_width(size)
 
-    # vertical staff
-    p1 = _scale((34, 20), size)
-    p2 = _scale((34, 108), size)
-    draw.line([p1, p2], fill=color, width=sw)
+    # Geometry points in 100-grid space.
+    staff_top = (38, 20)
+    staff_mid = (38, 50)
+    staff_bot = (38, 80)
+    bow_tip   = (68, 33)
+    leg_end   = (68, 80)
 
-    # upper bow: staff-top → mid-right → staff-middle
-    bow = [
-        _scale((34, 20), size),
-        _scale((90, 38), size),
-        _scale((34, 62), size),
-    ]
-    draw.line([bow[0], bow[1]], fill=color, width=sw)
-    draw.line([bow[1], bow[2]], fill=color, width=sw)
+    p_staff_top = _scale(staff_top, size)
+    p_staff_mid = _scale(staff_mid, size)
+    p_staff_bot = _scale(staff_bot, size)
+    p_bow_tip   = _scale(bow_tip,   size)
+    p_leg_end   = _scale(leg_end,   size)
 
-    # lower leg: staff-middle → bottom-right
-    p3 = _scale((34, 62), size)
-    p4 = _scale((92, 108), size)
-    draw.line([p3, p4], fill=color, width=sw)
+    # Vertical staff
+    draw.line([p_staff_top, p_staff_bot], fill=color, width=sw)
+    # Upper bow (two segments meeting at bow_tip)
+    draw.line([p_staff_top, p_bow_tip], fill=color, width=sw)
+    draw.line([p_bow_tip, p_staff_mid], fill=color, width=sw)
+    # Lower leg
+    draw.line([p_staff_mid, p_leg_end], fill=color, width=sw)
 
-    # round joints by stamping circles at the vertices
+    # Round joints by stamping circles at every vertex.
     r = max(1, sw // 2)
-    for vx, vy in [p1, p2, bow[0], bow[1], bow[2], p3, p4]:
+    for vx, vy in (p_staff_top, p_staff_mid, p_staff_bot, p_bow_tip, p_leg_end):
         draw.ellipse(
             [(vx - r, vy - r), (vx + r, vy + r)],
             fill=color,
@@ -76,42 +88,17 @@ def _draw_rune(size: int, color: tuple[int, int, int, int]) -> Image.Image:
     return img
 
 
-def _draw_halo_variant(size: int, halo: tuple[int, int, int, int]) -> Image.Image:
-    """Rune in rust orange surrounded by a translucent halo ring of the state color.
-
-    P3 hard rule: status = halo ring; type = node color. The base glyph stays rust
-    orange (the brand) — the halo conveys state. For 16/32 px tray icons we still
-    use a single-color glyph because halo detail is invisible at that size; only
-    32+ gets the halo.
-    """
-    img = _draw_rune(size, RUST_ORANGE)
-    if size >= 32:
-        ring = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        rd = ImageDraw.Draw(ring)
-        margin = max(1, size // 16)
-        ring_w = max(2, size // 16)
-        rd.ellipse(
-            [(margin, margin), (size - margin, size - margin)],
-            outline=halo,
-            width=ring_w,
-        )
-        img = Image.alpha_composite(ring, img)
-    else:
-        # at 16 px, tint the whole glyph to the halo color so state still reads
-        img = _draw_rune(size, halo)
-    return img
-
-
 def main() -> int:
     ICONS.mkdir(parents=True, exist_ok=True)
 
-    # Base brand icon (rust orange) at all sizes
+    # Base brand glyph (rust orange) at all sizes — bundle icon, About
+    # dialog, pre-launch tray placeholder.
     for s in SIZES:
         out = ICONS / f"raido-{s}.png"
         _draw_rune(s, RUST_ORANGE).save(out, "PNG")
         print(f"wrote {out.relative_to(ICONS.parent)} ({s}x{s})")
 
-    # ICO bundle for Windows tray + bundler
+    # ICO bundle for Windows tray + bundler.
     ico_layers = [_draw_rune(s, RUST_ORANGE) for s in ICO_SIZES]
     ico_path = ICONS / "raido-icon.ico"
     ico_layers[0].save(
@@ -122,24 +109,22 @@ def main() -> int:
     )
     print(f"wrote {ico_path.relative_to(ICONS.parent)} (ICO, {ICO_SIZES})")
 
-    # Halo color variants for state machine (P3). Each at 16 and 32.
+    # Status-colour variants — the whole rune recoloured (concept 6, no
+    # halo). Tray uses 16/32 directly via `IconVariant::bytes_{16,32}`.
     variants = {
-        "green": GREEN,
+        "green":  GREEN,
         "yellow": YELLOW,
-        "red": RED,
-        "gray": GRAY,
-        "orange": RUST_ORANGE,
-        "orange-dim": PULSE_DIM,
+        "red":    RED,
+        "gray":   GRAY,
     }
     for name, color in variants.items():
         for s in (16, 32):
             out = ICONS / f"raido-{name}-{s}.png"
-            _draw_halo_variant(s, color).save(out, "PNG")
+            _draw_rune(s, color).save(out, "PNG")
             print(f"wrote {out.relative_to(ICONS.parent)} ({name} {s}x{s})")
 
     # macOS .icns is generated by `cargo tauri icon` during bundling from
-    # raido-1024.png; we skip the PIL ICNS path because Pillow's ICNS writer
-    # is patchy across versions. The 1024 PNG above is the seed.
+    # raido-1024.png; Pillow's ICNS writer is patchy across versions.
 
     print("OK")
     return 0

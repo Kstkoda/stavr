@@ -33,7 +33,15 @@
 #   3 = upgrade failed AND rollback failed (operator-only)
 #   4 = couldn't even capture OLD; nothing was attempted
 
-set -u
+# governor-polish Cluster D (PR #77 security review) — promote to the
+# full strict set. The script's rollback contract already uses explicit
+# `|| return 1` / `|| true` markers + `if` guards on every command that
+# may legitimately fail, so `errexit` is belt-and-braces against a
+# future contributor adding an un-guarded step that should abort to
+# rollback instead of plowing on. `pipefail` is preventive: the current
+# script has no pipelines but new ones (e.g. `git log … | head`) would
+# silently swallow upstream failures without it.
+set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Args + defaults

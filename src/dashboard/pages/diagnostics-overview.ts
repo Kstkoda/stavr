@@ -18,6 +18,7 @@ import type { InstalledBrickLite } from '../adapters/topology.js';
 import { renderShell } from '../shell.js';
 import { fetchWorkerCounters } from '../data/worker-counters.js';
 import { snapshotBuildVersions, type BuildVersions } from '../data/build-versions.js';
+import { heartbeatStore } from '../../governor/heartbeat-store.js';
 
 export interface DiagnosticsOverviewData {
   bricks?: InstalledBrickLite[];
@@ -189,7 +190,10 @@ export function renderDiagnosticsOverview(data?: DiagnosticsOverviewData): strin
   const peerCount = data?.peerCount ?? 0;
   const steward = data?.steward;
   const alerts = data?.alerts;
-  const versions = data?.versions ?? snapshotBuildVersions();
+  // governor-polish Cluster C — pipe the in-memory heartbeat through
+  // snapshotBuildVersions so the engine tile flips between RUNNING and
+  // not-running as the Governor comes and goes (stale > ~35 s = null).
+  const versions = data?.versions ?? snapshotBuildVersions({ governorHeartbeat: heartbeatStore.current() });
 
   // ----- Engine -----
   const stewardStatus = steward?.status ?? 'unwired';
