@@ -86,6 +86,69 @@ pub enum ServiceError {
     NotFound(&'static str),
     #[error("upgrade script not found at {0}")]
     UpgradeScriptMissing(std::path::PathBuf),
+    /// governor-polish Cluster D (PR #77 security review): the public
+    /// `SystemServiceController.name` failed the defensive whitelist
+    /// BEFORE being interpolated into a PowerShell command string.
+    /// `pub name: String` was flagged as "fragile for a future caller";
+    /// this gate keeps the format!() argument inside a known-safe
+    /// character set.
+    #[error("invalid service name: {0:?}")]
+    InvalidName(String),
+    /// governor-polish Cluster D (PR #77 security review): the upgrade
+    /// script path failed the defensive whitelist before being passed
+    /// through to `Start-Process -FilePath powershell`. The existing
+    /// single-quote-doubling escape protects the PowerShell parser, but
+    /// the whitelist adds defence in depth against an operator who
+    /// points `STAVR_UPGRADE_SCRIPT` at something pathological.
+    #[error("invalid upgrade script path: {0}")]
+    InvalidScriptPath(std::path::PathBuf),
+}
+
+/// Defensive whitelist on `SystemServiceController.name`. The string is
+/// interpolated into a PowerShell command on Windows
+/// (`Restart-Service -Name {name} -Force`), so the allowed set is
+/// deliberately narrow: alphanum + `.`, `_`, `-`. Real service ids
+/// already match — Windows `StavrDaemon`, systemd `stavr.service`,
+/// launchd `com.stavr.daemon`.
+pub fn validate_service_name(name: &str) -> Result<(), ServiceError> {
+    if name.is_empty() || name.len() > 64 {
+        return Err(ServiceError::InvalidName(name.to_string()));
+    }
+    let ok = name.bytes().all(|b| {
+        b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-'
+    });
+    if !ok {
+        return Err(ServiceError::InvalidName(name.to_string()));
+    }
+    Ok(())
+}
+
+/// Defensive whitelist on the upgrade-script path. Permissive enough for
+/// real Windows install paths (drive letters + `Program Files`-style
+/// spaces) but rejects anything that could break PowerShell quoting:
+/// `'`, `"`, `;`, `&`, `|`, `$`, backtick, parens, redirection chars,
+/// newlines.
+pub fn validate_script_path(p: &std::path::Path) -> Result<(), ServiceError> {
+    let s = match p.to_str() {
+        Some(s) => s,
+        None => return Err(ServiceError::InvalidScriptPath(p.to_path_buf())),
+    };
+    if s.is_empty() || s.len() > 512 {
+        return Err(ServiceError::InvalidScriptPath(p.to_path_buf()));
+    }
+    let ok = s.chars().all(|c| {
+        c.is_ascii_alphanumeric()
+            || matches!(c, '.' | '_' | '-' | '/' | '\\' | ':' | ' ' | '~' | '(' | ')')
+    });
+    // We allow `(` and `)` because Windows ships `C:\Program Files (x86)\…`
+    // by default; PowerShell single-quote escaping (already in place in
+    // `spawn_upgrade_windows`) handles them. Reject the rest — semicolons,
+    // pipes, ampersands, dollar signs, backticks, quotes, redirection,
+    // newlines.
+    if !ok {
+        return Err(ServiceError::InvalidScriptPath(p.to_path_buf()));
+    }
+    Ok(())
 }
 
 /// Operator-triggered service control. Phase 4 of the operator-companion
@@ -125,6 +188,11 @@ impl Default for SystemServiceController {
 
 impl ServiceController for SystemServiceController {
     fn restart(&self) -> Result<(), ServiceError> {
+        // governor-polish Cluster D — defensive whitelist BEFORE the
+        // name reaches a `format!()` into PowerShell. PR #77 security
+        // review called `pub name: String` "fragile for a future caller";
+        // this gate makes the fragility a 400 rather than a code-exec.
+        validate_service_name(&self.name)?;
         #[cfg(windows)]
         {
             return restart_windows(&self.name);
@@ -287,6 +355,13 @@ pub fn upgrade_script_name() -> (&'static str, &'static str) {
 pub fn spawn_upgrade(
     script: &std::path::Path,
 ) -> Result<std::process::Child, ServiceError> {
+    // governor-polish Cluster D — whitelist the script path BEFORE the
+    // exists() check + spawn. STAVR_UPGRADE_SCRIPT is operator-controlled
+    // (the env override path in `resolve_upgrade_script`); the existing
+    // single-quote-doubling escape in `spawn_upgrade_windows` handles the
+    // PowerShell parser, but a hostile-looking path should fail fast
+    // rather than land in a shell command line at all.
+    validate_script_path(script)?;
     if !script.exists() {
         return Err(ServiceError::UpgradeScriptMissing(script.to_path_buf()));
     }
@@ -798,6 +873,121 @@ mod tests {
             assert_eq!(name, "upgrade-daemon.sh");
             assert_eq!(launcher, "bash");
         }
+    }
+
+    // ---- Cluster D: defensive whitelists ----
+
+    /// `validate_service_name` accepts every real service id we ship
+    /// (Windows / systemd / launchd). A future operator-supplied name
+    /// must clear the same gate before reaching `format!()`.
+    #[test]
+    fn validate_service_name_accepts_real_service_ids() {
+        for ok in [
+            "StavrDaemon",      // Windows
+            "stavr.service",    // systemd
+            "com.stavr.daemon", // launchd
+            "stavr_daemon",     // hypothetical underscore variant
+            "stavr-daemon-2",   // hypothetical hyphen variant
+        ] {
+            assert!(validate_service_name(ok).is_ok(), "rejected real id: {ok}");
+        }
+    }
+
+    /// Every char outside `[A-Za-z0-9._-]` must be rejected. Each entry
+    /// here corresponds to a real PowerShell metacharacter — the
+    /// whitelist's job is to refuse them all up front.
+    #[test]
+    fn validate_service_name_rejects_shell_metacharacters() {
+        for bad in [
+            "Stavr;Stop-Computer",
+            "Stavr Daemon",       // space
+            "Stavr|tee",
+            "Stavr&calc",
+            "Stavr$evil",
+            "Stavr`whoami`",
+            "Stavr'OR'1=1",
+            "Stavr\"injection\"",
+            "Stavr(bad)",
+            "Stavr<redirect",
+            "Stavr>redirect",
+            "Stavr\nnewline",
+            "",                   // empty
+            &"a".repeat(65),     // oversized
+        ] {
+            assert!(
+                validate_service_name(bad).is_err(),
+                "whitelist incorrectly accepted {bad:?}"
+            );
+        }
+    }
+
+    /// `validate_script_path` accepts realistic Windows + Unix install
+    /// paths. Spaces (Program Files), parens (Program Files (x86)),
+    /// drive letters and both path separators must all pass.
+    #[test]
+    fn validate_script_path_accepts_realistic_install_paths() {
+        for ok in [
+            r"C:\Users\op\stavr\bin\upgrade-daemon.ps1",
+            r"C:\Program Files\stavR\bin\upgrade-daemon.ps1",
+            r"C:\Program Files (x86)\stavR\bin\upgrade-daemon.ps1",
+            "/home/op/stavr/bin/upgrade-daemon.sh",
+            "/opt/stavR/bin/upgrade-daemon.sh",
+            "/Users/op/Library/Application Support/stavR/upgrade-daemon.sh",
+        ] {
+            let p = std::path::PathBuf::from(ok);
+            assert!(validate_script_path(&p).is_ok(), "rejected real path: {ok}");
+        }
+    }
+
+    /// Hostile script paths — every chararacter outside the whitelist
+    /// must be refused before the path is interpolated into a
+    /// PowerShell command line.
+    #[test]
+    fn validate_script_path_rejects_shell_metacharacters() {
+        for bad in [
+            r"C:\foo'; Stop-Computer; '\bar",
+            r"C:\foo;calc",
+            r"C:\foo|tee",
+            r"C:\foo$evil",
+            r"C:\foo`whoami`",
+            r"C:\foo&calc",
+            "C:\\foo\\bar\\baz\"", // embedded double-quote
+            "/tmp/foo\nrm -rf /",
+            "",
+        ] {
+            let p = std::path::PathBuf::from(bad);
+            assert!(
+                validate_script_path(&p).is_err(),
+                "whitelist incorrectly accepted hostile path: {bad:?}"
+            );
+        }
+    }
+
+    /// SystemServiceController::restart MUST run the whitelist on
+    /// `self.name` before doing anything else. A
+    /// hostile-name-but-real-controller call returns `InvalidName`
+    /// without ever shelling out.
+    #[test]
+    fn restart_refuses_hostile_service_name() {
+        let bad = SystemServiceController::new("Stavr; Stop-Computer");
+        let err = bad.restart().unwrap_err();
+        assert!(
+            matches!(err, ServiceError::InvalidName(_)),
+            "expected InvalidName, got {err:?}"
+        );
+    }
+
+    /// spawn_upgrade MUST run the whitelist on the script path before
+    /// even checking existence — a hostile path doesn't get to touch
+    /// the filesystem.
+    #[test]
+    fn spawn_upgrade_refuses_hostile_script_path() {
+        let bad = std::path::PathBuf::from(r"C:\foo'; calc; '\upgrade.ps1");
+        let err = spawn_upgrade(&bad).unwrap_err();
+        assert!(
+            matches!(err, ServiceError::InvalidScriptPath(_)),
+            "expected InvalidScriptPath, got {err:?}"
+        );
     }
 
     /// Regression anchor: every Windows subprocess in this module must be
