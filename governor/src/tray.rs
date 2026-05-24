@@ -86,6 +86,11 @@ pub const MENU_ID_AUTOSTART: &str = "autostart";
 /// site — never build another `TrayIconBuilder` after startup; runtime
 /// updates go through `apply_state` which resolves the live instance via
 /// `app.tray_by_id(TRAY_ID)`.
+///
+/// Cluster C (audit #6): the `Menu<R>` is also managed so
+/// `toggle_autostart` can look up the live `CheckMenuItem` and call
+/// `set_checked` after the operator flips "Start at login" — the
+/// visible check mark stays in sync without a relaunch.
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<TrayIcon<R>> {
     let menu = build_menu(app)?;
     let icon = load_icon(IconVariant::Brand)?;
@@ -96,6 +101,9 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<TrayIcon<R>> {
         .tooltip("stavR · starting…")
         .on_menu_event(handle_menu_event::<R>)
         .build(app)?;
+    // Stash the menu so per-item mutators (autostart toggle, future
+    // disabled-state flips) can resolve the live items by id.
+    app.manage(menu);
     Ok(tray)
 }
 
@@ -144,17 +152,10 @@ pub fn handle_menu_event<R: Runtime>(
     }
 }
 
-/// Operator toggled "Start at login". Flips the autostart plugin state.
-/// The check-mark on the tray item is initialised from
-/// `app.autolaunch().is_enabled()` at startup; on subsequent toggles the
-/// visible check mark stays at its prior state until the Governor is
-/// relaunched. That's a small UX wart we tolerate because Tauri 2's
-/// `TrayIcon` does not expose `.menu()` for runtime mutation of an
-/// already-attached menu — wiring a managed `Menu<R>` handle would
-/// add a lot of plumbing for a minor cosmetic. The functional toggle is
-/// what matters; the operator can confirm the new state by reopening
-/// the menu after the next Governor launch, or by checking the OS's
-/// autostart surface (Startup folder / LaunchAgents / XDG).
+/// Operator toggled "Start at login". Flips the autostart plugin state
+/// AND mutates the live `CheckMenuItem`'s check mark via the managed
+/// `Menu<R>` handle (Cluster C / audit #6) — the visible state stays
+/// honest without a Governor relaunch.
 fn toggle_autostart<R: Runtime>(app: &AppHandle<R>) {
     let manager = app.autolaunch();
     let currently = manager.is_enabled().unwrap_or(false);
@@ -164,7 +165,37 @@ fn toggle_autostart<R: Runtime>(app: &AppHandle<R>) {
         manager.enable()
     };
     match result {
-        Ok(()) => log::info!("tray: autostart toggled → {}", !currently),
+        Ok(()) => {
+            let now = !currently;
+            log::info!("tray: autostart toggled → {}", now);
+            // Refresh the visible check mark by reaching into the
+            // managed Menu<R>. Failures here are non-fatal — the
+            // functional toggle already succeeded.
+            if let Some(menu) = app.try_state::<Menu<R>>() {
+                if let Some(item) = menu.get(MENU_ID_AUTOSTART) {
+                    if let Some(check) = item.as_check_menuitem() {
+                        if let Err(e) = check.set_checked(now) {
+                            log::warn!(
+                                "tray: set_checked on autostart item failed: {e}"
+                            );
+                        }
+                    } else {
+                        log::warn!(
+                            "tray: autostart menu item is not a CheckMenuItem — was build_menu changed?"
+                        );
+                    }
+                } else {
+                    log::warn!(
+                        "tray: no menu item with id {:?} — was build_menu changed?",
+                        MENU_ID_AUTOSTART
+                    );
+                }
+            } else {
+                log::warn!(
+                    "tray: Menu<R> not in Tauri state — was app.manage(menu) called in build()?"
+                );
+            }
+        }
         Err(e) => log::warn!("tray: autostart toggle failed (was {currently}): {e}"),
     }
 }
@@ -900,6 +931,31 @@ mod tests {
         let n = ids.len();
         ids.dedup();
         assert_eq!(ids.len(), n, "menu ids must be unique");
+    }
+
+    /// Cluster C (audit #6) — `build()` must manage the `Menu<R>` so
+    /// `toggle_autostart` can look up the live `CheckMenuItem` and
+    /// call `set_checked`. Anchor the wiring so a future refactor
+    /// can't silently drop it and re-introduce the stale check-mark.
+    #[test]
+    fn build_manages_menu_for_runtime_mutation() {
+        let src = include_str!("tray.rs");
+        let prod = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("tray.rs non-test prelude");
+        assert!(
+            prod.contains("app.manage(menu)"),
+            "build() must app.manage(menu) so toggle_autostart can resolve CheckMenuItem at click time"
+        );
+        assert!(
+            prod.contains("app.try_state::<Menu<R>>()"),
+            "toggle_autostart must resolve the managed Menu<R> at click time"
+        );
+        assert!(
+            prod.contains("set_checked(now)"),
+            "toggle_autostart must call set_checked() on the CheckMenuItem"
+        );
     }
 
     /// Phase 4 cluster A — TrayOverride is the shared banner that
