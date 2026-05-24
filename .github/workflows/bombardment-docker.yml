@@ -222,6 +222,16 @@ jobs:
           set -euo pipefail
           node bombardment/chaos/run-netchaos-slice.mjs
 
+      - name: Run projection-corruption + rebuild-from-log slice
+        # Phase 4c — seed fixture (decision rows + matching events),
+        # mutate the projection out of band, replay events to detect
+        # the drift. Proves the event log is the source of truth + the
+        # rebuild path is sound. Runs entirely against peer-a; leaves
+        # other peers untouched.
+        run: |
+          set -euo pipefail
+          node bombardment/chaos/run-projection-corruption.mjs
+
       - name: Collect compose logs on failure
         if: failure()
         run: |
