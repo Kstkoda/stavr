@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Bombardment Phase 4a — in-container helper: seed an open decision
-// row directly into the projection with a past expires_at.
+// row + a matching `decision_request` event directly into the
+// projection + event log, both with a past expires_at.
 //
 // Invoked from the runner via:
 //   docker exec stavr-peer-a node /opt/bombardment-chaos/seed-decision.mjs <correlation_id>
@@ -15,8 +16,24 @@
 // the past — semantically identical to a decision that opened then
 // timed out while the process was down.
 //
+// We ALSO write a matching `decision_request` event for two reasons:
+//   - It satisfies the rebuild-from-log invariant (every projected
+//     decision has at least one corresponding request event in the
+//     log). Without it, the chaos seed leaves an orphan row that
+//     would break a stricter replay oracle.
+//   - It guarantees the SSE consumer's baseline window in the
+//     kill-recovery oracle sees at least one event id, so the
+//     subsequent reconnect can actually exercise `?since_id=` rather
+//     than silently falling back to the no-filter full-history
+//     replay path.
+//
+// Both inserts are idempotent (deterministic event id derived from
+// correlation_id + INSERT OR IGNORE on both tables) and live inside a
+// single transaction. `nextSeq` is read inside the transaction so
+// the daemon's concurrent writes cannot race the seq value.
+//
 // Exit codes:
-//   0 — row inserted (or already existed)
+//   0 — row + event inserted (or already existed)
 //   1 — DB unreachable / insert failed
 //   2 — bad invocation (no correlation_id)
 //
@@ -43,25 +60,66 @@ try {
   // dashboard read.
   const now = Date.now();
   const past = new Date(now - 5000).toISOString();
+  const nowIso = new Date(now).toISOString();
 
-  // INSERT OR IGNORE so re-running the seed in a re-driven oracle is
-  // idempotent — second invocation is a no-op if the row already exists.
-  const info = db
-    .prepare(
-      `INSERT OR IGNORE INTO decisions
-         (correlation_id, question, options_json, default_option_id,
-          timeout_sec, status, requested_at, expires_at, source_agent, tier)
-       VALUES (?, ?, ?, ?, ?, 'open', ?, ?, 'bombardment-chaos', 'TIER_1')`,
-    )
-    .run(
-      correlationId,
-      'bombardment chaos seed — should be swept on restart',
-      JSON.stringify([{ id: 'a', label: 'A' }]),
-      'a',
-      1,
-      past,
-      past,
-    );
+  // Deterministic event id derived from correlation_id so re-runs of
+  // the seed against the same volume don't insert duplicate events.
+  const eventId = `bombardment-chaos-evt-${correlationId}`;
+
+  const result = db.transaction(() => {
+    const decisionInfo = db
+      .prepare(
+        `INSERT OR IGNORE INTO decisions
+           (correlation_id, question, options_json, default_option_id,
+            timeout_sec, status, requested_at, expires_at, source_agent, tier)
+         VALUES (?, ?, ?, ?, ?, 'open', ?, ?, 'bombardment-chaos', 'TIER_1')`,
+      )
+      .run(
+        correlationId,
+        'bombardment chaos seed — should be swept on restart',
+        JSON.stringify([{ id: 'a', label: 'A' }]),
+        'a',
+        1,
+        past,
+        past,
+      );
+
+    // nextSeq inside the transaction so the daemon's concurrent
+    // broker.publish cannot reuse the same seq value between our read
+    // and write. events.seq has only an INDEX, not a UNIQUE constraint
+    // (persistence.ts), so duplicate seq would land silently otherwise.
+    const seqRow = db.prepare(`SELECT COALESCE(MAX(seq), 0) AS m FROM events`).get();
+    const nextSeq = seqRow.m + 1;
+
+    const eventInfo = db
+      .prepare(
+        `INSERT OR IGNORE INTO events
+           (id, kind, correlation_id, source_agent, tenant_id, payload_json,
+            at, persisted_at, seq, created_at)
+         VALUES (?, 'decision_request', ?, 'bombardment-chaos', NULL, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        eventId,
+        correlationId,
+        JSON.stringify({
+          question: 'bombardment chaos seed — should be swept on restart',
+          options: [{ id: 'a', label: 'A' }],
+          default_option_id: 'a',
+          deadline_seconds: 1,
+        }),
+        past,
+        nowIso,
+        nextSeq,
+        nowIso,
+      );
+
+    return {
+      decision_inserted: decisionInfo.changes === 1,
+      event_inserted: eventInfo.changes === 1,
+      event_id: eventId,
+      event_seq: nextSeq,
+    };
+  })();
 
   db.close();
 
@@ -69,8 +127,8 @@ try {
     JSON.stringify({
       ok: true,
       correlation_id: correlationId,
-      inserted: info.changes === 1,
       expires_at: past,
+      ...result,
     }),
   );
   process.exit(0);

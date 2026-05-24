@@ -46,6 +46,18 @@ function dockerExec(args, opts = {}) {
   return spawnSync('docker', args, { encoding: 'utf8', ...opts });
 }
 
+// Read the container's current RestartCount from `docker inspect`. The
+// kill-recovery oracle snapshots this before the kill and asserts it
+// incremented after recovery — that's the positive proof the restart
+// policy actually fired, distinct from "the daemon happened to keep
+// answering /healthz somehow." Returns -1 on docker error.
+function inspectRestartCount(container) {
+  const r = dockerExec(['inspect', '--format', '{{.RestartCount}}', container]);
+  if (r.status !== 0) return -1;
+  const n = Number.parseInt((r.stdout ?? '').trim(), 10);
+  return Number.isFinite(n) ? n : -1;
+}
+
 // Opens an SSE connection, collects events for a settle window, then
 // returns the latest event id seen + the open socket so the caller
 // can keep the consumer alive across the kill. The daemon's stream
@@ -243,6 +255,38 @@ export async function killRecovery() {
   const sinceId = consumer.lastEventId;
   note('sse_baseline_last_id', sinceId);
 
+  // Fail-fast when sinceId is null. Without a baseline event id the
+  // post-kill reconnect at step 7 would call /events/sse with no
+  // ?since_id= query param; the daemon's SSE handler then replays its
+  // ENTIRE event history on connect (persistence.ts getEvents with no
+  // sinceEventId returns all historical rows up to limit=500). That
+  // path would surface the late-response event via the no-filter
+  // full-replay, silently turning invariant 3 into a tautology
+  // instead of a since_id correctness test. The seed-decision helper
+  // writes a `decision_request` event for exactly this purpose, so
+  // sinceId being null here means SSE never delivered the historical
+  // replay — that is itself a real failure to flag.
+  if (!sinceId) {
+    consumer.req.destroy();
+    return {
+      name: 'chaos_kill_recovery',
+      ok: false,
+      reason:
+        'baseline SSE consumer captured no event id during settle window — ' +
+        'reconnect step would fall back to no-filter full replay, masking a ' +
+        'since_id regression. Check that seed-decision wrote its decision_request ' +
+        'event and that the SSE historical replay path is firing.',
+      evidence: { transcript },
+      durationMs: Date.now() - start,
+    };
+  }
+
+  // Snapshot the container's restart count BEFORE the kill so we can
+  // assert post-recovery that the restart-policy actually fired (vs.
+  // /healthz happening to keep answering through some other path).
+  const preKillRestarts = inspectRestartCount(target.container);
+  note('pre_kill_restart_count', preKillRestarts);
+
   // 4) The kill. We use `docker kill` directly because it's the only
   //    primitive that guarantees the daemon process dies synchronously
   //    before this script proceeds — Pumba's kill is asynchronous from
@@ -293,11 +337,46 @@ export async function killRecovery() {
   }
   note('healthz_recovered', true);
 
-  // The SSE consumer's connection died with the container; record that
-  // the consumer noticed the drop (defence against "false positive
-  // reconnect because the original stream stayed alive somehow").
+  // Positive verification that the restart-policy actually fired:
+  // RestartCount must have incremented relative to the pre-kill
+  // snapshot. /healthz answering again is necessary but not sufficient
+  // — a daemon that trapped SIGKILL via a side process, or a future
+  // restart-policy misconfig where the container keeps serving without
+  // a restart, would silently pass the /healthz check.
+  const postRecoveryRestarts = inspectRestartCount(target.container);
+  note('post_recovery_restart_count', postRecoveryRestarts);
+  if (postRecoveryRestarts <= preKillRestarts) {
+    consumer.req.destroy();
+    return {
+      name: 'chaos_kill_recovery',
+      ok: false,
+      reason:
+        `restart count did not increment after kill ` +
+        `(pre=${preKillRestarts}, post=${postRecoveryRestarts}) — ` +
+        `/healthz recovered but the container was never restarted by the policy`,
+      evidence: { transcript },
+      durationMs: Date.now() - start,
+    };
+  }
+
+  // The SSE consumer's connection died with the container; assert the
+  // consumer noticed the drop. Without this, a future change that kept
+  // a long-lived TCP socket alive across the kill would silently pass.
   await sleep(500);
   note('sse_consumer_drop_detected', consumer.dropDetected);
+  if (!consumer.dropDetected) {
+    consumer.req.destroy();
+    return {
+      name: 'chaos_kill_recovery',
+      ok: false,
+      reason:
+        'SSE consumer did not observe the connection drop after the kill — ' +
+        'the original stream stayed alive somehow, which means the post-kill ' +
+        'reconnect is not actually exercising a fresh connection',
+      evidence: { transcript },
+      durationMs: Date.now() - start,
+    };
+  }
   consumer.req.destroy();
 
   // 6) Invariant 2 — startupDecisionSweep produced a
