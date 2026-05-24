@@ -12,6 +12,7 @@
 pub mod actions;
 pub mod event_bridge;
 pub mod event_router;
+pub mod heartbeat;
 pub mod icons;
 pub mod notification;
 pub mod service;
