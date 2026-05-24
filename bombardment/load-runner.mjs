@@ -76,15 +76,26 @@ function createRng(label) {
   return mulberry32((SEED ^ fnv1a(label)) >>> 0);
 }
 
-const port = Number.parseInt(args.port ?? '7777', 10);
-const minutes = Number.parseFloat(args.minutes ?? '90');
+// `??` only catches null/undefined; an arg passed as `--minutes ''`
+// would otherwise produce NaN and silently skip the workload. Treat
+// empty string + non-finite values the same as unset.
+function argNumber(key, fallback) {
+  const raw = args[key];
+  if (raw === undefined || raw === '' || raw === 'true') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+const port = argNumber('port', 7777);
+const minutes = argNumber('minutes', 90);
 const base = `http://127.0.0.1:${port}`;
-const modes = String(args.modes ?? 'mcp_request,sse_churn,mixed_rw,page_nav').split(',').filter(Boolean);
-const rpsMcp = Number.parseFloat(args['rps-mcp'] ?? '5');
-const sseChurnPerSec = Number.parseFloat(args['sse-churn-per-sec'] ?? '2');
-const rwRps = Number.parseFloat(args['rw-rps'] ?? '3');
-const navRps = Number.parseFloat(args['nav-rps'] ?? '1');
-const sampleWindowSec = Number.parseInt(args['sample-window-sec'] ?? '60', 10);
+const rawModes = args.modes === undefined || args.modes === '' || args.modes === 'true' ? 'mcp_request,sse_churn,mixed_rw,page_nav' : String(args.modes);
+const modes = rawModes.split(',').filter(Boolean);
+const rpsMcp = argNumber('rps-mcp', 5);
+const sseChurnPerSec = argNumber('sse-churn-per-sec', 2);
+const rwRps = argNumber('rw-rps', 3);
+const navRps = argNumber('nav-rps', 1);
+const sampleWindowSec = argNumber('sample-window-sec', 60);
 
 const startedAt = Date.now();
 const endAt = startedAt + minutes * 60_000;

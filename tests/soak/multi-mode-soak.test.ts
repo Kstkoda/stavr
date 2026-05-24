@@ -60,14 +60,38 @@ import { startEventLoopLagSampler } from '../../bombardment/observability/event-
 
 const SHOULD_RUN = process.env.STAVR_RUN_SOAK === '1' || process.env.STAVR_RUN_SOAK === 'long';
 const LONG = process.env.STAVR_RUN_SOAK === 'long';
-const RSS_CEILING_MB = Number(process.env.STAVR_SOAK_RSS_CEILING_MB ?? '600');
-const RSS_SLOPE_CEILING_BYTES_PER_SEC = Number(process.env.STAVR_SOAK_RSS_SLOPE_BPS ?? `${1_000_000}`); // 1 MB/s
 
-const DURATION_MINUTES = LONG ? Number(process.env.STAVR_SOAK_MINUTES ?? '30') : Number(process.env.STAVR_SOAK_MINUTES ?? '3');
+/**
+ * Env-var → finite number with default fallback. Why this exists:
+ * `??` only catches null/undefined, but GitHub Actions renders an
+ * unfilled workflow_dispatch input as the empty string in env. On a
+ * scheduled cron run, soak.yml's `STAVR_SOAK_MINUTES: ${{ inputs.minutes }}`
+ * resolves to '', `Number('')` returns 0, and the soak silently runs
+ * for zero minutes. Same for STAVR_HARDENING_SEED (handled separately
+ * in bombardment/seed.ts). Treat empty string + non-finite the same as
+ * unset.
+ */
+function envNumber(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+const RSS_CEILING_MB = envNumber('STAVR_SOAK_RSS_CEILING_MB', 600);
+const RSS_SLOPE_CEILING_BYTES_PER_SEC = envNumber('STAVR_SOAK_RSS_SLOPE_BPS', 1_000_000);
+
+const DURATION_MINUTES = envNumber('STAVR_SOAK_MINUTES', LONG ? 30 : 3);
 const SAMPLE_WINDOW_SEC = LONG ? 60 : 15;
 
 // The CI-friendly modes — every mode the load-runner supports.
-const MODES = (process.env.STAVR_SOAK_MODES ?? 'mcp_request,sse_churn,mixed_rw,page_nav').split(',');
+// Empty STAVR_SOAK_MODES would split to [''] then filter to []; default
+// applies if unset OR empty.
+const MODES = (() => {
+  const raw = process.env.STAVR_SOAK_MODES;
+  if (raw === undefined || raw === '') return ['mcp_request', 'sse_churn', 'mixed_rw', 'page_nav'];
+  return raw.split(',').filter(Boolean);
+})();
 
 const ARTIFACTS_DIR = resolve(process.cwd(), 'bombardment', 'artifacts', 'multi-mode-soak');
 
@@ -160,7 +184,7 @@ const SUITE_DESC = SHOULD_RUN
   beforeAll(async () => {
     mkdirSync(ARTIFACTS_DIR, { recursive: true });
     h = await boot();
-    process.stdout.write(`[soak] seed=${getSeed()} port=${h.port} home=${h.stavrHome}\n`);
+    process.stdout.write(`[soak] seed=${getSeed()} port=${h.port} duration=${DURATION_MINUTES}min modes=${MODES.join(',')} home=${h.stavrHome}\n`);
   });
 
   afterAll(async () => {
