@@ -185,6 +185,39 @@ describe('bombardment/oracles', () => {
     expect(r.reason).toMatch(/non-terminal/);
   });
 
+  it('workersReachTerminal: continuous mode flags a worker with NULL last_activity_at via started_at fallback', async () => {
+    h.store.rawDb.exec(`CREATE TABLE IF NOT EXISTS workers (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      type TEXT,
+      cwd TEXT,
+      pid INTEGER,
+      status TEXT,
+      started_at TEXT,
+      ended_at TEXT,
+      last_activity_at TEXT,
+      metadata_json TEXT,
+      spawn_params_hash TEXT,
+      termination_reason TEXT,
+      exit_code INTEGER,
+      lifecycle_state TEXT
+    )`);
+    // Spawned 10 minutes ago, never recorded activity — pre-fix the
+    // continuous oracle would skip this row because last_activity_at
+    // is NULL. The fallback to started_at flags it as stuck (10 min
+    // > the default 5 min threshold).
+    const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
+    h.store.rawDb
+      .prepare(`INSERT INTO workers (id,name,type,cwd,status,started_at,last_activity_at,metadata_json,spawn_params_hash) VALUES ('zombie','n','t','/','running',?,NULL,'{}','x')`)
+      .run(tenMinAgo);
+
+    const r = await workersReachTerminal({ kind: 'in-process', store: h.store, broker: h.broker });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/stuck/);
+    const violations = (r.evidence as { violations: Array<{ clock: string }> }).violations;
+    expect(violations[0].clock).toBe('started_at');
+  });
+
   it('workersReachTerminal: continuous mode tolerates a fresh running worker', async () => {
     h.store.rawDb.exec(`CREATE TABLE IF NOT EXISTS workers (
       id TEXT PRIMARY KEY,

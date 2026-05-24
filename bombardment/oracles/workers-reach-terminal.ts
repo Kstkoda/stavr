@@ -34,11 +34,11 @@ export function makeWorkersReachTerminal(opts: WorkersReachTerminalOpts = {}): O
         durationMs: Date.now() - start,
       };
     }
-    let rows: Array<{ id: string; status: string; last_activity_at: string | null }>;
+    let rows: Array<{ id: string; status: string; started_at: string | null; last_activity_at: string | null }>;
     try {
       rows = ctx.store.rawDb
-        .prepare(`SELECT id, status, last_activity_at FROM workers`)
-        .all() as Array<{ id: string; status: string; last_activity_at: string | null }>;
+        .prepare(`SELECT id, status, started_at, last_activity_at FROM workers`)
+        .all() as Array<{ id: string; status: string; started_at: string | null; last_activity_at: string | null }>;
     } catch (err) {
       return {
         name: 'workers_reach_terminal',
@@ -49,13 +49,29 @@ export function makeWorkersReachTerminal(opts: WorkersReachTerminalOpts = {}): O
     }
 
     const nowMs = Date.now();
-    const violations: Array<{ id: string; status: string; idle_ms: number | null }> = [];
+    const violations: Array<{ id: string; status: string; idle_ms: number | null; clock: 'last_activity_at' | 'started_at' | 'none' }> = [];
     for (const row of rows) {
       if (TERMINAL.has(row.status)) continue;
-      const idleMs = row.last_activity_at ? nowMs - Date.parse(row.last_activity_at) : null;
+      // Fall back to started_at when last_activity_at is NULL. A worker
+      // that crashed before recording its first activity (the
+      // updateWorkerStatus path that writes last_activity_at never ran)
+      // would otherwise evade detection forever: `null` would skip the
+      // stuck check, the worker sits in 'starting'/'running' indefinitely.
+      // With the fallback, alive-time-since-spawn becomes the floor.
+      const clockSource: 'last_activity_at' | 'started_at' | 'none' = row.last_activity_at
+        ? 'last_activity_at'
+        : row.started_at
+          ? 'started_at'
+          : 'none';
+      const idleMs =
+        clockSource === 'last_activity_at'
+          ? nowMs - Date.parse(row.last_activity_at!)
+          : clockSource === 'started_at'
+            ? nowMs - Date.parse(row.started_at!)
+            : null;
       const stuck = opts.requireAllTerminal || (idleMs !== null && idleMs > STUCK_THRESHOLD_MS);
       if (stuck) {
-        violations.push({ id: row.id, status: row.status, idle_ms: idleMs });
+        violations.push({ id: row.id, status: row.status, idle_ms: idleMs, clock: clockSource });
       }
     }
 
