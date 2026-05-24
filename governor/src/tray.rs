@@ -449,23 +449,6 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     )
 }
 
-/// The canonical set of menu-item ids the tray exposes. Used by tests to
-/// pin down the menu contract.
-pub fn menu_ids() -> &'static [&'static str] {
-    &[
-        MENU_ID_OPEN_DASHBOARD,
-        MENU_ID_VIEW_LOGS,
-        MENU_ID_VIEW_DECIDE,
-        MENU_ID_RESTART_DAEMON,
-        MENU_ID_UPGRADE_DAEMON,
-        MENU_ID_MUTE_1H,
-        MENU_ID_MUTE_1D,
-        MENU_ID_UNMUTE,
-        MENU_ID_AUTOSTART,
-        MENU_ID_QUIT,
-    ]
-}
-
 /// Decode an `IconVariant`'s 32px PNG into a Tauri `Image`.
 pub fn load_icon(variant: IconVariant) -> tauri::Result<Image<'static>> {
     let rgba = decode_png_rgba(variant.bytes_32())
@@ -645,6 +628,27 @@ pub fn apply_state<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The canonical set of menu-item ids the tray exposes. Lives inside
+    /// the test module — pure test fixture; production code looks up
+    /// items via `Menu::get(id)` against the managed `Menu<R>` (audit #9
+    /// / Cluster F: keeps the warning-clean build without scattering
+    /// `#[cfg(test)]` attributes mid-file, which would break the
+    /// source-scanning anchor tests below that split on `#[cfg(test)]`).
+    fn menu_ids() -> &'static [&'static str] {
+        &[
+            MENU_ID_OPEN_DASHBOARD,
+            MENU_ID_VIEW_LOGS,
+            MENU_ID_VIEW_DECIDE,
+            MENU_ID_RESTART_DAEMON,
+            MENU_ID_UPGRADE_DAEMON,
+            MENU_ID_MUTE_1H,
+            MENU_ID_MUTE_1D,
+            MENU_ID_UNMUTE,
+            MENU_ID_AUTOSTART,
+            MENU_ID_QUIT,
+        ]
+    }
 
     #[test]
     fn human_label_covers_every_state() {
