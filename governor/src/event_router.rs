@@ -64,9 +64,13 @@ pub fn kind_template(kind: &str) -> Option<(&'static str, Severity)> {
         "notification_requested" => Some(("stavR · operator alert", Severity::Warn)),
         // Decision queue — current taxonomy uses `decision_request`; the
         // notification fabric remaps it to kind `decision_required`. Both
-        // route to the same toast.
+        // route to the SAME first-class approval-needed toast (Phase 3 of
+        // the operator-companion refactor: the daemon opening a CONFIRM or
+        // EXPLICIT decision gate is the single most operator-relevant
+        // event, gets a distinct title and Crit severity so the OS
+        // surfaces it with sound).
         "decision_request" | "decision_required" => {
-            Some(("stavR · decision required", Severity::Warn))
+            Some(("stavR — approval needed", Severity::Crit))
         }
         // host_exec denials are operator-relevant (something tried a blocked
         // shell action). Always crit — these surface policy violations.
@@ -244,9 +248,33 @@ impl EventSink for EventRouter {
 /// For kinds without a synthetic template, we probe the common
 /// human-readable fields. Source agent is prepended when present, and the
 /// whole line is truncated to 120 chars (BOM P4).
+/// True if the broker event represents an operator-approval gate. These
+/// get the distinct "approval needed" toast title and are the only kinds
+/// the click handler routes to `/dashboard/decide` (Phase 3 of the
+/// operator-companion refactor).
+pub fn is_approval_kind(kind: &str) -> bool {
+    matches!(kind, "decision_request" | "decision_required")
+}
+
 pub fn body_for_kind(ev: &BrokerEvent) -> String {
     let p = &ev.payload;
     let synthetic: Option<String> = match ev.kind.as_str() {
+        // Approval-needed: lead with the explicit "Approval needed:" prefix
+        // so the OS notification body reads as a call-to-action, not a
+        // generic "decision_request: ..." stream entry.
+        "decision_request" | "decision_required" => Some({
+            let summary = first_string(&[
+                p.get("question"),
+                p.get("title"),
+                p.get("message"),
+                p.get("summary"),
+            ]);
+            if summary.is_empty() {
+                "Approval needed — open Decide queue".to_string()
+            } else {
+                format!("Approval needed: {summary}")
+            }
+        }),
         "host_exec_denied" => Some({
             let cmd = string_field(p, "command");
             let reason = string_field(p, "reason");
@@ -401,9 +429,11 @@ mod tests {
         assert!(rendered);
         let toasts = inner.snapshot();
         assert_eq!(toasts.len(), 1);
-        assert!(toasts[0].title.contains("decision required"));
+        // Phase 3: decision events are first-class approval-needed toasts.
+        assert!(toasts[0].title.contains("approval needed"), "{}", toasts[0].title);
+        assert!(toasts[0].body.starts_with("Approval needed:"), "{}", toasts[0].body);
         assert!(toasts[0].body.contains("approve PR #41"));
-        assert_eq!(toasts[0].severity, Severity::Warn);
+        assert_eq!(toasts[0].severity, Severity::Crit);
     }
 
     #[test]
@@ -540,6 +570,53 @@ mod tests {
                 "kind {kind} should be excluded (too noisy for OS toast)"
             );
         }
+    }
+
+    /// Phase 3 acceptance: both decision kind aliases share the same
+    /// first-class approval-needed treatment. The daemon currently emits
+    /// `decision_request`; the notification fabric remaps to
+    /// `decision_required`. Both must land as a single recognizable
+    /// approval-needed toast (distinct title, Crit severity, "Approval
+    /// needed:" body prefix).
+    #[test]
+    fn approval_kinds_render_as_first_class_distinct_toasts() {
+        for kind in ["decision_request", "decision_required"] {
+            let (title, severity) = kind_template(kind).expect("approval kind missing");
+            assert_eq!(title, "stavR — approval needed", "title for {kind}");
+            assert_eq!(severity, Severity::Crit, "severity for {kind}");
+        }
+        // is_approval_kind agrees and rejects neighbours.
+        assert!(is_approval_kind("decision_request"));
+        assert!(is_approval_kind("decision_required"));
+        assert!(!is_approval_kind("notification_requested"));
+        assert!(!is_approval_kind("trust_scope_proposed"));
+    }
+
+    /// Approval body must call out the action explicitly so the OS
+    /// notification reads as a call-to-action and the operator knows what
+    /// they're approving.
+    #[test]
+    fn approval_body_uses_approval_needed_prefix() {
+        let e = ev(
+            "decision_required",
+            json!({"question": "Allow worker to push to main?"}),
+        );
+        let body = body_for_kind(&e);
+        assert!(body.starts_with("Approval needed:"), "{body}");
+        assert!(body.contains("Allow worker to push to main"));
+    }
+
+    /// Approval body has a sensible default when the payload carries no
+    /// summary fields — the operator still gets a clear "go check Decide"
+    /// nudge instead of a bare kind string.
+    #[test]
+    fn approval_body_falls_back_to_open_decide_when_payload_empty() {
+        let e = ev("decision_request", json!({}));
+        let body = body_for_kind(&e);
+        assert!(
+            body.contains("open Decide queue"),
+            "expected default decide-queue nudge, got: {body}"
+        );
     }
 
     #[test]

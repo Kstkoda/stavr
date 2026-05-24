@@ -15,6 +15,23 @@
 //! Per BOM P4, every toast renders silently if the plugin fails — the
 //! Governor must NEVER crash because the OS notification surface is
 //! misconfigured. Failures are logged at `warn`.
+//!
+//! ### Phase 3 — approval-needed click routing
+//!
+//! `tauri-plugin-notification` 2.x does NOT expose a desktop click /
+//! action callback to the Rust side (the `register_listener` command is
+//! mobile-only — see the plugin's `commands/register_listener.toml`).
+//! The body-click behavior of an OS toast on Windows / macOS / Linux is
+//! whatever the platform default is — usually "open the source app",
+//! which for a tray-only Governor means "do nothing visible." Until a
+//! cross-platform Rust click handler lands upstream, the operator's
+//! reliable path from an approval notification to the Decide queue is
+//! the tray menu's **View Decide Queue** item (Phase 1 surface).
+//!
+//! The notification body itself starts with "Approval needed:" so the
+//! operator knows what to do; the Crit severity ensures a sound on every
+//! platform. Once upstream exposes a click callback, route to
+//! `actions::open_dashboard(app, "/dashboard/decide")` here.
 
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_notification::NotificationExt;
