@@ -39,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 import { EventStore } from '../../src/persistence.js';
 import { Broker } from '../../src/broker.js';
 import { mountTransports, type MountedTransports } from '../../src/transports.js';
+import { OPERATIONAL_KINDS } from '../../src/observability/retention.js';
 import {
   defaultOracles,
   makeWorkersReachTerminal,
@@ -356,8 +357,18 @@ const SUITE_DESC = SHOULD_RUN
       expect(sessionsCheck.ok, `sessions did not return to baseline: ${sessionsCheck.current} > ${sessionsCheck.baseline} + ${sessionsCheck.slack}`).toBe(true);
       expect(subsCheck.ok, `subscriptions did not return to baseline: ${subsCheck.current} > ${subsCheck.baseline} + ${subsCheck.slack}`).toBe(true);
 
-      // 5. After the retention sweep, the row count is at-or-near the cap.
-      expect(h.store.eventCount()).toBeLessThanOrEqual(7500);
+      // 5. After the retention sweep, OPERATIONAL events are at-or-near
+      //    the cap. The old `eventCount() <= 7500` assertion conflated
+      //    audit + operational kinds, but STAVR_EVENTS_OP_MAX_ROWS caps
+      //    only the operational bucket (audit kinds are bounded by TTL,
+      //    not row count). On a long-mode soak, audit-class churn from
+      //    SSE lifecycle / worker spawn-terminate can push total over
+      //    7500 without any leak — assert on the right slice.
+      const opKinds = [...OPERATIONAL_KINDS];
+      const operationalCount = (h.store.rawDb
+        .prepare(`SELECT COUNT(*) AS c FROM events WHERE kind IN (${opKinds.map(() => '?').join(',')})`)
+        .get(...opKinds) as { c: number }).c;
+      expect(operationalCount).toBeLessThanOrEqual(opCap);
 
       // 6. The load-runner artifacts landed where expected (catch a silent
       //    subprocess failure that would otherwise leave us asserting on stale
