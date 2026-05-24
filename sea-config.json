@@ -1,0 +1,7 @@
+{
+  "main": "build/sea/stavr-daemon.cjs",
+  "output": "build/sea/sea-prep.blob",
+  "disableExperimentalSEAWarning": true,
+  "useSnapshot": false,
+  "useCodeCache": true
+}

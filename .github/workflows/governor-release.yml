@@ -1,6 +1,6 @@
 name: governor-release
 
-# Tag-triggered release pipeline for the stavR Governor binary.
+# Tag-triggered release pipeline for the stavR Governor binary + installer.
 #
 # Per ADR-038 §1+§2 and BOM v0.6.5.1 (Governor binary signing pipeline):
 #   - Build the Governor binary for each platform/arch in the release matrix
@@ -9,6 +9,18 @@ name: governor-release
 #     OIDC -> Fulcio -> Rekor transparency log). No long-lived signing keys.
 #   - Compute SHA256SUMS.txt across every artifact
 #   - Upload everything to the GitHub Release for the tag
+#
+# Phase 4 of family-mode-phase-2-bom.md extends the pipeline so the
+# Governor installer carries the daemon as a Tauri externalBin sidecar:
+#   - Build the daemon SEA for the target via the shared
+#     `build-daemon-sea` composite action.
+#   - Place the SEA at `governor/binaries/stavr-daemon-<triple>[.exe]` —
+#     this is exactly where Tauri's bundler expects an externalBin entry
+#     declared as `binaries/stavr-daemon` to live.
+#   - `cargo tauri build` then produces the platform-native installer
+#     (.nsis on Windows, .dmg on macOS, .deb / .appimage on Linux) with
+#     the daemon embedded. One signed installer per OS = a complete
+#     stavR install (no `git clone && npm install` for family members).
 #
 # Triggered only on tag push matching the narrow pattern `v0.6.5*` so that
 # daemon tags (e.g. `v0.6.6`, `v0.7-rc1`) do NOT accidentally fire a Governor
@@ -44,10 +56,6 @@ permissions:
   contents: write     # Create/update the GitHub Release for the tag
   attestations: write # Attestation API for build provenance
 
-defaults:
-  run:
-    working-directory: governor
-
 jobs:
   build-sign-release:
     name: ${{ matrix.platform.name }}
@@ -56,11 +64,60 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - { name: win-x86_64,    runner: windows-2025,   target: x86_64-pc-windows-msvc,  ext: '.exe' }
-          - { name: win-aarch64,   runner: windows-2025,   target: aarch64-pc-windows-msvc, ext: '.exe' }
-          - { name: macos-x86_64,  runner: macos-14,       target: x86_64-apple-darwin,     ext: '' }
-          - { name: macos-aarch64, runner: macos-14,       target: aarch64-apple-darwin,    ext: '' }
-          - { name: linux-x86_64,  runner: ubuntu-24.04,   target: x86_64-unknown-linux-gnu, ext: '' }
+          # `node_arch` / `bin_ext` feed the build-daemon-sea composite
+          # action so the Tauri sidecar gets built in the same job as the
+          # Governor binary. `installer_glob` is the bundle-output pattern
+          # the `cargo tauri build` step produces for that platform.
+          - {
+              name: win-x86_64,
+              runner: windows-2025,
+              target: x86_64-pc-windows-msvc,
+              ext: '.exe',
+              node_arch: win-x64,
+              bin_ext: '.exe',
+              tauri_bundles: 'nsis',
+              installer_glob: 'governor/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe',
+            }
+          - {
+              name: win-aarch64,
+              runner: windows-2025,
+              target: aarch64-pc-windows-msvc,
+              ext: '.exe',
+              node_arch: win-arm64,
+              bin_ext: '.exe',
+              tauri_bundles: 'nsis',
+              installer_glob: 'governor/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe',
+            }
+          - {
+              name: macos-x86_64,
+              runner: macos-14,
+              target: x86_64-apple-darwin,
+              ext: '',
+              node_arch: darwin-x64,
+              bin_ext: '',
+              tauri_bundles: 'dmg',
+              installer_glob: 'governor/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg',
+            }
+          - {
+              name: macos-aarch64,
+              runner: macos-14,
+              target: aarch64-apple-darwin,
+              ext: '',
+              node_arch: darwin-arm64,
+              bin_ext: '',
+              tauri_bundles: 'dmg',
+              installer_glob: 'governor/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg',
+            }
+          - {
+              name: linux-x86_64,
+              runner: ubuntu-24.04,
+              target: x86_64-unknown-linux-gnu,
+              ext: '',
+              node_arch: linux-x64,
+              bin_ext: '',
+              tauri_bundles: 'deb,appimage',
+              installer_glob: 'governor/target/x86_64-unknown-linux-gnu/release/bundle/{deb,appimage}/*',
+            }
 
     env:
       BIN_NAME: stavr-governor${{ matrix.platform.ext }}
@@ -69,6 +126,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ----- Daemon SEA (the Tauri sidecar) -----------------------------
+      # Build the daemon as a single executable for this target and stage
+      # it where tauri-bundler will pick it up. tauri-bundler looks for
+      # `binaries/stavr-daemon-<rust-target-triple>[.exe]` when the config
+      # declares `externalBin: ["binaries/stavr-daemon"]`. Our matrix
+      # already keys on the rust target triple, so the rename is direct.
+      - name: Build daemon SEA (Tauri sidecar)
+        id: sea
+        uses: ./.github/actions/build-daemon-sea
+        with:
+          target-name: ${{ matrix.platform.name }}
+          node-arch: ${{ matrix.platform.node_arch }}
+          bin-ext: ${{ matrix.platform.bin_ext }}
+
+      - name: Stage SEA as Tauri sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p governor/binaries
+          # Tauri externalBin naming: <name>-<rust-target-triple>[.ext].
+          # At install time the bundler strips the triple suffix and
+          # places the binary at `<resource-dir>/binaries/<name>[.ext]`.
+          cp "${{ steps.sea.outputs.binary-path }}" \
+             "governor/binaries/stavr-daemon-${{ matrix.platform.target }}${{ matrix.platform.bin_ext }}"
+          ls -la governor/binaries/
+
+      # ----- Governor Rust toolchain -----------------------------------
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -76,7 +160,6 @@ jobs:
 
       - name: Install Linux system deps
         if: startsWith(matrix.platform.runner, 'ubuntu-')
-        working-directory: .
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -85,7 +168,8 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libssl-dev \
-            pkg-config
+            pkg-config \
+            libfuse2
 
       - name: Cache cargo registry + target
         uses: actions/cache@v4
@@ -98,32 +182,51 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.platform.target }}-cargo-
 
+      # ----- Governor binary (existing path) ----------------------------
       - name: Build release binary (frozen lockfile)
         # --locked: refuse to update Cargo.lock; SBOM accuracy depends on this.
+        working-directory: governor
         run: cargo build --release --locked --target ${{ matrix.platform.target }}
 
+      # ----- Tauri-bundled installer (Phase 4) -------------------------
+      # `cargo tauri build` runs the bundler, which picks up the staged
+      # externalBin and embeds it. Cargo is built fresh inside this step
+      # because the bundler invokes its own cargo build with bundling
+      # metadata — the previous `cargo build` is the SBOM source of truth
+      # (frozen Cargo.lock) and not strictly required by tauri build, but
+      # keeping it preserves the existing signing pipeline below for the
+      # raw governor binary.
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version '^2' --locked
+
+      - name: Build Tauri installer
+        working-directory: governor
+        run: |
+          cargo tauri build \
+            --target ${{ matrix.platform.target }} \
+            --bundles ${{ matrix.platform.tauri_bundles }}
+
+      # ----- SBOM ------------------------------------------------------
       - name: Install cargo-cyclonedx (SBOM generator)
         # cargo-cyclonedx pinned to a known version to keep SBOM output stable.
         # Bumps go through Renovate (per ADR-038 §4) once that pillar lands.
         run: cargo install cargo-cyclonedx --version 0.5.7 --locked
 
       - name: Generate CycloneDX SBOM
+        working-directory: governor
+        shell: bash
         run: |
           cargo cyclonedx --target ${{ matrix.platform.target }} --format json
           # cargo-cyclonedx emits <crate>.cdx.json next to each Cargo.toml.
-          # We move the root crate's SBOM into the release dir under a
-          # predictable name so downstream upload steps don't have to guess.
-        shell: bash
 
       - name: Stage release artifacts
         id: stage
-        working-directory: .
         shell: bash
         run: |
           set -euo pipefail
           STAGE="${RUNNER_TEMP}/release-${{ matrix.platform.name }}"
           mkdir -p "${STAGE}"
-          # Binary
+          # Governor binary
           cp "${RELEASE_DIR}/${BIN_NAME}" "${STAGE}/${BIN_NAME}"
           # SBOM (cargo-cyclonedx emits stavr-governor.cdx.json at the crate root)
           if [ -f "governor/stavr-governor.cdx.json" ]; then
@@ -133,14 +236,32 @@ jobs:
             SBOM=$(find governor -maxdepth 3 -name '*.cdx.json' -print -quit)
             cp "${SBOM}" "${STAGE}/stavr-governor.sbom.cdx.json"
           fi
+          # Tauri-bundled installer(s). Use bash globbing — installer_glob
+          # may expand to multiple files (e.g. Linux .deb AND .AppImage).
+          shopt -s nullglob globstar
+          INSTALLER_FILES=( ${{ matrix.platform.installer_glob }} )
+          if [ ${#INSTALLER_FILES[@]} -eq 0 ]; then
+            echo "::error::No installer files matched ${{ matrix.platform.installer_glob }}"
+            exit 1
+          fi
+          for f in "${INSTALLER_FILES[@]}"; do
+            cp "${f}" "${STAGE}/$(basename "${f}")"
+          done
+          # Daemon SEA (raw, for operators who want the binary without an
+          # installer). Already named with the rust target triple in the
+          # stage step above.
+          cp "governor/binaries/stavr-daemon-${{ matrix.platform.target }}${{ matrix.platform.bin_ext }}" \
+             "${STAGE}/stavr-daemon-${{ matrix.platform.target }}${{ matrix.platform.bin_ext }}"
           echo "stage_dir=${STAGE}" >> "${GITHUB_OUTPUT}"
+          ls -la "${STAGE}/"
 
+      # ----- Signing (cosign keyless, every artifact) -------------------
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:
           cosign-release: 'v2.4.1'
 
-      - name: Sign binary (cosign keyless)
+      - name: Sign Governor binary (cosign keyless)
         working-directory: ${{ steps.stage.outputs.stage_dir }}
         shell: bash
         env:
@@ -162,12 +283,42 @@ jobs:
             --output-certificate stavr-governor.sbom.crt \
             stavr-governor.sbom.cdx.json
 
+      - name: Sign daemon SEA (cosign keyless)
+        working-directory: ${{ steps.stage.outputs.stage_dir }}
+        shell: bash
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+          DAEMON_NAME: stavr-daemon-${{ matrix.platform.target }}${{ matrix.platform.bin_ext }}
+        run: |
+          cosign sign-blob --yes \
+            --output-signature "${DAEMON_NAME}.sig" \
+            --output-certificate "${DAEMON_NAME}.crt" \
+            "${DAEMON_NAME}"
+
+      - name: Sign installer(s) (cosign keyless)
+        working-directory: ${{ steps.stage.outputs.stage_dir }}
+        shell: bash
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # Sign every installer artifact that isn't itself a cosign output
+          # or the governor/daemon binaries already signed above.
+          for f in *.exe *.msi *.dmg *.deb *.AppImage; do
+            case "${f}" in
+              "${BIN_NAME}"|stavr-daemon-*) continue ;;
+            esac
+            cosign sign-blob --yes \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.crt" \
+              "${f}"
+          done
+
       - name: Compute SHA256SUMS
         working-directory: ${{ steps.stage.outputs.stage_dir }}
         shell: bash
         run: |
-          # Using sha256sum on Linux/macOS (via coreutils on macos-14 runner)
-          # and certutil/openssl fallback isn't needed since macos-14 ships sha256sum.
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum * > SHA256SUMS.txt
           else

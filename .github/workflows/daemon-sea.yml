@@ -1,0 +1,96 @@
+name: daemon-sea
+
+# Phase 3 of family-mode-phase-2-bom.md — compile the daemon to a single
+# standalone executable per platform (Node Single Executable Application).
+#
+# The actual SEA build steps live in the composite action
+# `.github/actions/build-daemon-sea` so the governor-release workflow can
+# reuse the same logic when assembling Tauri sidecars (Phase 4).
+#
+# Possible now that Phase 2 swapped the persistence engine from
+# better-sqlite3 (native C++ addon) to node:sqlite (built into Node).
+# With no native addon to embed, SEA becomes the install story: one
+# executable per OS/arch, no `git clone && npm install` needed.
+#
+# Targets (per BOM Phase 3): win-x64, win-arm64, macos-x64, macos-arm64,
+# linux-x64. linux-arm64 / Raspberry Pi is optional — added later only
+# if a family machine needs it.
+#
+# Artifacts are uploaded as workflow artifacts (audit trail / inspection).
+# Signing + publishing the SEAs as release artifacts is the responsibility
+# of governor-release.yml (Phase 4).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/daemon-sea.yml'
+      - '.github/actions/build-daemon-sea/**'
+      - 'sea-config.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'src/**'
+  pull_request:
+    paths:
+      - '.github/workflows/daemon-sea.yml'
+      - '.github/actions/build-daemon-sea/**'
+      - 'sea-config.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'src/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sea:
+    name: ${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # node_arch matches the nodejs.org dist filename token
+          # (`node-vX.Y.Z-<node_arch>.{tar.gz,zip}`).
+          # `smoke: true` enables a basic invocation check; we only set it
+          # when the runner arch matches the target arch (otherwise the
+          # binary can't execute on the runner).
+          - { name: linux-x64,    runner: ubuntu-latest,  node_arch: linux-x64,    bin_ext: '',     smoke: true  }
+          - { name: macos-x64,    runner: macos-14,       node_arch: darwin-x64,   bin_ext: '',     smoke: false }
+          - { name: macos-arm64,  runner: macos-14,       node_arch: darwin-arm64, bin_ext: '',     smoke: true  }
+          - { name: win-x64,      runner: windows-latest, node_arch: win-x64,      bin_ext: '.exe', smoke: true  }
+          - { name: win-arm64,    runner: windows-latest, node_arch: win-arm64,    bin_ext: '.exe', smoke: false }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build SEA
+        id: sea
+        uses: ./.github/actions/build-daemon-sea
+        with:
+          target-name: ${{ matrix.target.name }}
+          node-arch: ${{ matrix.target.node_arch }}
+          bin-ext: ${{ matrix.target.bin_ext }}
+
+      - name: Smoke test (native arch only)
+        if: matrix.target.smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `--help` exits 0 via commander; if the SEA bundle is broken
+          # (e.g. esbuild missed a require, ESM->CJS conversion failed)
+          # this is where it surfaces.
+          "./${{ steps.sea.outputs.binary-path }}" --help
+
+      - name: Upload SEA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stavr-daemon-${{ matrix.target.name }}
+          path: ${{ steps.sea.outputs.binary-path }}
+          if-no-files-found: error
+          retention-days: 30

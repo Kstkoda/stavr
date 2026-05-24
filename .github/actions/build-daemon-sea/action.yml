@@ -1,0 +1,253 @@
+name: 'Build daemon SEA'
+description: |
+  Build the stavR daemon as a Node Single Executable Application for a
+  given target. Factored out of daemon-sea.yml so the governor-release
+  workflow can reuse the same logic when assembling Tauri sidecars.
+
+  Caller is responsible for `actions/checkout` before invoking. This
+  composite handles setup-node, dep install, tsc build, esbuild bundle,
+  SEA blob generation, target-arch Node download, postject injection,
+  and (on macOS) ad-hoc re-signing.
+
+inputs:
+  target-name:
+    description: 'Friendly target name for logs / artifacts (e.g., linux-x64).'
+    required: true
+  node-arch:
+    description: 'nodejs.org dist arch token (e.g., linux-x64, darwin-arm64, win-x64, win-arm64).'
+    required: true
+  bin-ext:
+    description: 'Binary extension — "" on Unix, ".exe" on Windows.'
+    required: true
+  node-version:
+    description: 'Node major to install on the host runner (e.g., 26.x).'
+    required: false
+    default: '26.x'
+  esbuild-version:
+    description: 'Pinned esbuild version for the bundle step.'
+    required: false
+    default: '0.24.0'
+  postject-version:
+    description: 'Pinned postject version for the blob injection step.'
+    required: false
+    default: '1.0.0-alpha.6'
+  output-dir:
+    description: 'Directory (relative to the workspace) where the final binary lands.'
+    required: false
+    default: 'build/sea'
+
+outputs:
+  binary-path:
+    description: 'Repo-relative path to the built SEA binary, including extension.'
+    value: ${{ steps.finalize.outputs.path }}
+  node-release:
+    description: 'Resolved Node release version (vX.Y.Z) used for the embedded binary.'
+    value: ${{ steps.node.outputs.release }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js (host build toolchain)
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: 'npm'
+
+    - name: Resolve Node release version
+      id: node
+      shell: bash
+      run: |
+        NODE_RELEASE="v$(node -p 'process.versions.node')"
+        echo "release=${NODE_RELEASE}" >> "${GITHUB_OUTPUT}"
+        echo "Resolved Node release: ${NODE_RELEASE}"
+
+    - name: Install dependencies
+      shell: bash
+      run: npm ci
+
+    - name: TypeScript build
+      shell: bash
+      run: npm run build
+
+    - name: Bundle daemon to single CJS file (esbuild)
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "${{ inputs.output-dir }}"
+        # SEA requires a single main script. esbuild bundles the entire
+        # daemon (200+ files under dist/) into one CJS file. Externals:
+        #   - node:*   — built into Node, must not be bundled.
+        #   - wincred  — optional native dep, dynamically imported via a
+        #                runtime-computed string. Absence is a documented
+        #                fallback path (see proposed/family-mode-phase-2-
+        #                wincred-findings.md).
+        npx --yes esbuild@${{ inputs.esbuild-version }} \
+          dist/cli.js \
+          --bundle \
+          --platform=node \
+          --format=cjs \
+          --target=node26 \
+          --external:node:* \
+          --external:wincred \
+          --outfile="${{ inputs.output-dir }}/stavr-daemon.cjs"
+        ls -la "${{ inputs.output-dir }}/"
+
+    - name: Generate SEA preparation blob
+      shell: bash
+      env:
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        set -euo pipefail
+        # sea-config.json's `main`/`output` paths assume `build/sea`. When a
+        # caller customizes output-dir, fall back to writing a local copy of
+        # the config so the blob lands in the right place. For the default
+        # `build/sea`, use the repo's sea-config.json directly.
+        if [ "${OUTPUT_DIR}" = "build/sea" ]; then
+          node --experimental-sea-config sea-config.json
+        else
+          cat > "${OUTPUT_DIR}/sea-config.json" <<EOF
+        {
+          "main": "${OUTPUT_DIR}/stavr-daemon.cjs",
+          "output": "${OUTPUT_DIR}/sea-prep.blob",
+          "disableExperimentalSEAWarning": true,
+          "useSnapshot": false,
+          "useCodeCache": true
+        }
+        EOF
+          node --experimental-sea-config "${OUTPUT_DIR}/sea-config.json"
+        fi
+        ls -la "${OUTPUT_DIR}/"
+
+    - name: Download Node release SHASUMS256
+      shell: bash
+      env:
+        NODE_RELEASE: ${{ steps.node.outputs.release }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        set -euo pipefail
+        # Per ADR-038 (supply-chain-integrity): any third-party binary we
+        # embed in a signed installer must be hash-verified at fetch time.
+        # nodejs.org publishes SHASUMS256.txt alongside every release and
+        # signs it with the OpenJS release-team GPG keys; we verify the
+        # archive against this file before postject embeds it.
+        # (GPG verification of SHASUMS256.txt itself is a follow-up — for
+        # Phase 4 the binding to a specific Node release via the URL +
+        # the sha256 line is the integrity boundary; nodejs.org TLS is
+        # the trust root.)
+        curl -fsSL -o "${OUTPUT_DIR}/SHASUMS256.txt" \
+          "https://nodejs.org/dist/${NODE_RELEASE}/SHASUMS256.txt"
+        echo "Fetched SHASUMS256.txt for ${NODE_RELEASE}:"
+        wc -l "${OUTPUT_DIR}/SHASUMS256.txt"
+
+    - name: Download target Node binary (Unix)
+      if: inputs.bin-ext == ''
+      shell: bash
+      env:
+        NODE_RELEASE: ${{ steps.node.outputs.release }}
+        NODE_ARCH: ${{ inputs.node-arch }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        set -euo pipefail
+        ARCHIVE="node-${NODE_RELEASE}-${NODE_ARCH}.tar.gz"
+        curl -fsSL -o "${OUTPUT_DIR}/${ARCHIVE}" \
+          "https://nodejs.org/dist/${NODE_RELEASE}/${ARCHIVE}"
+        # Verify SHA256 against the SHASUMS256.txt entry. Format is
+        # "<64-hex> <space><space><filename>". grep -F to avoid glob /
+        # regex surprises; shasum -a 256 --check confirms or aborts.
+        # `shasum` (Perl) is portable across macOS, Linux and git-bash;
+        # GNU `sha256sum` is absent on macOS runners.
+        ( cd "${OUTPUT_DIR}" && grep -F "  ${ARCHIVE}" SHASUMS256.txt | shasum -a 256 --check --strict - )
+        mkdir -p "${OUTPUT_DIR}/node-target"
+        tar -xzf "${OUTPUT_DIR}/${ARCHIVE}" -C "${OUTPUT_DIR}/node-target"
+        cp "${OUTPUT_DIR}/node-target/node-${NODE_RELEASE}-${NODE_ARCH}/bin/node" \
+           "${OUTPUT_DIR}/stavr-daemon"
+        chmod +x "${OUTPUT_DIR}/stavr-daemon"
+        ls -la "${OUTPUT_DIR}/"
+
+    - name: Download target Node binary (Windows)
+      if: inputs.bin-ext == '.exe'
+      shell: bash
+      env:
+        NODE_RELEASE: ${{ steps.node.outputs.release }}
+        NODE_ARCH: ${{ inputs.node-arch }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        set -euo pipefail
+        ARCHIVE="node-${NODE_RELEASE}-${NODE_ARCH}.zip"
+        curl -fsSL -o "${OUTPUT_DIR}/${ARCHIVE}" \
+          "https://nodejs.org/dist/${NODE_RELEASE}/${ARCHIVE}"
+        # Verify SHA256 against the SHASUMS256.txt entry. Windows runners
+        # ship sha256sum via git-bash, used implicitly via the bash shell.
+        ( cd "${OUTPUT_DIR}" && grep -F "  ${ARCHIVE}" SHASUMS256.txt | sha256sum --check --strict - )
+        mkdir -p "${OUTPUT_DIR}/node-target"
+        unzip -q -d "${OUTPUT_DIR}/node-target" "${OUTPUT_DIR}/${ARCHIVE}"
+        cp "${OUTPUT_DIR}/node-target/node-${NODE_RELEASE}-${NODE_ARCH}/node.exe" \
+           "${OUTPUT_DIR}/stavr-daemon.exe"
+        ls -la "${OUTPUT_DIR}/"
+
+    - name: Strip macOS signature (pre-injection)
+      if: startsWith(inputs.node-arch, 'darwin-')
+      shell: bash
+      env:
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        codesign --remove-signature "${OUTPUT_DIR}/stavr-daemon" || true
+
+    - name: Inject SEA blob (postject, macOS)
+      if: startsWith(inputs.node-arch, 'darwin-')
+      shell: bash
+      env:
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        set -euo pipefail
+        npx --yes postject@${{ inputs.postject-version }} \
+          "${OUTPUT_DIR}/stavr-daemon" \
+          NODE_SEA_BLOB \
+          "${OUTPUT_DIR}/sea-prep.blob" \
+          --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 \
+          --macho-segment-name NODE_SEA
+
+    - name: Inject SEA blob (postject, Linux)
+      if: inputs.node-arch == 'linux-x64' || inputs.node-arch == 'linux-arm64'
+      shell: bash
+      env:
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        set -euo pipefail
+        npx --yes postject@${{ inputs.postject-version }} \
+          "${OUTPUT_DIR}/stavr-daemon" \
+          NODE_SEA_BLOB \
+          "${OUTPUT_DIR}/sea-prep.blob" \
+          --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+
+    - name: Inject SEA blob (postject, Windows)
+      if: inputs.bin-ext == '.exe'
+      shell: bash
+      env:
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        set -euo pipefail
+        # Authenticode signature on the upstream node.exe becomes invalid
+        # after injection. Release signing is a downstream concern.
+        npx --yes postject@${{ inputs.postject-version }} \
+          "${OUTPUT_DIR}/stavr-daemon.exe" \
+          NODE_SEA_BLOB \
+          "${OUTPUT_DIR}/sea-prep.blob" \
+          --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+
+    - name: Re-sign macOS binary (ad-hoc)
+      if: startsWith(inputs.node-arch, 'darwin-')
+      shell: bash
+      env:
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        codesign --sign - --force "${OUTPUT_DIR}/stavr-daemon"
+
+    - name: Finalize
+      id: finalize
+      shell: bash
+      env:
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+        BIN_EXT: ${{ inputs.bin-ext }}
+      run: |
+        echo "path=${OUTPUT_DIR}/stavr-daemon${BIN_EXT}" >> "${GITHUB_OUTPUT}"
