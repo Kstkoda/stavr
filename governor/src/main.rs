@@ -19,10 +19,12 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use parking_lot::Mutex;
 use stavr_governor::event_bridge::{EventBridge, EventSink, UreqFetcher, DEFAULT_STREAM_URL};
 use stavr_governor::event_router::EventRouter;
-use stavr_governor::icons::{self, IconVariant};
+use stavr_governor::icons::{self};
 use stavr_governor::notification::TauriToastRenderer;
+use stavr_governor::service::{ServiceQuery, ServiceStatus, SystemServiceQuery};
 use stavr_governor::supervisor::{
     Clock, HealthMonitor, HealthProbe, HttpProbe, SystemClock, DEFAULT_HEALTH_URL,
 };
@@ -31,9 +33,14 @@ use tauri::Manager;
 mod tray;
 
 /// How often the tray watcher re-renders the icon. 500 ms is comfortably
-/// under the BOM's 1 s update budget and gives a clean 2 Hz pulse for
-/// animated states.
+/// under the BOM's 1 s update budget.
 const TRAY_TICK: Duration = Duration::from_millis(500);
+
+/// How often the service-status poller shells out to the OS init system.
+/// 1 s gives "Stop-Service StavrDaemon turns the pip red within a couple
+/// of ticks" (BOM Phase 2 acceptance) without making the daemon's host
+/// run `sc query` 10× per second.
+const SERVICE_POLL: Duration = Duration::from_secs(1);
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -58,6 +65,22 @@ fn main() {
         .name("health-monitor".to_string())
         .spawn(move || mon_for_thread.run_forever())
         .expect("spawn health-monitor thread");
+
+    // Phase 2: OS-native service status. The poller updates a shared cell
+    // every SERVICE_POLL; the tray watcher reads it alongside the health
+    // monitor's state snapshot.
+    let service_query: Arc<dyn ServiceQuery> = Arc::new(SystemServiceQuery::default());
+    let service_status: Arc<Mutex<ServiceStatus>> = Arc::new(Mutex::new(ServiceStatus::Unknown));
+    let svc_for_thread = service_query.clone();
+    let cell_for_thread = service_status.clone();
+    std::thread::Builder::new()
+        .name("service-poll".to_string())
+        .spawn(move || loop {
+            let s = svc_for_thread.status();
+            *cell_for_thread.lock() = s;
+            std::thread::sleep(SERVICE_POLL);
+        })
+        .expect("spawn service-poll thread");
 
     let stream_url =
         std::env::var("STAVR_STREAM_URL").unwrap_or_else(|_| DEFAULT_STREAM_URL.to_string());
@@ -93,35 +116,29 @@ fn main() {
                 })
                 .expect("spawn event-bridge thread");
 
-            // Tray watcher: snapshot monitor state every TRAY_TICK and push
-            // it onto the tray (icon + tooltip).
+            // Tray watcher: snapshot monitor state + service status every
+            // TRAY_TICK and push it onto the tray (icon + tooltip).
             let watcher_app = app.handle().clone();
             let watcher_state = monitor.state();
+            let watcher_service = service_status.clone();
             std::thread::Builder::new()
                 .name("tray-watcher".to_string())
                 .spawn(move || {
-                    let mut prev_state = None;
-                    let mut pulse_phase = false;
+                    let mut prev: Option<(stavr_governor::state::DaemonState, ServiceStatus)> =
+                        None;
                     loop {
+                        let service = *watcher_service.lock();
                         let snapshot = {
                             let sm = watcher_state.lock();
-                            tray::StateSnapshot::from(&sm, Instant::now())
+                            tray::StateSnapshot::from(&sm, service, Instant::now())
                         };
-                        let pulses = IconVariant::state_pulses(snapshot.state);
-                        let state_changed = Some(snapshot.state) != prev_state;
-                        if state_changed || pulses {
-                            if let Err(e) =
-                                tray::apply_state(&watcher_app, &snapshot, pulse_phase)
-                            {
+                        let key = (snapshot.state, snapshot.service);
+                        if Some(key) != prev {
+                            if let Err(e) = tray::apply_state(&watcher_app, &snapshot, false) {
                                 log::warn!("tray watcher: apply_state failed: {e}");
                             }
+                            prev = Some(key);
                         }
-                        if pulses {
-                            pulse_phase = !pulse_phase;
-                        } else {
-                            pulse_phase = false;
-                        }
-                        prev_state = Some(snapshot.state);
                         std::thread::sleep(TRAY_TICK);
                     }
                 })

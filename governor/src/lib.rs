@@ -14,5 +14,6 @@ pub mod event_bridge;
 pub mod event_router;
 pub mod icons;
 pub mod notification;
+pub mod service;
 pub mod state;
 pub mod supervisor;

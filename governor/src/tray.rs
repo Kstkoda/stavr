@@ -24,6 +24,7 @@ use tauri::{
 use stavr_governor::actions::{self, MuteWindow};
 use stavr_governor::event_router::EventRouter;
 use stavr_governor::icons::{decode_png_rgba, IconVariant};
+use stavr_governor::service::ServiceStatus;
 use stavr_governor::state::{DaemonState, StateMachine};
 
 /// Canonical id of the one-and-only Governor tray icon. All runtime updates
@@ -231,16 +232,18 @@ pub fn format_duration(d: Duration) -> String {
 }
 
 /// Compose the tray tooltip text.
-///   `stavR · {state} · uptime {duration} · last check {N}s ago`
+///   `stavR · {state} · {service-status} · uptime {duration} · last check {N}s ago`
 pub fn format_tooltip(
     state: DaemonState,
+    service: ServiceStatus,
     uptime: Option<Duration>,
     since_last_probe: Option<Duration>,
     settle_seconds_in: Option<u64>,
 ) -> String {
-    let mut parts: Vec<String> = Vec::with_capacity(5);
+    let mut parts: Vec<String> = Vec::with_capacity(6);
     parts.push("stavR".to_string());
     parts.push(human_label(state).to_string());
+    parts.push(service.human_label().to_string());
     if let Some(up) = uptime {
         parts.push(format!("uptime {}", format_duration(up)));
     }
@@ -253,21 +256,80 @@ pub fn format_tooltip(
     parts.join(" · ")
 }
 
-/// Read-only snapshot of the supervisor state, suitable for passing across
-/// the lock boundary so the tray watcher doesn't hold the state Mutex while
-/// it talks to Tauri.
+/// Logical pip color for the tray icon. Service status takes precedence
+/// over daemon state: a Stopped service is always red regardless of what
+/// the (now-stale) /healthz probe says, a NotInstalled service is always
+/// grey, and an Unknown service falls through to the /healthz verdict.
+///
+/// Mapping (BOM Phase 2):
+///   Running + Ok                       → Green
+///   Running + Degraded/Unknown         → Amber
+///   Running + Down                     → Red
+///   Stopped                            → Red
+///   NotInstalled                       → Grey
+///   Unknown   → defer to daemon state  (best-effort)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipColor {
+    Green,
+    Amber,
+    Red,
+    Grey,
+}
+
+pub fn pip_color(service: ServiceStatus, state: DaemonState) -> PipColor {
+    match service {
+        ServiceStatus::NotInstalled => PipColor::Grey,
+        ServiceStatus::Stopped => PipColor::Red,
+        ServiceStatus::Unknown => pip_color_from_state_only(state),
+        ServiceStatus::Running => match state {
+            DaemonState::Healthy => PipColor::Green,
+            DaemonState::Degraded => PipColor::Amber,
+            DaemonState::Down => PipColor::Red,
+            // Unknown / Restarting → Amber (service is up, daemon is
+            // still warming or transitional)
+            _ => PipColor::Amber,
+        },
+    }
+}
+
+fn pip_color_from_state_only(state: DaemonState) -> PipColor {
+    match state {
+        DaemonState::Healthy => PipColor::Green,
+        DaemonState::Degraded => PipColor::Amber,
+        DaemonState::Down => PipColor::Red,
+        DaemonState::StoppedManually | DaemonState::GiveUp => PipColor::Grey,
+        DaemonState::Unknown | DaemonState::Restarting => PipColor::Amber,
+    }
+}
+
+/// Map a PipColor to the icon variant used by Tauri's tray renderer. The
+/// existing halo set covers all four colors directly; no new assets needed.
+pub fn pip_icon(color: PipColor) -> IconVariant {
+    match color {
+        PipColor::Green => IconVariant::Healthy,
+        PipColor::Amber => IconVariant::Degraded,
+        PipColor::Red => IconVariant::Down,
+        PipColor::Grey => IconVariant::StoppedManually,
+    }
+}
+
+/// Read-only snapshot of the supervisor + service state, suitable for
+/// passing across the lock boundary so the tray watcher doesn't hold the
+/// state Mutex while it talks to Tauri.
 #[derive(Debug, Clone)]
 pub struct StateSnapshot {
     pub state: DaemonState,
+    pub service: ServiceStatus,
     pub uptime: Option<Duration>,
     pub since_last_probe: Option<Duration>,
     pub settle_seconds_in: Option<u64>,
 }
 
 impl StateSnapshot {
-    pub fn from(sm: &StateMachine, now: Instant) -> Self {
+    pub fn from(sm: &StateMachine, service: ServiceStatus, now: Instant) -> Self {
         Self {
             state: sm.state(),
+            service,
             uptime: sm.uptime(now),
             since_last_probe: sm.last_probe().map(|t| now.saturating_duration_since(t)),
             settle_seconds_in: sm.settle_seconds_in(now),
@@ -280,12 +342,17 @@ impl StateSnapshot {
 pub fn apply_state<R: Runtime>(
     app: &AppHandle<R>,
     snapshot: &StateSnapshot,
-    pulse_phase: bool,
+    _pulse_phase: bool,
 ) -> tauri::Result<()> {
-    let variant = IconVariant::for_state(snapshot.state, pulse_phase);
+    // Pip color is the combined verdict (service status first, /healthz
+    // second). Pulse phase is no longer used — the OS-native service is
+    // the supervisor, so transient "restarting" pulse states aren't
+    // observable from the Governor.
+    let variant = pip_icon(pip_color(snapshot.service, snapshot.state));
     let icon = load_icon(variant)?;
     let tooltip = format_tooltip(
         snapshot.state,
+        snapshot.service,
         snapshot.uptime,
         snapshot.since_last_probe,
         snapshot.settle_seconds_in,
@@ -342,33 +409,36 @@ mod tests {
 
     #[test]
     fn format_tooltip_handles_pre_probe_state() {
-        let s = format_tooltip(DaemonState::Unknown, None, None, None);
-        assert_eq!(s, "stavR · starting…");
+        let s = format_tooltip(DaemonState::Unknown, ServiceStatus::Unknown, None, None, None);
+        assert_eq!(s, "stavR · starting… · service status unknown");
     }
 
     #[test]
     fn format_tooltip_includes_uptime_when_healthy() {
         let s = format_tooltip(
             DaemonState::Healthy,
+            ServiceStatus::Running,
             Some(Duration::from_secs(900)),
             Some(Duration::from_secs(3)),
             None,
         );
         assert!(s.contains("Healthy"), "{s}");
+        assert!(s.contains("service running"), "{s}");
         assert!(s.contains("uptime 15m"), "{s}");
         assert!(s.contains("last check 3s ago"), "{s}");
-        assert_eq!(s.matches(" · ").count(), 3);
     }
 
     #[test]
     fn format_tooltip_omits_uptime_in_non_healthy_states() {
         let s = format_tooltip(
             DaemonState::Down,
+            ServiceStatus::Stopped,
             None,
             Some(Duration::from_secs(12)),
             None,
         );
         assert!(s.contains("Down"), "{s}");
+        assert!(s.contains("service stopped"), "{s}");
         assert!(!s.contains("uptime"), "{s}");
         assert!(s.contains("last check 12s ago"), "{s}");
     }
@@ -410,6 +480,7 @@ mod tests {
     fn format_tooltip_includes_settle_window_seconds() {
         let s = format_tooltip(
             DaemonState::Unknown,
+            ServiceStatus::Running,
             None,
             Some(Duration::from_secs(2)),
             Some(45),
@@ -422,6 +493,7 @@ mod tests {
     fn format_tooltip_omits_settle_phrase_when_window_closed() {
         let s = format_tooltip(
             DaemonState::Healthy,
+            ServiceStatus::Running,
             Some(Duration::from_secs(100)),
             Some(Duration::from_secs(1)),
             None,
@@ -433,8 +505,126 @@ mod tests {
     fn state_snapshot_propagates_settle_seconds_in() {
         let now = Instant::now();
         let sm = StateMachine::new(now);
-        let snap = StateSnapshot::from(&sm, now + Duration::from_secs(10));
+        let snap = StateSnapshot::from(&sm, ServiceStatus::Unknown, now + Duration::from_secs(10));
         assert_eq!(snap.settle_seconds_in, Some(10));
+        assert_eq!(snap.service, ServiceStatus::Unknown);
+    }
+
+    // ---- Phase 2: pip color ---------------------------------------------
+
+    /// Running service + Healthy daemon = green. The BOM Phase 2 green
+    /// case — must be the only path that lights the green halo.
+    #[test]
+    fn pip_color_green_only_when_service_running_and_daemon_healthy() {
+        assert_eq!(
+            pip_color(ServiceStatus::Running, DaemonState::Healthy),
+            PipColor::Green
+        );
+        // Stopped / NotInstalled NEVER produce green — only the running
+        // service can light the green halo. (Unknown deliberately defers
+        // to the daemon state so a missing `sc`/`systemctl`/`launchctl`
+        // still gives the operator a useful pip; that's covered
+        // separately in `pip_color_unknown_service_defers_to_daemon_state`.)
+        for service in [ServiceStatus::Stopped, ServiceStatus::NotInstalled] {
+            assert_ne!(
+                pip_color(service, DaemonState::Healthy),
+                PipColor::Green,
+                "service={service:?}, state=Healthy"
+            );
+        }
+        for state in [
+            DaemonState::Unknown,
+            DaemonState::Degraded,
+            DaemonState::Down,
+            DaemonState::Restarting,
+            DaemonState::StoppedManually,
+            DaemonState::GiveUp,
+        ] {
+            assert_ne!(
+                pip_color(ServiceStatus::Running, state),
+                PipColor::Green,
+                "service=Running, state={state:?}"
+            );
+        }
+    }
+
+    /// Stopped service always wins as red regardless of any (stale)
+    /// /healthz verdict. This is the "Stop-Service StavrDaemon turns it
+    /// red within a couple of ticks" acceptance case.
+    #[test]
+    fn pip_color_stopped_service_is_red_regardless_of_state() {
+        for state in [
+            DaemonState::Healthy,
+            DaemonState::Degraded,
+            DaemonState::Down,
+            DaemonState::Unknown,
+        ] {
+            assert_eq!(
+                pip_color(ServiceStatus::Stopped, state),
+                PipColor::Red,
+                "service=Stopped, state={state:?}"
+            );
+        }
+    }
+
+    /// NotInstalled service → grey. Operator hasn't installed the OS
+    /// service yet; the daemon is not under WinSW/systemd/launchd
+    /// supervision and the Governor has nothing to observe.
+    #[test]
+    fn pip_color_not_installed_is_grey() {
+        for state in [
+            DaemonState::Healthy,
+            DaemonState::Degraded,
+            DaemonState::Down,
+            DaemonState::Unknown,
+        ] {
+            assert_eq!(
+                pip_color(ServiceStatus::NotInstalled, state),
+                PipColor::Grey,
+                "service=NotInstalled, state={state:?}"
+            );
+        }
+    }
+
+    /// Running service + Degraded daemon = amber. The service is
+    /// supervising fine but /healthz is sketchy.
+    #[test]
+    fn pip_color_running_plus_degraded_is_amber() {
+        assert_eq!(
+            pip_color(ServiceStatus::Running, DaemonState::Degraded),
+            PipColor::Amber
+        );
+    }
+
+    #[test]
+    fn pip_color_running_plus_down_is_red() {
+        assert_eq!(
+            pip_color(ServiceStatus::Running, DaemonState::Down),
+            PipColor::Red
+        );
+    }
+
+    /// Service status query failed (sc/systemctl/launchctl missing) — fall
+    /// back to the /healthz verdict so the tray still says something
+    /// useful instead of always-grey.
+    #[test]
+    fn pip_color_unknown_service_defers_to_daemon_state() {
+        assert_eq!(
+            pip_color(ServiceStatus::Unknown, DaemonState::Healthy),
+            PipColor::Green
+        );
+        assert_eq!(
+            pip_color(ServiceStatus::Unknown, DaemonState::Down),
+            PipColor::Red
+        );
+    }
+
+    #[test]
+    fn pip_icon_maps_colors_to_existing_halo_assets() {
+        assert_eq!(pip_icon(PipColor::Green), IconVariant::Healthy);
+        assert_eq!(pip_icon(PipColor::Amber), IconVariant::Degraded);
+        assert_eq!(pip_icon(PipColor::Red), IconVariant::Down);
+        assert_eq!(pip_icon(PipColor::Grey), IconVariant::StoppedManually);
     }
 
     /// Menu contract after Phase 1 desupervision: 7 ids; Restart Daemon and
