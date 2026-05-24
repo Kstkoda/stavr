@@ -348,7 +348,7 @@ fn apply_mute<R: Runtime>(app: &AppHandle<R>, window: MuteWindow) {
     }
 }
 
-/// Build the Phase-4 tray menu.
+/// Build the Phase-5 tray menu.
 ///
 /// ```text
 /// Open Dashboard
@@ -361,6 +361,8 @@ fn apply_mute<R: Runtime>(app: &AppHandle<R>, window: MuteWindow) {
 /// Mute notifications · 1 h
 /// Mute notifications · 1 d
 /// Unmute
+/// ───────────────
+/// ☑ Start at login          (CheckMenuItem; live-updates on toggle)
 /// ───────────────
 /// Quit Governor
 /// ```
