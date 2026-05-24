@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import Database from 'better-sqlite3';
+import { openDatabase, type Database } from '../../src/db/index.js';
 import {
   buildPermissionsYaml,
   importPermissionsYaml,
@@ -9,8 +9,8 @@ import {
 import { ActorPermissionStore } from '../../src/security/actor-permissions.js';
 import { CapabilityOverrideStore } from '../../src/security/capability-overrides.js';
 
-function freshDb(): Database.Database {
-  const db = new Database(':memory:');
+function freshDb(): Database {
+  const db = openDatabase(':memory:');
   db.exec(`
     CREATE TABLE actor_permissions (
       actor_id TEXT NOT NULL,
@@ -33,7 +33,7 @@ function freshDb(): Database.Database {
 }
 
 describe('v0.6.9 P7 — YAML export', () => {
-  let db: Database.Database;
+  let db: Database;
   let perms: ActorPermissionStore;
   let caps: CapabilityOverrideStore;
 
@@ -99,7 +99,7 @@ describe('v0.6.9 P7 — YAML export', () => {
 });
 
 describe('v0.6.9 P7 — YAML import', () => {
-  let db: Database.Database;
+  let db: Database;
   let perms: ActorPermissionStore;
   let caps: CapabilityOverrideStore;
 

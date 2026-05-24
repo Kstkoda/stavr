@@ -14,7 +14,7 @@
  * picker semantics — "what was happening between X and Y"). `responded_at`
  * is exposed via the drawer payload, not the timeline sort key.
  */
-import type Database from 'better-sqlite3';
+import type { Database } from '../../../db/index.js';
 import type { DecisionRecord } from '../../../persistence.js';
 import {
   type HistoryItem,
@@ -31,7 +31,7 @@ export interface DecisionHistoryQuery extends HistoryQuery {
 }
 
 export interface DecisionsHistorySources {
-  db: Database.Database;
+  db: Database;
 }
 
 function decisionStatusToHistory(status: DecisionRecord['status']): HistoryStatus {

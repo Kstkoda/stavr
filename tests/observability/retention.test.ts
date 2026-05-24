@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import Database from 'better-sqlite3';
 import { EventStore } from '../../src/persistence.js';
 import {
   AUDIT_KINDS,
@@ -21,6 +20,17 @@ describe('retentionClass', () => {
     expect(retentionClass('trust_scope_granted')).toBe('audit');
     expect(retentionClass('decision_response')).toBe('audit');
     expect(retentionClass('totally_made_up_kind_xyz')).toBe('unknown');
+  });
+
+  it('classifies the previously-orphaned kinds correctly', () => {
+    // 2s-cadence telemetry + aggregated heartbeat — no audit value.
+    expect(retentionClass('daemon_host_headroom')).toBe('operational');
+    expect(retentionClass('mcp_oneshot_cleanup')).toBe('operational');
+    // Federation lineage + policy mutations — must be preserved.
+    expect(retentionClass('peer_joined')).toBe('audit');
+    expect(retentionClass('peer_left')).toBe('audit');
+    expect(retentionClass('capability_override_changed')).toBe('audit');
+    expect(retentionClass('host_ceiling_os_cap')).toBe('audit');
   });
 
   it('partitions disjoint sets', () => {
@@ -87,7 +97,7 @@ describe('EventStore.pruneEvents', () => {
     });
     // Backdate the first row by 30 days.
     const oldIso = new Date(Date.now() - 30 * 86_400_000).toISOString();
-    const db: Database.Database = (store as unknown as { db: Database.Database }).db;
+    const db = store.rawDb;
     const ids = db.prepare(`SELECT id FROM events ORDER BY seq ASC`).all() as { id: string }[];
     db.prepare(`UPDATE events SET created_at = ? WHERE id = ?`).run(oldIso, ids[0].id);
 
@@ -147,7 +157,7 @@ describe('EventStore.pruneEvents', () => {
       source_agent: 'test',
       payload: { id: 'old' },
     });
-    const db: Database.Database = (store as unknown as { db: Database.Database }).db;
+    const db = store.rawDb;
     db.prepare(`UPDATE events SET created_at = ?`).run(new Date(Date.now() - 200 * 86_400_000).toISOString());
 
     const result = store.pruneEvents({ auditDays: 90 });

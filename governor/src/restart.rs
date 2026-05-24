@@ -1,12 +1,16 @@
-//! PM2 restart invoker.
+//! Restart invokers.
 //!
-//! MVP path: shell out to `pm2 start ecosystem.config.cjs`. PM2 itself is the
-//! actual process supervisor; Governor's job in v0.6.5 is to call PM2 when
-//! the daemon is down, not to replace it (replacement is the v1.1+ scope per
-//! ADR-040 / BOM line 67).
+//! Two production implementations:
+//!   - `Pm2Restarter` — shells out to `pm2 start ecosystem.config.cjs`.
+//!     The dev-path supervisor: PM2 is the actual process manager and
+//!     Governor calls into it when the daemon is down.
+//!   - `SidecarRestarter` — launches the daemon SEA bundled by the Tauri
+//!     installer (Phase 4 of family-mode-phase-2). Activates in installed
+//!     mode; no PM2, no `npm install`. Governor is the supervisor.
 //!
 //! Trait-abstracted so the supervisor can be unit-tested without spawning
-//! real PM2 subprocesses.
+//! real subprocesses. `main.rs` chooses between the two at startup based
+//! on whether a bundled sidecar binary is present.
 //!
 //! Bug fix (v0.6.5 PR #34 amendment P2): on Windows, `pm2 stop` does NOT
 //! reliably terminate the underlying Node process — the daemon Node can
@@ -28,12 +32,18 @@ use crate::port_check::PortChecker;
 
 #[derive(Debug, Error)]
 pub enum RestartError {
-    #[error("failed to spawn pm2: {0}")]
+    #[error("failed to spawn restart subprocess: {0}")]
     Spawn(#[from] std::io::Error),
-    #[error("pm2 exited with status {0}")]
+    #[error("restart subprocess exited with status {0}")]
     NonZeroExit(i32),
     #[error("pm2 not found on PATH — install with `npm i -g pm2`")]
     NotFound,
+    /// SidecarRestarter could not find the bundled daemon binary at the
+    /// configured path. Typically means main.rs's resolver flipped to
+    /// sidecar mode based on env var or stale fixture, but the installer
+    /// hadn't placed the binary yet.
+    #[error("daemon sidecar binary missing at {path}")]
+    SidecarMissing { path: PathBuf },
     /// Even after killing an orphan PID `max_iterations` times, the restart
     /// kept failing. Operator must intervene (something other than a Node
     /// orphan is holding the port).
@@ -112,6 +122,76 @@ impl Restarter for Pm2Restarter {
         } else {
             Err(RestartError::NonZeroExit(status.code().unwrap_or(-1)))
         }
+    }
+}
+
+/// Production implementation for installed mode: launches the daemon
+/// SEA that the Tauri installer placed alongside the Governor binary.
+/// No PM2, no `npm install`, no `ecosystem.config.cjs` — Governor is the
+/// only process the operator interacts with.
+///
+/// Wraps `std::process::Command::spawn()` against the bundled binary and
+/// immediately detaches: the daemon continues running after the `Child`
+/// handle is dropped. Confirmation of readiness is the supervisor's
+/// next health-probe tick, same as the PM2 path.
+///
+/// Wrap with `OrphanAwareRestarter` for parity with the PM2 path on
+/// Windows (where a previous Node may still hold port 7777 after a
+/// crash — see ProcessKiller below).
+pub struct SidecarRestarter {
+    /// Absolute path to the bundled daemon binary. main.rs resolves this
+    /// via `STAVR_DAEMON_SIDECAR_PATH` env var or
+    /// `<exe-dir>/binaries/stavr-daemon[EXE_SUFFIX]`.
+    pub binary_path: PathBuf,
+    /// CLI args passed to the daemon. Mirrors `npm run start` which runs
+    /// `dist/cli.js daemon start`. Customizable so tests can target a
+    /// no-op binary.
+    pub args: Vec<String>,
+}
+
+impl SidecarRestarter {
+    pub fn new(binary_path: PathBuf) -> Self {
+        Self {
+            binary_path,
+            args: vec!["daemon".to_string(), "start".to_string()],
+        }
+    }
+
+    /// Constructor for tests that need a specific argv (e.g. point at a
+    /// system `true`/`cmd /c exit` to exercise the spawn path).
+    pub fn with_args(binary_path: PathBuf, args: Vec<String>) -> Self {
+        Self { binary_path, args }
+    }
+}
+
+impl Restarter for SidecarRestarter {
+    fn restart(&self) -> Result<(), RestartError> {
+        if !self.binary_path.exists() {
+            return Err(RestartError::SidecarMissing {
+                path: self.binary_path.clone(),
+            });
+        }
+        let child = Command::new(&self.binary_path)
+            .args(&self.args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    RestartError::SidecarMissing {
+                        path: self.binary_path.clone(),
+                    }
+                } else {
+                    RestartError::Spawn(e)
+                }
+            })?;
+        // Detach: drop the `Child` so the subprocess is not waited on.
+        // The daemon is long-lived; readiness is signalled via the
+        // supervisor's HTTP health probe on the next tick.
+        log::info!("sidecar restart: spawned pid {}", child.id());
+        drop(child);
+        Ok(())
     }
 }
 
@@ -501,5 +581,67 @@ mod tests {
         k.kill(22).unwrap();
         k.kill(33).unwrap();
         assert_eq!(k.killed(), vec![11, 22, 33]);
+    }
+
+    // ---- Phase 4: SidecarRestarter ---------------------------------------
+
+    #[test]
+    fn sidecar_restarter_defaults_to_daemon_start_args() {
+        let r = SidecarRestarter::new(PathBuf::from("/nonexistent/stavr-daemon"));
+        assert_eq!(r.args, vec!["daemon".to_string(), "start".to_string()]);
+    }
+
+    #[test]
+    fn sidecar_restarter_returns_sidecar_missing_for_absent_path() {
+        // The resolver in main.rs only constructs SidecarRestarter when
+        // the path exists, but a race between resolver and restart (e.g.
+        // uninstall while Governor is running, or an env-var override
+        // pointing at a stale path) must surface a clear, actionable
+        // error — not a generic Spawn(ENOENT).
+        let path = PathBuf::from("/this/path/does/not/exist/stavr-daemon");
+        let r = SidecarRestarter::new(path.clone());
+        let err = r.restart().unwrap_err();
+        match err {
+            RestartError::SidecarMissing { path: p } => assert_eq!(p, path),
+            other => panic!("expected SidecarMissing, got {other:?}"),
+        }
+    }
+
+    /// Round-trip sanity: spawn a no-op system binary and confirm the
+    /// detached spawn returns Ok. We use `true` (Unix) / `cmd.exe /c exit`
+    /// (Windows) which exit immediately — proves the spawn path works
+    /// without depending on a stavR-specific binary.
+    #[test]
+    #[cfg(unix)]
+    fn sidecar_restarter_spawns_existing_binary_on_unix() {
+        // `/usr/bin/true` exists on both Linux and macOS (`/bin/true`
+        // is Linux-only); exits 0 immediately.
+        let r = SidecarRestarter::with_args(PathBuf::from("/usr/bin/true"), vec![]);
+        r.restart().expect("spawn of /usr/bin/true should succeed");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn sidecar_restarter_spawns_existing_binary_on_windows() {
+        // cmd.exe ships with every Windows install. `/c exit` exits 0.
+        let cmd = PathBuf::from("C:\\Windows\\System32\\cmd.exe");
+        let r = SidecarRestarter::with_args(
+            cmd,
+            vec!["/c".to_string(), "exit".to_string()],
+        );
+        r.restart().expect("spawn of cmd.exe should succeed");
+    }
+
+    /// The wrapper should be a drop-in `Arc<dyn Restarter>` so the
+    /// Supervisor can hold it without knowing about the sidecar path
+    /// (mirror of the OrphanAwareRestarter trait-object test).
+    #[test]
+    fn sidecar_restarter_implements_restarter_trait() {
+        let r: Arc<dyn Restarter> =
+            Arc::new(SidecarRestarter::new(PathBuf::from("/nonexistent")));
+        // Reaching this line confirms the trait bound holds at compile
+        // time; calling restart() is the SidecarMissing-error path which
+        // we already test above.
+        let _ = r.restart();
     }
 }

@@ -20,8 +20,8 @@ function insertWorker(
     last_activity_at: string | null;
   },
 ): void {
-  // Access rawDb to insert a synthetic row directly
-  (store.rawDb as import('better-sqlite3').Database).prepare(
+  // Insert a synthetic row directly via the event-store's DB handle.
+  store.rawDb.prepare(
     `INSERT INTO workers
        (id, name, type, cwd, pid, status, started_at, ended_at, last_activity_at,
         metadata_json, spawn_params_hash, termination_reason, exit_code)
@@ -165,7 +165,7 @@ describe('stuck-worker watchdog', () => {
 
     // Advance last_activity_at so it's still stuck but with a new timestamp
     const newOldTime = new Date(Date.now() - 8 * 60 * 1000).toISOString();
-    (store.rawDb as import('better-sqlite3').Database)
+    store.rawDb
       .prepare(`UPDATE workers SET last_activity_at = ? WHERE id = 'w4'`)
       .run(newOldTime);
 

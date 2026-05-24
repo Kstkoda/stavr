@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { fetchHostExecHistory } from '../../../../src/dashboard/data/history/host-exec.js';
 import { makeStore } from './helpers.js';
+import type { Database } from '../../../../src/db/index.js';
 
 let seq = 1;
-function seedEvent(db: import('better-sqlite3').Database, args: {
+function seedEvent(db: Database, args: {
   kind: string;
   at: string;
   correlation_id?: string;

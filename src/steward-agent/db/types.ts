@@ -1,11 +1,12 @@
 // v0.5 P1 — Steward-agent state store types.
 //
-// One TypeScript interface per logical store. The actual better-sqlite3 handles
-// are returned by openStewardDbs() in ./init.ts. Methods here are intentionally
+// One TypeScript interface per logical store. The actual SQLite handles are
+// returned by openStewardDbs() in ./init.ts via the persistence port. Methods
+// here are intentionally
 // minimal — only what other phases of v0.5 BOM consume; richer queries can be
 // added without changing the file's shape.
 
-import type Database from 'better-sqlite3';
+import type { Database } from '../../db/index.js';
 
 /** Letta/MemGPT-style hot context — bounded; planner is the eviction policy. */
 export interface WorkingMemoryRow {
@@ -81,11 +82,11 @@ export const PREF_DEFAULTS: Record<string, unknown> = {
 
 /**
  * Memory store API. Operates on memory.db only. Calls below are sync because
- * better-sqlite3 is sync; the surrounding loop wraps them in microtask yields
+ * The SQLite engine is sync; the surrounding loop wraps writes in microtask yields
  * only where bursty episodic writes would otherwise pin the event loop.
  */
 export interface MemoryStore {
-  db: Database.Database;
+  db: Database;
   getWorking(key: string): unknown | undefined;
   setWorking(key: string, value: unknown): void;
   listWorkingKeys(): string[];
@@ -98,7 +99,7 @@ export interface MemoryStore {
 }
 
 export interface LessonsStore {
-  db: Database.Database;
+  db: Database;
   insertLesson(row: Omit<LessonRow, 'created_at'> & { created_at?: string }): void;
   updateStatus(id: string, status: LessonStatus): void;
   listActive(limit?: number): LessonRow[];
@@ -107,7 +108,7 @@ export interface LessonsStore {
 }
 
 export interface PrefsStore {
-  db: Database.Database;
+  db: Database;
   get<T = unknown>(key: string): T | undefined;
   getOrDefault<T = unknown>(key: string): T;
   set(key: string, value: unknown): void;

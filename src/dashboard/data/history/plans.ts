@@ -11,7 +11,7 @@
  * as the file mtime, once as the dispatch event); they share the
  * `correlation_id` so the P4 walker stitches them together.
  */
-import type Database from 'better-sqlite3';
+import type { Database } from '../../../db/index.js';
 import type { Bom, BomStatus } from '../../../types/stavr-bom.js';
 import {
   type HistoryItem,
@@ -27,7 +27,7 @@ export interface PlansHistoryQuery extends HistoryQuery {
 }
 
 export interface PlansHistorySources {
-  db: Database.Database;
+  db: Database;
 }
 
 function bomStatusToHistory(status: BomStatus): HistoryStatus {

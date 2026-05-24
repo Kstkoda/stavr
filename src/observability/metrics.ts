@@ -25,31 +25,18 @@ import {
   Histogram,
   Registry,
 } from 'prom-client';
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { StoredEvent } from '../persistence.js';
+import { STAVR_VERSION } from '../version.generated.js';
 
-function readVersion(): string {
-  try {
-    const here = dirname(fileURLToPath(import.meta.url));
-    for (const rel of ['../../package.json', '../../../package.json']) {
-      try {
-        const raw = readFileSync(resolve(here, rel), 'utf8');
-        const parsed = JSON.parse(raw) as { version?: string };
-        if (parsed.version) return parsed.version;
-      } catch {
-        /* try next */
-      }
-    }
-  } catch {
-    /* fall through */
-  }
-  return process.env.STAVR_VERSION ?? '0.0.0';
-}
-
+// Bombardment Phase 0 — version is baked at build time from
+// package.json#version (see scripts/generate-version.mjs). Pre-fix this
+// walked up to find package.json on disk and fell back to
+// STAVR_VERSION env / '0.0.0'; the walk fails in the SEA bundle and
+// the env var is never populated, so the Prometheus registry's
+// default `version` label reported '0.0.0' on every SEA / sidecar /
+// Windows Service launch path.
 export const registry = new Registry();
-registry.setDefaultLabels({ service: 'stavr', version: readVersion() });
+registry.setDefaultLabels({ service: 'stavr', version: STAVR_VERSION });
 
 let defaultsCollected = false;
 function ensureDefaultMetrics(): void {

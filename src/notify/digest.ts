@@ -9,7 +9,7 @@
 // since the last fire. Daemon restarts within the same day re-arm the timer
 // but won't fire a duplicate (last_fired_at persisted in meta table).
 
-import type Database from 'better-sqlite3';
+import type { Database } from '../db/index.js';
 import { getLogger } from '../log.js';
 import type { Notifier } from './notifier.js';
 
@@ -20,7 +20,7 @@ export interface DigestOpts {
   /** Override clock (tests). */
   now?: () => Date;
   /** SQLite handle for persisting last_fired_at. */
-  db?: Database.Database;
+  db?: Database;
 }
 
 const META_KEY = 'notify_digest_last_fired_ms';
@@ -30,7 +30,7 @@ export class DigestScheduler {
   private hour: number;
   private minute: number;
   private readonly now: () => Date;
-  private readonly db?: Database.Database;
+  private readonly db?: Database;
   private enabled = true;
 
   constructor(private readonly notifier: Notifier, opts: DigestOpts = {}) {

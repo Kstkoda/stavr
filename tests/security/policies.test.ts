@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import Database from 'better-sqlite3';
+import { openDatabase, type Database } from '../../src/db/index.js';
 import {
   BUILT_IN_POLICIES,
   POLICY_PRESET_IDS,
@@ -9,8 +9,8 @@ import {
 } from '../../src/security/policies.js';
 import { ActorPermissionStore } from '../../src/security/actor-permissions.js';
 
-function freshDb(): Database.Database {
-  const db = new Database(':memory:');
+function freshDb(): Database {
+  const db = openDatabase(':memory:');
   db.exec(`
     CREATE TABLE actor_permissions (
       actor_id TEXT NOT NULL,
@@ -70,7 +70,7 @@ describe('v0.6.9 P6 — named policy presets', () => {
 });
 
 describe('v0.6.9 P6 — applyPolicyToActor', () => {
-  let db: Database.Database;
+  let db: Database;
   let perms: ActorPermissionStore;
 
   beforeEach(() => {

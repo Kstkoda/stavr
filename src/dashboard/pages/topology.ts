@@ -1369,21 +1369,31 @@ const TOPOLOGY_JS = `
 
   // ---------- SSE live updates ----------
   let refreshTimer = null;
+  function scheduleTopologyReload() {
+    if (refreshTimer) return;
+    refreshTimer = (window.__stavrCleanup ? window.__stavrCleanup.setTimeout : setTimeout)(function() {
+      refreshTimer = null;
+      window.location.reload();
+    }, 600);
+  }
   if (window.__stavrStream) {
     window.__stavrStream.on('event', function(ev) {
       try {
         const data = JSON.parse(ev.data || '{}');
         const k = data && data.kind;
         if (typeof k === 'string' && (k.indexOf('bom_step_') === 0 || k.indexOf('worker_') === 0 || k.indexOf('trust_scope_') === 0)) {
-          if (refreshTimer) return;
-          refreshTimer = (window.__stavrCleanup ? window.__stavrCleanup.setTimeout : setTimeout)(function() {
-            refreshTimer = null;
-            window.location.reload();
-          }, 600);
+          scheduleTopologyReload();
         }
       } catch (_) {}
     });
   }
+  // Backstop: nothing on the SSE channel fires when MCP connectors or the
+  // notify fabric come online (they wire after the HTTP listener but emit
+  // no worker_/bom_step_/trust_scope_ events). A dashboard loaded right
+  // after a daemon restart takes an incomplete snapshot and would never
+  // refresh. Re-poll every 15s so the canvas converges within that window
+  // of any change. Coalesced with SSE reloads through the same debounce.
+  (window.__stavrCleanup ? window.__stavrCleanup.setInterval : setInterval)(scheduleTopologyReload, 15000);
 
   // ---------- jump-to-bom from URL hash ----------
   if (location.hash) {

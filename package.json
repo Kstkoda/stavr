@@ -8,17 +8,23 @@
   },
   "main": "./dist/server.js",
   "scripts": {
+    "version:gen": "node scripts/generate-version.mjs",
+    "prebuild": "npm run version:gen",
     "build": "tsc",
+    "predev": "npm run version:gen",
     "dev": "tsx src/cli.ts",
+    "prestart": "npm run version:gen",
     "start": "node --max-old-space-size=8192 --heapsnapshot-near-heap-limit=2 --report-on-fatalerror --report-directory=./tmp/diag-reports dist/cli.js daemon start",
+    "pretest": "npm run version:gen",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pretypecheck": "npm run version:gen",
     "typecheck": "tsc --noEmit",
     "docs:tools": "tsx scripts/generate-tool-catalogue.ts",
-    "check": "tsc --noEmit && vitest run && npm run build"
+    "check": "npm run version:gen && tsc --noEmit && vitest run && npm run build"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=25.7"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -47,7 +53,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/express": "^4.17.21",
-    "@types/node": "^20.17.10",
+    "@types/node": "^24.12.4",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^4.1.6",

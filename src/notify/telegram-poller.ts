@@ -14,7 +14,7 @@
 // auth — verify still requires the full signature, which we read from DB.
 
 import { request } from 'node:https';
-import type Database from 'better-sqlite3';
+import type { Database } from '../db/index.js';
 import type { Broker } from '../broker.js';
 import { getLogger } from '../log.js';
 import { verifyCorrelationId } from './correlation.js';
@@ -34,7 +34,7 @@ export interface TelegramPollerOpts {
   router: ReplyRouter;
   secret: string;
   /** DB handle for prefix→full-cid lookup. */
-  db: Database.Database;
+  db: Database;
   /** Test override for HTTPS. */
   transport?: TgTransport;
   /** Poll interval ms. */
@@ -89,6 +89,12 @@ export class TelegramPoller {
 
   start(): void {
     if (this.timer || !this.isConfigured()) return;
+    // Immediate first poll so inbound (callback_query / message) is live
+    // within seconds of daemon start instead of intervalMs (30s default)
+    // later. Guarded identically to the interval tick.
+    this.pollOnce().catch((err) =>
+      getLogger().warn('telegram-poller: tick failed', { error: (err as Error).message }),
+    );
     this.timer = setInterval(() => {
       this.pollOnce().catch((err) =>
         getLogger().warn('telegram-poller: tick failed', { error: (err as Error).message }),

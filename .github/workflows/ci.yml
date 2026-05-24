@@ -30,11 +30,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # Pinned to 20 to match package.json `engines` declaration and the
-          # dev environment. Node 22 bundles undici v6 which has different
-          # Streamable HTTP behavior; testing on 22 is a separate follow-up
-          # (forefront BOM checkpoint or its own PR).
-          node-version: '20'
+          # Pinned to the current Node major. package.json `engines.node`
+          # declares the floor (`>=25.7`, RC-stability for `node:sqlite` /
+          # DatabaseSync used by the persistence port); pinning CI to a
+          # concrete major (`26.x`) keeps every run on a known-good toolchain
+          # rather than floating onto whatever just shipped on nodejs.org.
+          # Bump deliberately when the operator decides to validate a new
+          # major.
+          node-version: '26.x'
           cache: 'npm'
 
       - name: Install dependencies
@@ -56,3 +59,14 @@ jobs:
           test -f dist/server.js
           test -f dist/shim.js
           test -f dist/daemon.js
+
+      # Bombardment Phase 0 — install-smoke. Boots the built artifact
+      # against an isolated STAVR_HOME, asserts /status reports the
+      # version baked at build time matches package.json#version.
+      # Catches recon defect #5 (stale /status version) and a chunk of
+      # defect #2 (built artifact failing to boot due to dependency
+      # resolution drift). Runs on both ubuntu-latest and windows-latest
+      # because the install-shape is platform-sensitive.
+      - name: Install smoke (/status version matches package.json)
+        timeout-minutes: 2
+        run: node bombardment/install-smoke.mjs

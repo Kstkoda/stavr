@@ -25,10 +25,8 @@ import {
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';
 import { BatchSpanProcessor, type SpanExporter, type SpanProcessor } from '@opentelemetry/sdk-trace-base';
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { getLogger } from '../log.js';
+import { STAVR_VERSION } from '../version.generated.js';
 
 export const STAVR_SERVICE_NAME = 'stavr';
 
@@ -48,19 +46,13 @@ export interface StartedOtel {
   shutdown: () => Promise<void>;
 }
 
-function readPackageVersion(): string {
-  try {
-    const here = dirname(fileURLToPath(import.meta.url));
-    for (const rel of ['../../package.json', '../../../package.json']) {
-      try {
-        const raw = readFileSync(resolve(here, rel), 'utf8');
-        const parsed = JSON.parse(raw) as { version?: string };
-        if (parsed.version) return parsed.version;
-      } catch { /* try next */ }
-    }
-  } catch { /* fall through */ }
-  return process.env.STAVR_VERSION ?? '0.0.0';
-}
+// Bombardment Phase 0 — version is baked at build time from
+// package.json#version (see scripts/generate-version.mjs). Pre-fix this
+// walked up to find package.json on disk and fell back to
+// STAVR_VERSION env / '0.0.0'; the walk fails in the SEA bundle and
+// the env var is never populated, so OTel's `service.version`
+// resource attribute reported '0.0.0' on every SEA / sidecar /
+// Windows Service launch path.
 
 export function startOtel(opts: StartOtelOpts = {}): StartedOtel | null {
   const env = opts.env ?? process.env;
@@ -86,7 +78,7 @@ export function startOtel(opts: StartOtelOpts = {}): StartedOtel | null {
   const sdk = new NodeSDK({
     resource: resourceFromAttributes({
       [ATTR_SERVICE_NAME]: STAVR_SERVICE_NAME,
-      [ATTR_SERVICE_VERSION]: readPackageVersion(),
+      [ATTR_SERVICE_VERSION]: STAVR_VERSION,
     }),
     spanProcessors: [processor],
     instrumentations: [

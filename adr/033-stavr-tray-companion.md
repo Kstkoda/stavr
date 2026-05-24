@@ -1,6 +1,6 @@
 # ADR-033 — stavr-tray companion (revised from stavr-watch standalone supervisor)
 
-**Status:** Proposed
+**Status:** Proposed — amended 2026-05-23 (see Amendment at end)
 **Date:** 2026-05-16 (revised from earlier draft after recheck)
 **Related:** ADR-006 (loopback-only), ADR-020 (in-daemon worker watchdog), ADR-030 (retention), ADR-031 (observability stack)
 
@@ -116,3 +116,21 @@ PM2 + this diagnostics stack already does **the supervision and the introspectio
 1. v0.6 stavr-tray BOM lands in `proposed/`
 2. Tauri vs pure-Rust binary choice locked in
 3. Per-platform packaging plan validated (at minimum macOS + Windows; Linux can defer)
+
+---
+
+## Amendment — 2026-05-23 — `stavr-tray` is now "the Governor"
+
+Two later decisions reshape this ADR. The original `stavr-tray` design above stands as the **observability core**; what changed is the supervisor it leans on, and the scope of the app built around it.
+
+**1. PM2 is gone — the OS-native service is the supervisor.** A 2026-05-20 host overload took PM2 down *with* the machine — PM2 was never an independent supervisor. The 10-3-1 that followed (BOM `proposed/os-native-governor-bom.md`) replaced PM2 with an OS-native service — systemd / launchd / Windows Service — as the supervisor. So everywhere this ADR reads "PM2": the companion now reads the OS service's status (`systemctl is-active` / `launchctl print` / `sc query`) instead of `pm2 jlist`, and the "Restart daemon" menu item forwards to the OS service, not `pm2 restart`. **Decision point 3 still holds verbatim — the companion performs no supervision.** Only the identity of the supervisor changed, from PM2 to the OS init system.
+
+**2. The companion is now "the Governor" — installer + first-run wizard + tray + decision-notification.** The install-packaging 10-3-1 (2026-05-20) and the "B+" 10-3-1 (2026-05-23) widened the app well past a tray companion:
+- **Installer** — a Tauri-built signed installer that carries the daemon as a sidecar `externalBin` and registers the OS service at install time.
+- **First-run wizard** — pairing + group-hub config so a non-technical family member completes setup with no terminal.
+- **Tray status pip** — the observability core of the original ADR above, unchanged in intent.
+- **Native decision-notification** — when a CONFIRM/EXPLICIT decision opens, the Governor raises a native OS notification that deep-links to the dashboard's Decide page. It does NOT host a bespoke approval UI or a WebAuthn ceremony — approval stays in the dashboard (and Telegram). The "B+" outcome: proactive "a decision is waiting" without a third approval surface to keep secure.
+
+**3. Icon.** The dock / launcher icon is the bare Raido glyph — no circle, no tile. The tray icon is that glyph plus a corner status dot. Green / amber / red carry the ok / warn / crit core; the `restarting` and `unreachable` states from decision point 4 keep their own dot treatment. Status is a dedicated indicator collapsed into a badge — never the mark's own colour (CLAUDE.md). Decision point 4's state *list* still holds; the *form* is glyph-plus-dot, not the emoji shorthand.
+
+**Implementation.** This supersedes the stale "`proposed/v0.6-stavr-tray-bom.md` (to be drafted)" line under Implementation above — that BOM was never written. The Governor is built by `proposed/family-mode-phase-2-bom.md` — Phase 4 (Tauri sidecar bundling) and Phase 4.5 (Governor UI). The OS-service supervision it observes is built by `proposed/os-native-governor-bom.md`.

@@ -17,7 +17,9 @@ use stavr_governor::event_router::EventRouter;
 use stavr_governor::icons::{self, IconVariant};
 use stavr_governor::notification::TauriToastRenderer;
 use stavr_governor::port_check::SystemPortChecker;
-use stavr_governor::restart::{OrphanAwareRestarter, Pm2Restarter, Restarter, SystemKiller};
+use stavr_governor::restart::{
+    OrphanAwareRestarter, Pm2Restarter, Restarter, SidecarRestarter, SystemKiller,
+};
 use stavr_governor::supervisor::{
     Clock, HealthProbe, HttpProbe, Supervisor, SystemClock, DEFAULT_HEALTH_URL,
 };
@@ -46,6 +48,61 @@ fn resolve_ecosystem_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("ecosystem.config.cjs"))
 }
 
+/// Minimum file size (bytes) below which a `stavr-daemon` candidate is
+/// treated as a placeholder. tauri-build's externalBin validation
+/// requires the per-target file to exist at every `cargo build`; our
+/// `build.rs` writes a 1-byte stub when the real SEA isn't around (dev
+/// runs). A real SEA is on the order of 100 MB. 1 MB is a comfortable
+/// threshold that distinguishes them without rejecting a stripped /
+/// future-compressed binary.
+const SIDECAR_MIN_PLAUSIBLE_BYTES: u64 = 1 * 1024 * 1024;
+
+/// Resolve the bundled daemon SEA path (Phase 4 of family-mode-phase-2).
+///
+/// In installed mode the Tauri installer places the daemon binary as a
+/// sidecar resource. We look for it in two places:
+///   1. `STAVR_DAEMON_SIDECAR_PATH` env var — explicit override for
+///      operators running the Governor from a custom layout.
+///   2. `<governor-exe-dir>/binaries/stavr-daemon[.exe]` — the canonical
+///      location tauri-bundler picks for an externalBin entry declared
+///      as `binaries/stavr-daemon` in `tauri.conf.json`.
+///
+/// Returns `None` in dev mode (no installer, no bundle) so `main()` falls
+/// back to the PM2 + ecosystem.config.cjs path. Also returns `None` when
+/// the candidate exists but is under `SIDECAR_MIN_PLAUSIBLE_BYTES`, which
+/// is the `build.rs` placeholder case — running the placeholder as the
+/// daemon would loop forever, so treat it as dev mode.
+fn resolve_sidecar_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("STAVR_DAEMON_SIDECAR_PATH") {
+        let candidate = PathBuf::from(p);
+        if is_plausible_sidecar(&candidate) {
+            return Some(candidate);
+        }
+        log::warn!(
+            "STAVR_DAEMON_SIDECAR_PATH set to {} but file is missing or \
+             under {} bytes (placeholder?); falling through to default resolver",
+            candidate.display(),
+            SIDECAR_MIN_PLAUSIBLE_BYTES
+        );
+    }
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+    let name = format!("stavr-daemon{}", std::env::consts::EXE_SUFFIX);
+    let candidate = exe_dir.join("binaries").join(&name);
+    if is_plausible_sidecar(&candidate) {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+fn is_plausible_sidecar(path: &std::path::Path) -> bool {
+    match std::fs::metadata(path) {
+        Ok(m) => m.is_file() && m.len() >= SIDECAR_MIN_PLAUSIBLE_BYTES,
+        Err(_) => false,
+    }
+}
+
 fn main() {
     // env_logger reads RUST_LOG; default to info so the operator sees state
     // transitions during the supervision loop without enabling verbose Tauri
@@ -60,18 +117,33 @@ fn main() {
 
     let health_url = std::env::var("STAVR_HEALTH_URL")
         .unwrap_or_else(|_| DEFAULT_HEALTH_URL.to_string());
-    let ecosystem_path = resolve_ecosystem_path();
-    log::info!(
-        "supervisor will probe {health_url}; restart via pm2 + {}",
-        ecosystem_path.display()
-    );
+
+    // Phase 4 of family-mode-phase-2: prefer the bundled sidecar SEA
+    // when the installer placed one next to us. Falls back to the PM2 +
+    // ecosystem.config.cjs path for dev runs (`cargo run` from the repo).
+    let base_restarter: Arc<dyn Restarter> = match resolve_sidecar_path() {
+        Some(sidecar) => {
+            log::info!(
+                "supervisor will probe {health_url}; restart via sidecar at {}",
+                sidecar.display()
+            );
+            Arc::new(SidecarRestarter::new(sidecar))
+        }
+        None => {
+            let ecosystem_path = resolve_ecosystem_path();
+            log::info!(
+                "supervisor will probe {health_url}; restart via pm2 + {} (no bundled sidecar)",
+                ecosystem_path.display()
+            );
+            Arc::new(Pm2Restarter::new(ecosystem_path))
+        }
+    };
 
     let probe: Arc<dyn HealthProbe> = Arc::new(HttpProbe::new(health_url));
-    // Wrap the raw PM2 restarter with the orphan-aware flow so Windows
-    // restart cycles can recover from PM2's "daemon already running"
-    // failure mode (v0.6.5 PR #34 amendment P2 — orphan Node holding
-    // port 7777 after PM2's SIGTERM didn't actually terminate it).
-    let base_restarter: Arc<dyn Restarter> = Arc::new(Pm2Restarter::new(ecosystem_path));
+    // Wrap the base restarter with the orphan-aware flow so Windows
+    // restart cycles can recover from a daemon orphan holding port 7777
+    // after a previous crash (v0.6.5 PR #34 amendment P2). Works for
+    // both Pm2Restarter and SidecarRestarter.
     let restarter: Arc<dyn Restarter> = Arc::new(OrphanAwareRestarter::new(
         base_restarter,
         Arc::new(SystemPortChecker),

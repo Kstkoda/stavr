@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { fetchNotificationsHistory } from '../../../../src/dashboard/data/history/notifications.js';
 import { makeStore } from './helpers.js';
+import type { Database } from '../../../../src/db/index.js';
 
 let seq = 1000;
-function seedSourceEvent(db: import('better-sqlite3').Database, sourceAgent: string, eventId: string): void {
+function seedSourceEvent(db: Database, sourceAgent: string, eventId: string): void {
   db.prepare(
     `INSERT INTO events (id, kind, correlation_id, source_agent, tenant_id, payload_json, at, persisted_at, seq, created_at)
      VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
   ).run(eventId, 'notification_requested', null, sourceAgent, '{}', '2026-05-20T10:00:00Z', '2026-05-20T10:00:00Z', seq++, '2026-05-20T10:00:00Z');
 }
 
-function seedNotification(db: import('better-sqlite3').Database, args: {
+function seedNotification(db: Database, args: {
   id: string;
   correlation_id: string;
   severity?: string;

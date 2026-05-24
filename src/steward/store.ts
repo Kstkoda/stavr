@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import type Database from 'better-sqlite3';
+import type { Database } from '../db/index.js';
 import type { EventStore } from '../persistence.js';
 import {
   NoActiveStewardError,
@@ -51,7 +51,7 @@ function rowToRecord(row: StewardRow): StewardRecord {
 }
 
 export class StewardStore {
-  private readonly db: Database.Database;
+  private readonly db: Database;
 
   constructor(eventStore: EventStore) {
     this.db = eventStore.rawDb;

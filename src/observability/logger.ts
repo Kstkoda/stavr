@@ -15,10 +15,8 @@
 // heavy and vitest dislikes it, so it stays off by default).
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import pino, { type Logger as PinoLogger } from 'pino';
+import { STAVR_VERSION } from '../version.generated.js';
 
 export interface LogCtx {
   correlation_id?: string;
@@ -49,24 +47,13 @@ export function getCorrelationId(): string | undefined {
   return logContext.getStore()?.correlation_id;
 }
 
-function readPackageVersion(): string {
-  try {
-    const here = dirname(fileURLToPath(import.meta.url));
-    // Walk up from src/observability or dist/observability to find package.json.
-    for (const rel of ['../../package.json', '../../../package.json']) {
-      try {
-        const raw = readFileSync(resolve(here, rel), 'utf8');
-        const parsed = JSON.parse(raw) as { version?: string };
-        if (parsed.version) return parsed.version;
-      } catch {
-        /* try next */
-      }
-    }
-  } catch {
-    /* fall through */
-  }
-  return process.env.STAVR_VERSION ?? '0.0.0';
-}
+// Bombardment Phase 0 — version is baked at build time from
+// package.json#version (see scripts/generate-version.mjs). Recon
+// defect #5 sibling: pre-fix this walked up to find package.json on
+// disk and fell back to STAVR_VERSION env / '0.0.0'. The walk fails
+// in the SEA bundle (no package.json on disk) and the env var is
+// never populated, so the logger reported '0.0.0' on every SEA /
+// sidecar / Windows Service launch path.
 
 let activePino: PinoLogger | null = null;
 
@@ -77,7 +64,7 @@ function buildPino(): PinoLogger {
     level,
     base: {
       service: 'stavr',
-      version: readPackageVersion(),
+      version: STAVR_VERSION,
       pid: process.pid,
     },
     mixin() {
@@ -117,7 +104,7 @@ export function makePinoForSink(write: (line: string) => void): PinoLogger {
       level: 'trace',
       base: {
         service: 'stavr',
-        version: readPackageVersion(),
+        version: STAVR_VERSION,
         pid: process.pid,
       },
       mixin() {

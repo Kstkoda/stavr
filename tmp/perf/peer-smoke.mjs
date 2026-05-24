@@ -33,7 +33,7 @@
 //   2 — setup failed (port in use, daemon failed to start, etc.)
 
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync, createWriteStream } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { request as httpRequest } from 'node:http';
 import { join, resolve, dirname } from 'node:path';
@@ -118,17 +118,29 @@ function spawnDaemon(label, port, home) {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: ROOT,
   });
+  // Persist each peer's combined stdout+stderr to a per-peer log under
+  // the artifacts dir. The pre-fix smoke recorded "never reached
+  // /healthz" without preserving the child's stderr — a smoke that
+  // cannot show why a peer died is half-blind. CI's on-failure
+  // artifact upload (.github/workflows/peer-smoke.yml) picks these up
+  // alongside peer-smoke-summary.json so the operator has the full
+  // picture without re-running locally.
+  const logPath = join(ARTIFACTS_DIR, `peer-${label}.log`);
+  const logStream = createWriteStream(logPath, { flags: 'w' });
   child.stdout.on('data', (b) => {
     const line = b.toString();
+    logStream.write(line);
     if (process.env['SMOKE_VERBOSE']) process.stdout.write(`[${label}] ${line}`);
   });
   child.stderr.on('data', (b) => {
     const line = b.toString();
+    logStream.write(line);
     if (process.env['SMOKE_VERBOSE']) process.stderr.write(`[${label}-err] ${line}`);
   });
-  child.on('exit', (code) => {
+  child.on('exit', (code, signal) => {
+    logStream.end(`\n[peer-smoke] exit code=${code} signal=${signal}\n`);
     if (!stopRequested) {
-      console.error(`[peer-smoke] ${label} exited unexpectedly with code ${code}`);
+      console.error(`[peer-smoke] ${label} exited unexpectedly with code ${code} (signal=${signal}). Log: ${logPath}`);
     }
   });
   return child;

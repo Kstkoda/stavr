@@ -242,6 +242,98 @@ export const mcpProtocolVersionMismatch = makeCounter(
   ['peer'],
 );
 
+// ---- MCP session durability (BOM proposed/mcp-session-stability-bom.md Phase 3) ----
+//
+// Surfaces the failure mode this BOM protects against: a long-blocking
+// tool handler whose response never reaches the client because the
+// transport closed before send. Two signals:
+//
+//   - Counter (with reason label) telling the operator HOW OFTEN it
+//     fires, distinguishing transport-level send errors from sessions
+//     that closed while requests were still in-flight.
+//   - Histogram of in-flight handler duration AT THE MOMENT OF CLOSE,
+//     bucketed coarsely to cover both the short-failures and the
+//     multi-minute `await_decision` cases.
+//
+// Both let the operator decide whether to tune the eventStore bound
+// (256/5min) from real data. Wired into transports.ts at the session
+// lifecycle hooks; surfaced on `/dashboard/diagnostics/engine`.
+
+export const mcpToolResponseDeliveryFailed = makeCounter(
+  'stavr_tool_response_delivery_failed_total',
+  'Tool responses where transport.send threw or the session closed with the call still in-flight. Reason: send_error | abandoned_by_close.',
+  ['reason'],
+);
+
+const HANDLER_AT_CLOSE_BUCKETS = [
+  0.1, 1, 5, 30, 60, 120, 300, 600, 1800,
+] as const;
+
+export const mcpToolHandlerDurationAtClose = makeHistogram(
+  'stavr_tool_handler_duration_at_close_seconds',
+  'Duration of tools/call requests still in-flight at the moment the MCP transport closed — surfaces the long-call cases the eventStore is meant to protect.',
+  [],
+  [...HANDLER_AT_CLOSE_BUCKETS],
+);
+
+// Synchronous mirror of the prom-client objects above, kept locally so
+// the dashboard render path can read values without async coupling
+// to prom-client's Promise-returning `Counter.get()` API. Updates flow
+// through the helpers below — call those, not the bare .inc()/.observe().
+type DurabilityMirror = {
+  send_error_total: number;
+  abandoned_by_close_total: number;
+  /** Bounded ring of recent observations, oldest evicted at 1024. */
+  handler_at_close_seconds: number[];
+};
+const durabilityMirror: DurabilityMirror = {
+  send_error_total: 0,
+  abandoned_by_close_total: 0,
+  handler_at_close_seconds: [],
+};
+
+/** Record a delivery failure. `reason` ∈ {send_error, abandoned_by_close}. */
+export function recordToolResponseDeliveryFailed(reason: 'send_error' | 'abandoned_by_close'): void {
+  mcpToolResponseDeliveryFailed.inc({ reason });
+  if (reason === 'send_error') durabilityMirror.send_error_total++;
+  else durabilityMirror.abandoned_by_close_total++;
+}
+
+/** Observe a handler-at-close duration in seconds. */
+export function recordToolHandlerDurationAtClose(seconds: number): void {
+  mcpToolHandlerDurationAtClose.observe(seconds);
+  durabilityMirror.handler_at_close_seconds.push(seconds);
+  if (durabilityMirror.handler_at_close_seconds.length > 1024) {
+    durabilityMirror.handler_at_close_seconds.shift();
+  }
+}
+
+/**
+ * Synchronous snapshot for the diagnostics engine page. Returns counter
+ * totals and the p99 of the bounded handler-duration mirror (null when
+ * no observations yet — the page distinguishes "metric quiet" from "metric
+ * is zero").
+ */
+export function getDurabilitySnapshot(): {
+  send_error_total: number;
+  abandoned_by_close_total: number;
+  handler_at_close_count: number;
+  handler_at_close_p99_seconds: number | null;
+} {
+  const ds = durabilityMirror.handler_at_close_seconds;
+  let p99: number | null = null;
+  if (ds.length > 0) {
+    const sorted = [...ds].sort((a, b) => a - b);
+    p99 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99))];
+  }
+  return {
+    send_error_total: durabilityMirror.send_error_total,
+    abandoned_by_close_total: durabilityMirror.abandoned_by_close_total,
+    handler_at_close_count: ds.length,
+    handler_at_close_p99_seconds: p99,
+  };
+}
+
 // ---- Bounded normalizers ----
 
 const KNOWN_TOOLS = new Set([
