@@ -225,10 +225,18 @@ const SUITE_DESC = SHOULD_RUN
       // so the test drains in lockstep with it. A hard safety cutoff at
       // duration + 90s catches a wedged runner.
       const rssSamples: RssSample[] = [];
-      const oracleHistory: Array<{ tMs: number; failed: number; firstFail?: OracleResult }> = [];
+      const oracleHistory: Array<{ tMs: number; failed: number; failingNames: string[] }> = [];
       const startMs = Date.now();
       const safetyDeadlineMs = startMs + DURATION_MINUTES * 60_000 + 90_000;
-      let oracleViolation: OracleResult | null = null;
+      // Capture once per distinct oracle name. The previous gate
+      // (`if (firstFail && !oracleViolation)`) dumped only the very first
+      // oracle to fail across the entire run, losing diagnostic evidence
+      // for any other oracle that tripped in a later window. Per-name
+      // bookkeeping preserves a separate artifact bundle for each
+      // distinct violation; the first-fail-overall is still recorded as
+      // the test's primary failure trigger.
+      const capturedOracles = new Set<string>();
+      const allViolations: OracleResult[] = [];
 
       while (loadRunner.exitCode === null && Date.now() < safetyDeadlineMs) {
         await new Promise((r) => setTimeout(r, SAMPLE_WINDOW_SEC * 1000));
@@ -241,19 +249,30 @@ const SUITE_DESC = SHOULD_RUN
           broker: h.broker,
           baseline,
         });
-        const firstFail = summary.results.find((r) => r.ok === false);
-        oracleHistory.push({ tMs: Date.now(), failed: summary.failed, firstFail });
-        if (firstFail && !oracleViolation) {
-          oracleViolation = firstFail;
-          process.stderr.write(`[soak] oracle violation: ${firstFail.name} — ${firstFail.reason}\n`);
-          // Capture but keep running so we collect the full growth-shape sample.
-          captureOnFailure(h.store, {
-            reason: `oracle_${firstFail.name}`,
-            oracleResult: firstFail,
-            extra: { modes: MODES, minutes_elapsed: (Date.now() - startMs) / 60_000 },
-          });
+        const failingResults = summary.results.filter((r) => r.ok === false);
+        oracleHistory.push({
+          tMs: Date.now(),
+          failed: summary.failed,
+          failingNames: failingResults.map((r) => r.name),
+        });
+        for (const fail of failingResults) {
+          allViolations.push(fail);
+          if (!capturedOracles.has(fail.name)) {
+            capturedOracles.add(fail.name);
+            process.stderr.write(`[soak] oracle violation: ${fail.name} — ${fail.reason}\n`);
+            // Capture but keep running so we collect the full growth-shape sample.
+            captureOnFailure(h.store, {
+              reason: `oracle_${fail.name}`,
+              oracleResult: fail,
+              extra: { modes: MODES, minutes_elapsed: (Date.now() - startMs) / 60_000 },
+            });
+          }
         }
       }
+      // The single "first" violation kept for the primary assertion +
+      // run-summary headline. Later violations are still in allViolations
+      // + per-name artifacts.
+      const oracleViolation: OracleResult | null = allViolations[0] ?? null;
 
       // Hit the safety cutoff with the runner still alive — that's a wedge,
       // force-kill it. Otherwise wait for the natural exit so the runner
@@ -353,6 +372,8 @@ const SUITE_DESC = SHOULD_RUN
           windows: oracleHistory.length,
           windows_with_violation: oracleHistory.filter((w) => w.failed > 0).length,
           first_violation: oracleViolation,
+          distinct_violations: [...capturedOracles],
+          total_violation_events: allViolations.length,
         },
         strict_workers_result: strictWorkersResult,
         top_heap_growers: topGrowers.slice(0, 10),
