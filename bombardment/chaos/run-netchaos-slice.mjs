@@ -41,7 +41,18 @@ function compose(args) {
 
 async function main() {
   console.log('[netchaos-slice] starting heavier Pumba impairment (spike + 10% loss)');
-  const up = compose(['up', '-d', 'pumba-spike-peer-a', 'pumba-loss-peer-b']);
+  // --remove-orphans clears stale pumba sidecars from a prior aborted
+  // run that share the fixed container names (stavr-pumba-spike-peer-a,
+  // stavr-pumba-loss-peer-b). Without this, `compose up -d` collides
+  // with the stale container and the impairment silently never starts —
+  // oracles then pass against UN-impaired traffic (false negative).
+  const up = compose([
+    'up',
+    '-d',
+    '--remove-orphans',
+    'pumba-spike-peer-a',
+    'pumba-loss-peer-b',
+  ]);
   if (up.status !== 0) {
     console.error('[netchaos-slice] failed to start netchaos sidecars');
     process.exit(1);

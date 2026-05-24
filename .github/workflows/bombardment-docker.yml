@@ -177,7 +177,15 @@ jobs:
         run: |
           set -euo pipefail
           cd bombardment/compose
-          docker compose up -d
+          # chaos.yml overlay supplies the /opt/bombardment-chaos bind-
+          # mount the Phase 4 runners need; restrict `up` to the three
+          # peer services so the pumba kill sidecar declared alongside
+          # the mount does NOT start here (the kill-recovery oracle
+          # drives the kill itself via `docker kill`).
+          # --remove-orphans clears stale containers left by a prior
+          # cancelled run before they collide on container names.
+          docker compose -f docker-compose.yml -f chaos.yml up -d \
+            --remove-orphans peer-a peer-b hub
           docker compose ps
 
       - name: Run federation oracles
@@ -252,4 +260,13 @@ jobs:
         if: always()
         run: |
           cd bombardment/compose
-          docker compose down -v || true
+          # `down -v` against the full overlay set so any chaos / netchaos
+          # sidecars left from a failed slice are torn down along with the
+          # base topology — otherwise stale pumba containers can collide
+          # on container names with the next workflow run.
+          docker compose \
+            -f docker-compose.yml \
+            -f chaos.yml \
+            -f netchaos.yml \
+            -f pumba.yml \
+            down -v --remove-orphans || true

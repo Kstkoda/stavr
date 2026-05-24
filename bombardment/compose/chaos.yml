@@ -1,15 +1,24 @@
 # Bombardment Phase 4 — destructive chaos overlay.
 #
 # Apply on top of the base compose file (and optionally on top of the
-# Phase 3c pumba.yml netem overlay) to get fault-injection sidecars:
+# Phase 3c pumba.yml netem overlay) to get fault-injection sidecars
+# AND the in-container helper bind-mount the runner scripts call into:
 #
 #   docker compose -f docker-compose.yml -f chaos.yml up -d
 #
 # What's in here (Phase 4a):
-#   pumba-kill-peer-a — one-shot Pumba `kill --signal SIGKILL` against
-#                       stavr-peer-a. Runs once and exits. The Docker
-#                       `restart: unless-stopped` policy on peer-a is
-#                       the supervisor that brings the container back.
+#   - Bind-mount of `../chaos/in-container/` at /opt/bombardment-chaos
+#     on every peer container. The mount is overlay-only so the base
+#     topology stays composable for operators running just the Phase
+#     3 federation oracles (no chaos directory required). Docker
+#     compose merges per-service `volumes` lists additively when
+#     service names match across files, so re-declaring peer-a /
+#     peer-b / hub here with just the chaos mount augments — does
+#     not replace — the base compose's volumes.
+#   - pumba-kill-peer-a — one-shot Pumba `kill --signal SIGKILL`
+#     against stavr-peer-a. Runs once and exits. The Docker
+#     `restart: unless-stopped` policy on peer-a is the supervisor
+#     that brings the container back.
 #
 # What's NOT in here:
 #   The runner script (bombardment/chaos/run-kill-slice.mjs) drives
@@ -25,6 +34,21 @@
 # work uses only the in-container helpers (no additional sidecars).
 
 services:
+  # The three peer services are re-declared here ONLY to attach the
+  # chaos helper bind-mount. Every other field is inherited from the
+  # base compose; compose merges per-service `volumes` lists by
+  # concatenation, so the existing peers-*.yaml + named-volume mounts
+  # stay in place.
+  peer-a:
+    volumes:
+      - ../chaos/in-container:/opt/bombardment-chaos:ro
+  peer-b:
+    volumes:
+      - ../chaos/in-container:/opt/bombardment-chaos:ro
+  hub:
+    volumes:
+      - ../chaos/in-container:/opt/bombardment-chaos:ro
+
   pumba-kill-peer-a:
     image: gaiaadm/pumba:0.11.7
     container_name: stavr-pumba-kill-peer-a
