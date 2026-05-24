@@ -36,7 +36,7 @@ on:
         required: false
         type: string
       minutes:
-        description: 'STAVR_SOAK_MINUTES override (multi-mode-soak duration; default 30)'
+        description: 'STAVR_SOAK_MINUTES override (multi-mode-soak duration; default 30; capped at 35 — bump timeout-minutes for longer)'
         required: false
         type: string
 
@@ -58,6 +58,28 @@ jobs:
         with:
           node-version: '26.x'
           cache: 'npm'
+      # Validate the dispatch `minutes` input against the job timeout so
+      # an operator-supplied value that would overrun the 60-min cap fails
+      # fast (with a clear message) instead of getting silently killed at
+      # minute 60 — which would also lose any in-flight artifact upload.
+      # Budget: ~5 min setup/build + ~15 min leak-soak + multi-mode value
+      # + ~2 min teardown ≈ multi-mode + 22 min. With 60-min cap that
+      # leaves a 38-min ceiling on the multi-mode duration; we cap at 35
+      # for safety margin. Operators wanting longer must bump
+      # `timeout-minutes` above in the same edit.
+      - name: Validate workflow_dispatch minutes input
+        if: github.event_name == 'workflow_dispatch' && inputs.minutes != ''
+        run: |
+          MINS="${{ inputs.minutes }}"
+          if ! [[ "$MINS" =~ ^[0-9]+$ ]]; then
+            echo "::error::minutes input '$MINS' is not a non-negative integer"
+            exit 1
+          fi
+          if [ "$MINS" -gt 35 ]; then
+            echo "::error::minutes=$MINS would overrun the 60-min timeout-minutes cap (budget: minutes + 22 ≈ ${MINS}+22 vs cap 60). Bump timeout-minutes in the workflow first."
+            exit 1
+          fi
+          echo "minutes=$MINS validated against 35-min ceiling"
       - run: npm ci
       - name: Build
         run: npm run build
