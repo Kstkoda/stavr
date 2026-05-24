@@ -25,6 +25,7 @@ import {
   formatUptime,
   type BuildVersions,
 } from '../data/build-versions.js';
+import { heartbeatStore } from '../../governor/heartbeat-store.js';
 import { metricTooltip } from '../components/tooltips.js';
 import {
   formatHostCeilingHeadline,
@@ -1229,7 +1230,12 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
   // v0.6.8 Section 0 — fall back to a live snapshot when the caller didn't
   // pre-fetch (e.g. dashboard router without explicit deps wiring). Tests
   // pass `data.versions` for determinism.
-  const versions = data?.versions ?? snapshotBuildVersions();
+  //
+  // governor-polish Cluster C — the Governor's heartbeat sits in the
+  // in-memory store; passing it through here is what lights the
+  // "GOVERNOR · RUNNING" tile. Stale heartbeats (> ~35 s old) are
+  // returned as `null`, which the fetcher renders as `not-running`.
+  const versions = data?.versions ?? snapshotBuildVersions({ governorHeartbeat: heartbeatStore.current() });
   const buildVersionsSection = renderBuildVersionsSection(versions);
   const perfSection = renderPerfSection();
 

@@ -75,6 +75,7 @@ import {
   generateDeviceToken,
   hashToken,
 } from './pairing.js';
+import { heartbeatStore, validateHeartbeatBody } from './governor/heartbeat-store.js';
 
 /**
  * Transport modes:
@@ -380,6 +381,44 @@ export async function mountTransports(
         ...(reasons.length ? { reasons } : {}),
       };
       res.status(ok ? 200 : 503).json(body);
+    });
+
+    // governor-polish Cluster C — Governor heartbeat sink. The Governor
+    // POSTs every ~10 s; we record the latest payload in an in-memory
+    // store that the Diagnostics fetcher reads via `heartbeatStore.current()`.
+    //
+    // Security posture (this is the ONLY new attack surface in the
+    // governor-polish BOM):
+    //   - Loopback-only. Non-loopback callers get 403 regardless of
+    //     bearer state — the heartbeat carries no privilege, but the
+    //     route is local-by-construction so it never becomes remotely
+    //     reachable.
+    //   - 1 KB body cap (express.json's 4 MB limit is fine for the rest
+    //     of the daemon but absurd here). Enforced via a dedicated
+    //     json parser on this route only.
+    //   - Strict schema via `validateHeartbeatBody` — rejects unknown
+    //     fields, oversized strings, signing values outside the enum.
+    app.post('/governor/heartbeat', (req: Request, res: Response) => {
+      if (!isLoopbackRequest(req)) {
+        res.status(403).json({ ok: false, error: 'loopback only' });
+        return;
+      }
+      // 1 KB cap — the global express.json() body parser is mounted with
+      // a 4 MB limit (fine for /mcp), so the per-route parser middleware
+      // pattern would be a no-op here. Check content-length explicitly.
+      const lenHeader = req.header('content-length');
+      const len = lenHeader ? Number.parseInt(lenHeader, 10) : 0;
+      if (Number.isFinite(len) && len > 1024) {
+        res.status(413).json({ ok: false, error: 'body too large (max 1 KB)' });
+        return;
+      }
+      const verdict = validateHeartbeatBody(req.body);
+      if (!verdict.ok) {
+        res.status(400).json({ ok: false, error: verdict.error });
+        return;
+      }
+      heartbeatStore.record(verdict.value);
+      res.status(204).end();
     });
 
     // ---- Spec 52 A2 — pairing endpoints (public for /pair/complete) ----
