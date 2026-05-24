@@ -1,30 +1,40 @@
 #!/usr/bin/env node
-// v0.6.11 Phase 2 — synthetic load harness for the stavR daemon.
+// Bombardment Phase 2 — synthetic load harness for the stavR daemon.
 //
-// Extends tmp/leak-verify/load-and-sample.mjs from a single-mode stateless-
-// POST driver into a multi-mode workload generator. Each mode runs as an
-// async loop with its own concurrency budget; results are aggregated into
-// structured JSON time-series + per-endpoint summary stats.
+// Salvaged from tmp/perf/load-runner.mjs (Phase 7 / v0.6.11 plans-page
+// freeze investigation). Multi-mode workload generator: each mode runs
+// as an async loop with its own concurrency budget; results are
+// aggregated into structured JSON time-series + per-endpoint summary stats.
 //
-// Modes (composable via --modes mcp_request,sse_churn,mixed_rw):
+// New in Phase 2:
+//   - Seeded via STAVR_HARDENING_SEED (env). When unset, captures a
+//     fresh time-based seed and prints it on startup so a one-off run
+//     can be reproduced by re-exporting the seed.
+//   - Modes use the seed for interval jitter + endpoint round-robin
+//     offset, so the same seed produces the same request sequence.
+//   - Lives under the rig's real home (bombardment/) instead of tmp/perf/.
+//
+// Modes (composable via --modes mcp_request,sse_churn,mixed_rw,page_nav):
 //   mcp_request  — MCP req/resp cycles (initialize → tools/list → close)
 //   sse_churn    — open/close N subscribers/sec on /dashboard/stream
 //   mixed_rw     — read (GET dashboard JSON) + write (POST plans/respond) mix
 //   page_nav     — hit /dashboard/<page> in a round-robin (Phase 7 nav stress)
 //
-// Output:
-//   tmp/perf/load-runner-timeseries.csv  — one row per sample window
-//   tmp/perf/load-runner-summary.json    — config + final per-endpoint stats
+// Output (defaults to bombardment/artifacts/load-runner/):
+//   load-runner-timeseries.csv  — one row per sample window
+//   load-runner-summary.json    — config + final per-endpoint stats
 //
 // Usage:
-//   node tmp/perf/load-runner.mjs --port 7777 --minutes 90 \
+//   node bombardment/load-runner.mjs --port 7777 --minutes 90 \
 //        --modes mcp_request,sse_churn,mixed_rw,page_nav \
 //        --rps-mcp 5 --sse-churn-per-sec 2 --rw-rps 3 --nav-rps 1
+//
+//   STAVR_HARDENING_SEED=42 node bombardment/load-runner.mjs --port 7777 --minutes 1
 
 import { writeFileSync, appendFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { performance } from 'node:perf_hooks';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 const args = Object.fromEntries(
   process.argv.slice(2).flatMap((a, i, arr) => {
@@ -33,11 +43,44 @@ const args = Object.fromEntries(
   }),
 );
 
+// ─── seeded RNG ────────────────────────────────────────────────────────────
+// Inline (no .ts import — this script is plain Node for zero-friction CLI).
+function resolveSeed() {
+  const env = process.env.STAVR_HARDENING_SEED;
+  if (env !== undefined && env !== '') {
+    const n = Number.parseInt(env, 10);
+    if (Number.isFinite(n)) return n >>> 0;
+  }
+  return (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+}
+function fnv1a(label) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < label.length; i++) {
+    h ^= label.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+function mulberry32(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const SEED = resolveSeed();
+function createRng(label) {
+  return mulberry32((SEED ^ fnv1a(label)) >>> 0);
+}
+
 const port = Number.parseInt(args.port ?? '7777', 10);
-const minutes = Number.parseInt(args.minutes ?? '90', 10);
+const minutes = Number.parseFloat(args.minutes ?? '90');
 const base = `http://127.0.0.1:${port}`;
 const modes = String(args.modes ?? 'mcp_request,sse_churn,mixed_rw,page_nav').split(',').filter(Boolean);
-const rpsMcp = Number.parseInt(args['rps-mcp'] ?? '5', 10);
+const rpsMcp = Number.parseFloat(args['rps-mcp'] ?? '5');
 const sseChurnPerSec = Number.parseFloat(args['sse-churn-per-sec'] ?? '2');
 const rwRps = Number.parseFloat(args['rw-rps'] ?? '3');
 const navRps = Number.parseFloat(args['nav-rps'] ?? '1');
@@ -45,9 +88,13 @@ const sampleWindowSec = Number.parseInt(args['sample-window-sec'] ?? '60', 10);
 
 const startedAt = Date.now();
 const endAt = startedAt + minutes * 60_000;
-const csvPath = String(args['csv'] ?? 'tmp/perf/load-runner-timeseries.csv');
-const summaryPath = String(args['summary'] ?? 'tmp/perf/load-runner-summary.json');
+const artifactsDir = resolve(args['artifacts-dir'] ?? 'bombardment/artifacts/load-runner');
+const csvPath = String(args['csv'] ?? `${artifactsDir}/load-runner-timeseries.csv`);
+const summaryPath = String(args['summary'] ?? `${artifactsDir}/load-runner-summary.json`);
 mkdirSync(dirname(csvPath), { recursive: true });
+
+process.stdout.write(`[load-runner] seed=${SEED} modes=${modes.join(',')} minutes=${minutes} port=${port}\n`);
+process.stdout.write(`[load-runner] csv=${csvPath} summary=${summaryPath}\n`);
 
 // ─── per-endpoint stats ────────────────────────────────────────────────────
 const stats = new Map(); // key: endpoint label → { count, errors, samples: number[] (ms) }
@@ -57,7 +104,6 @@ function record(label, durMs, ok) {
   if (!s) { s = { count: 0, errors: 0, samples: [] }; stats.set(label, s); }
   s.count++;
   if (!ok) s.errors++;
-  // Cap sample buffer per endpoint to avoid unbounded memory.
   if (s.samples.length < 50_000) s.samples.push(durMs);
 }
 
@@ -86,9 +132,18 @@ async function timeRequest(label, fn) {
   return { dur, ok };
 }
 
+// ─── jitter helper ─────────────────────────────────────────────────────────
+// Apply ±15% jitter from the seeded stream so two runs with the same seed
+// produce the same arrival sequence; without the seed they're independent.
+function jitter(rng, baseMs) {
+  const factor = 0.85 + rng() * 0.3;
+  return Math.max(1, baseMs * factor);
+}
+
 // ─── mode: mcp_request ─────────────────────────────────────────────────────
 async function mcpRequestLoop() {
-  const interval = 1000 / Math.max(1, rpsMcp);
+  const rng = createRng('mcp_request:interval');
+  const base_interval = 1000 / Math.max(1, rpsMcp);
   while (Date.now() < endAt) {
     await timeRequest('mcp:tools_list', async () => {
       const r = await fetch(`${base}/mcp`, {
@@ -99,24 +154,21 @@ async function mcpRequestLoop() {
       if (!r.ok && r.status !== 400) throw new Error(`HTTP ${r.status}`);
       await r.body?.cancel?.().catch(() => {});
     });
-    await sleep(interval);
+    await sleep(jitter(rng, base_interval));
   }
 }
 
 // ─── mode: sse_churn ───────────────────────────────────────────────────────
 async function sseChurnLoop() {
-  const interval = 1000 / Math.max(0.1, sseChurnPerSec);
+  const rng = createRng('sse_churn:interval');
+  const base_interval = 1000 / Math.max(0.1, sseChurnPerSec);
   while (Date.now() < endAt) {
-    // Measure time-to-open (handshake + first byte) only — the open/close
-    // pair is what stresses the broker's tap registration. Holding the
-    // connection then aborting is fire-and-forget on a separate timer.
     await timeRequest('sse:open_close', async () => {
       const ctrl = new AbortController();
       const abortAt = setTimeout(() => ctrl.abort(), 2000);
       try {
         const r = await fetch(`${base}/dashboard/stream`, { signal: ctrl.signal });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        // Drain the initial "ping" event (server writes it eagerly) then bail.
         const reader = r.body.getReader();
         await reader.read();
         ctrl.abort();
@@ -124,7 +176,7 @@ async function sseChurnLoop() {
         clearTimeout(abortAt);
       }
     });
-    await sleep(interval);
+    await sleep(jitter(rng, base_interval));
   }
 }
 
@@ -135,32 +187,34 @@ const READ_ENDPOINTS = [
   '/dashboard/api/diagnostics/memory',
 ];
 async function mixedRwLoop() {
-  const interval = 1000 / Math.max(0.1, rwRps);
-  let i = 0;
+  const rng = createRng('mixed_rw:interval');
+  const pickRng = createRng('mixed_rw:pick');
+  const base_interval = 1000 / Math.max(0.1, rwRps);
   while (Date.now() < endAt) {
-    const url = READ_ENDPOINTS[i++ % READ_ENDPOINTS.length];
+    const url = READ_ENDPOINTS[Math.floor(pickRng() * READ_ENDPOINTS.length)];
     await timeRequest(`read:${url}`, async () => {
       const r = await fetch(`${base}${url}`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       await r.body?.cancel?.().catch(() => {});
     });
-    await sleep(interval);
+    await sleep(jitter(rng, base_interval));
   }
 }
 
 // ─── mode: page_nav ────────────────────────────────────────────────────────
 const PAGES = ['helm', 'plans', 'topology', 'decide', 'diagnostics', 'streams', 'tools'];
 async function pageNavLoop() {
-  const interval = 1000 / Math.max(0.1, navRps);
-  let i = 0;
+  const rng = createRng('page_nav:interval');
+  const pickRng = createRng('page_nav:pick');
+  const base_interval = 1000 / Math.max(0.1, navRps);
   while (Date.now() < endAt) {
-    const page = PAGES[i++ % PAGES.length];
+    const page = PAGES[Math.floor(pickRng() * PAGES.length)];
     await timeRequest(`page:${page}`, async () => {
       const r = await fetch(`${base}/dashboard/${page}`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       await r.body?.cancel?.().catch(() => {});
     });
-    await sleep(interval);
+    await sleep(jitter(rng, base_interval));
   }
 }
 
@@ -224,6 +278,7 @@ for (const [label, s] of stats) {
 }
 
 const summary = {
+  seed: SEED,
   config: { port, base, minutes, modes, rps_mcp: rpsMcp, sse_churn_per_sec: sseChurnPerSec, rw_rps: rwRps, nav_rps: navRps, sample_window_sec: sampleWindowSec },
   started_at_iso: new Date(startedAt).toISOString(),
   ended_at_iso: new Date().toISOString(),

@@ -24,7 +24,10 @@ bombardment/
 │   ├── healthz-implies-live.ts   /healthz=200 ⇒ db reachable+writable, broker live
 │   ├── retention-bounds.ts       operational events ≤ cap × slack
 │   └── event-log-consistency.ts  decisions + workers projections agree with the log
-├── workloads/                   Phase 2 — importable multi-mode workload loops
+├── load-runner.mjs              Phase 2 — multi-mode synthetic load harness (CLI, seeded)
+├── observability/               Phase 2 — growth-shape helpers
+│   ├── growth-shape.ts            RSS slope, baseline-return, heap per-class diff
+│   └── event-loop-lag.ts          tick-to-tick scheduler lag sampler
 └── artifacts/                   preserve-on-failure dumps (gitignored)
 ```
 
@@ -75,6 +78,32 @@ if (summary.failed > 0) {
 Artifacts land under `bombardment/artifacts/<ts>-seed<n>-<reason>/`.
 CI workflows upload the directory on failure (see
 `.github/workflows/soak.yml`).
+
+## Multi-mode soak
+
+`tests/soak/multi-mode-soak.test.ts` boots an in-process daemon
+(`mountTransports({port: 0})`), spawns `bombardment/load-runner.mjs` as
+a subprocess against it, runs the default oracle set every sample
+window, and at end-of-run asserts:
+
+- No oracle violations during the run (the first violation is captured
+  to `bombardment/artifacts/multi-mode-soak/` via `captureOnFailure`).
+- RSS ceiling (`STAVR_SOAK_RSS_CEILING_MB`, default 600).
+- RSS slope < 1 MB/s (`STAVR_SOAK_RSS_SLOPE_BPS`) over the run — catches
+  slow leaks that hide under the ceiling.
+- `broker.sessionCount` + `subscriptionCount` return to baseline + slack.
+- Workers reach terminal (strict mode at end-of-run).
+- Retention sweep bounded event count under cap.
+
+Gating: `STAVR_RUN_SOAK=1` (short, ~3 min) or `=long` (~30 min). The
+weekly `.github/workflows/soak.yml` runs `long` mode with full
+artifact upload (heap snapshots, heap-diff, run-summary, load-runner CSV).
+
+Reproduce a failure:
+```bash
+STAVR_HARDENING_SEED=<seed> STAVR_RUN_SOAK=long STAVR_SOAK_MINUTES=10 \
+  npx vitest run tests/soak/multi-mode-soak.test.ts
+```
 
 ## Out of scope (deferred to other cycles)
 
