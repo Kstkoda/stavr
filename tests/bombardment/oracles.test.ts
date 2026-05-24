@@ -68,6 +68,22 @@ describe('bombardment/oracles', () => {
     expect(summary.passed + summary.declined).toBe(summary.results.length);
   });
 
+  it('runOracles converts a throwing oracle into ok:null instead of propagating', async () => {
+    const throwingOracle = async (): Promise<never> => {
+      throw new Error('synthetic boom');
+    };
+    Object.defineProperty(throwingOracle, 'name', { value: 'synthetic_thrower' });
+    const summary = await runOracles(
+      { kind: 'in-process', store: h.store, broker: h.broker },
+      [throwingOracle as never],
+    );
+    expect(summary.failed).toBe(0);
+    expect(summary.declined).toBe(1);
+    expect(summary.results[0].ok).toBeNull();
+    expect(summary.results[0].name).toBe('synthetic_thrower');
+    expect(summary.results[0].reason).toMatch(/oracle threw/);
+  });
+
   it('all in-process oracles decline when given an HTTP ctx', async () => {
     const httpCtx = { kind: 'http' as const, baseUrl: 'http://127.0.0.1:9' };
     const summary = await runOracles(httpCtx);

@@ -64,7 +64,25 @@ export async function runOracles(ctx: OracleCtx, oracles: Oracle[] = defaultOrac
   const start = Date.now();
   const results: OracleResult[] = [];
   for (const oracle of oracles) {
-    results.push(await oracle(ctx));
+    // Soak driver runs this every sample window. A bug in one oracle —
+    // unexpected SQL throw, JSON.parse crash on a corrupt payload, etc.
+    // — must NOT crash the driver and lose the rest of the window's
+    // signal. Treat any uncaught throw as `ok: null` with the error
+    // captured in `reason`, so triage sees the failure as a declined
+    // oracle (not a violation) and the soak keeps running.
+    const oracleStart = Date.now();
+    try {
+      results.push(await oracle(ctx));
+    } catch (err) {
+      const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      process.stderr.write(`[bombardment/oracles] ${oracle.name || '<anonymous>'} threw: ${message}\n`);
+      results.push({
+        name: oracle.name || '<anonymous>',
+        ok: null,
+        reason: `oracle threw: ${message}`,
+        durationMs: Date.now() - oracleStart,
+      });
+    }
   }
   let passed = 0;
   let failed = 0;
