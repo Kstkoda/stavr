@@ -2,39 +2,47 @@
 //!
 //! The Raido rune (ᚱ, U+16B1) in iron-palette rust orange (#fa9c4c) is the
 //! stavR brand mark per `CLAUDE.md` visual conventions. Each icon variant
-//! corresponds to a Governor `DaemonState` and is swapped onto the tray icon
-//! at runtime (wiring lives in P3 — `tray::apply_state`).
+//! corresponds to a tray-pip color (`tray::pip_color`) and is swapped onto
+//! the tray icon at runtime by `tray::apply_state`.
 //!
 //! Icons are generated from `icons/raido-base.svg` by
 //! `scripts/gen_icons.py`; that script is the source of truth and CI re-runs
 //! it before bundling. We embed the bytes here so the resulting binary is
 //! self-contained (no filesystem icon lookup at runtime).
+//!
+//! **Note on the removed pulse animation (audit #8):** the old supervisor
+//! made the tray icon pulse between `Restarting` and `RestartingDim`
+//! frames while the daemon was in `DaemonState::Unknown` or
+//! `DaemonState::Restarting`. The observe-only refactor (Phase 1)
+//! removed supervision; `apply_state` no longer animates. The previously
+//! dead variants and `IconVariant::for_state` / `state_pulses` helpers
+//! were dropped in Cluster E. **Open question for Kenneth:** should the
+//! cold-boot pulse return for the case `ServiceStatus::Unknown` (we
+//! haven't queried the OS service yet) and / or `DaemonState::Unknown`
+//! (no /healthz response yet)? The raido-orange{,-dim}-{16,32}.png assets
+//! are still on disk so a restoration is a small change: re-add the
+//! variants here + a `for_pip` helper that takes a `(PipColor,
+//! pulse_phase)` pair, and re-introduce the watcher's pulse-toggle. Flag
+//! this in the BOM follow-up — defaults to "no" until asked.
 
 /// Magic bytes that begin every valid PNG file.
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
 
-/// Logical states that map 1:1 with `governor::state::DaemonState`. Re-declared
-/// here as a small enum so the icons module stays standalone-testable without
-/// pulling the supervisor module in. The mapping is the responsibility of
-/// `tray::apply_state` (P3).
+/// Logical pip variants. Each maps 1:1 with a `tray::PipColor`; the
+/// `Brand` variant is reserved for the bundle icon + the pre-launch
+/// placeholder before the first tray-watcher tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconVariant {
-    /// Default brand glyph — used as the bundle icon and the pre-launch tray
-    /// state before the first health check returns.
+    /// Default brand glyph — bundle icon + pre-launch tray placeholder.
     Brand,
-    /// Daemon healthy — green halo.
+    /// Pip color: green — service running + daemon healthy.
     Healthy,
-    /// Daemon degraded — amber halo.
+    /// Pip color: amber — service running + daemon degraded/unknown.
     Degraded,
-    /// Daemon down or in GiveUp — red halo.
+    /// Pip color: red — service stopped, or service running + daemon down.
     Down,
-    /// Daemon stopped by operator — gray halo.
+    /// Pip color: grey — service not installed / operator-held.
     StoppedManually,
-    /// Restarting — rust-orange glyph (alternated with `RestartingDim` to
-    /// produce a pulse without an animated icon format).
-    Restarting,
-    /// Pulse frame B for `Restarting` / `GiveUp`.
-    RestartingDim,
 }
 
 impl IconVariant {
@@ -46,8 +54,6 @@ impl IconVariant {
             IconVariant::Degraded => include_bytes!("../icons/raido-yellow-16.png"),
             IconVariant::Down => include_bytes!("../icons/raido-red-16.png"),
             IconVariant::StoppedManually => include_bytes!("../icons/raido-gray-16.png"),
-            IconVariant::Restarting => include_bytes!("../icons/raido-orange-16.png"),
-            IconVariant::RestartingDim => include_bytes!("../icons/raido-orange-dim-16.png"),
         }
     }
 
@@ -59,8 +65,6 @@ impl IconVariant {
             IconVariant::Degraded => include_bytes!("../icons/raido-yellow-32.png"),
             IconVariant::Down => include_bytes!("../icons/raido-red-32.png"),
             IconVariant::StoppedManually => include_bytes!("../icons/raido-gray-32.png"),
-            IconVariant::Restarting => include_bytes!("../icons/raido-orange-32.png"),
-            IconVariant::RestartingDim => include_bytes!("../icons/raido-orange-dim-32.png"),
         }
     }
 
@@ -72,60 +76,7 @@ impl IconVariant {
             IconVariant::Degraded,
             IconVariant::Down,
             IconVariant::StoppedManually,
-            IconVariant::Restarting,
-            IconVariant::RestartingDim,
         ]
-    }
-
-    /// Pick the icon variant that should be displayed for a given daemon
-    /// state. `pulse_phase` toggles each tick of the supervisor watcher;
-    /// states that don't pulse ignore it and return a stable variant.
-    ///
-    /// State → variant mapping (BOM P3):
-    /// - `Unknown`         → `Restarting` pulse (pre-probe heartbeat)
-    /// - `Healthy`         → `Healthy` (green halo)
-    /// - `Degraded`        → `Degraded` (amber halo)
-    /// - `Down`            → `Down` (red halo)
-    /// - `Restarting`      → `Restarting` / `RestartingDim` pulse (orange)
-    /// - `StoppedManually` → `StoppedManually` (gray halo)
-    /// - `GiveUp`          → `Down` / `RestartingDim` (red + alert pattern)
-    pub fn for_state(state: crate::state::DaemonState, pulse_phase: bool) -> IconVariant {
-        use crate::state::DaemonState;
-        match state {
-            DaemonState::Unknown | DaemonState::Restarting => {
-                if pulse_phase {
-                    IconVariant::RestartingDim
-                } else {
-                    IconVariant::Restarting
-                }
-            }
-            DaemonState::Healthy => IconVariant::Healthy,
-            DaemonState::Degraded => IconVariant::Degraded,
-            DaemonState::Down => IconVariant::Down,
-            DaemonState::StoppedManually => IconVariant::StoppedManually,
-            DaemonState::GiveUp => {
-                // Alert pattern: solid red + a "missing" beat using the dim
-                // orange variant. The contrast between red and orange-dim
-                // reads as "something is wrong" without needing a second
-                // halo color set.
-                if pulse_phase {
-                    IconVariant::RestartingDim
-                } else {
-                    IconVariant::Down
-                }
-            }
-        }
-    }
-
-    /// True if this state should pulse (animated tray icon). The watcher
-    /// thread alternates `pulse_phase` only while pulsing states are active
-    /// so the CPU stays idle in steady-state.
-    pub fn state_pulses(state: crate::state::DaemonState) -> bool {
-        use crate::state::DaemonState;
-        matches!(
-            state,
-            DaemonState::Unknown | DaemonState::Restarting | DaemonState::GiveUp
-        )
     }
 }
 
@@ -250,78 +201,29 @@ mod tests {
         assert_eq!(big.height, 128);
     }
 
+    /// Cluster E (audit #8): the `Restarting{,Dim}` variants and the
+    /// `for_state` / `state_pulses` helpers are gone. Anchor the
+    /// removal so a future restoration of the pulse animation has to
+    /// be deliberate (see the module-level doc comment).
     #[test]
-    fn for_state_maps_each_state_to_an_appropriate_variant() {
-        use crate::state::DaemonState;
-        // Steady states (no pulse) — pulse_phase must not change the result.
-        assert_eq!(
-            IconVariant::for_state(DaemonState::Healthy, false),
-            IconVariant::Healthy
-        );
-        assert_eq!(
-            IconVariant::for_state(DaemonState::Healthy, true),
-            IconVariant::Healthy
-        );
-        assert_eq!(
-            IconVariant::for_state(DaemonState::Degraded, false),
-            IconVariant::Degraded
-        );
-        assert_eq!(
-            IconVariant::for_state(DaemonState::Down, false),
-            IconVariant::Down
-        );
-        assert_eq!(
-            IconVariant::for_state(DaemonState::StoppedManually, false),
-            IconVariant::StoppedManually
-        );
-    }
-
-    #[test]
-    fn for_state_pulses_restarting_and_giveup() {
-        use crate::state::DaemonState;
-        // Restarting alternates between Restarting and RestartingDim.
-        let a = IconVariant::for_state(DaemonState::Restarting, false);
-        let b = IconVariant::for_state(DaemonState::Restarting, true);
-        assert_ne!(a, b, "Restarting must pulse — both phases produced {a:?}");
-
-        // GiveUp uses a different alert pattern (red ↔ orange-dim).
-        let g_a = IconVariant::for_state(DaemonState::GiveUp, false);
-        let g_b = IconVariant::for_state(DaemonState::GiveUp, true);
-        assert_ne!(g_a, g_b, "GiveUp must pulse — both phases produced {g_a:?}");
-        assert_eq!(g_a, IconVariant::Down);
-
-        // Unknown also pulses (pre-probe heartbeat).
-        let u_a = IconVariant::for_state(DaemonState::Unknown, false);
-        let u_b = IconVariant::for_state(DaemonState::Unknown, true);
-        assert_ne!(u_a, u_b);
-    }
-
-    #[test]
-    fn state_pulses_predicate_matches_for_state_behaviour() {
-        use crate::state::DaemonState;
-        for state in [
-            DaemonState::Unknown,
-            DaemonState::Healthy,
-            DaemonState::Degraded,
-            DaemonState::Down,
-            DaemonState::Restarting,
-            DaemonState::StoppedManually,
-            DaemonState::GiveUp,
+    fn pulse_variants_and_helpers_are_removed() {
+        // Source-level anchor: production code must not reference the
+        // removed variants or helpers.
+        let src = include_str!("icons.rs");
+        let prod = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("icons.rs non-test prelude");
+        for forbidden in [
+            "IconVariant::Restarting",
+            "IconVariant::RestartingDim",
+            "fn for_state",
+            "fn state_pulses",
         ] {
-            let pulses = IconVariant::state_pulses(state);
-            let a = IconVariant::for_state(state, false);
-            let b = IconVariant::for_state(state, true);
-            if pulses {
-                assert_ne!(
-                    a, b,
-                    "state_pulses({state:?}) says yes but for_state returned the same variant"
-                );
-            } else {
-                assert_eq!(
-                    a, b,
-                    "state_pulses({state:?}) says no but for_state varied"
-                );
-            }
+            assert!(
+                !prod.contains(forbidden),
+                "icons.rs prod must not contain {forbidden:?} after Cluster E removal"
+            );
         }
     }
 
