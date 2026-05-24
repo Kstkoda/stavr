@@ -57,19 +57,26 @@ const otherArb = fc.oneof(
 );
 const callerArb = fc.oneof(loopbackArb, notifyArb, peerArb, otherArb);
 
+// DecisionRecord.tier is `'CONFIRM' | 'EXPLICIT'` (persistence.ts:95).
+// Phase 4.5 widened the rule so mayRespond ignores tier today — but
+// the doc-comment marks re-introducing a tier-conditional in mayRespond
+// as the single-function extension point for per-tier responder sets.
+// Using the production type here means a future EXPLICIT-tier branch
+// would actually be exercised by these properties, instead of being
+// silently invisible behind impossible TIER_1/TIER_2/TIER_3 inputs.
 const decisionArb = fc.record({
   source_agent: fc.option(
     fc.oneof(loopbackArb, notifyArb, peerArb, fc.string({ minLength: 1, maxLength: 32 })),
     { nil: undefined },
   ),
-  tier: fc.option(fc.constantFrom('TIER_1', 'TIER_2', 'TIER_3', null), { nil: undefined }),
+  tier: fc.option(fc.constantFrom('CONFIRM', 'EXPLICIT'), { nil: undefined }),
 });
 
 describe('Phase 5 fuzz — mayRespond', () => {
   it('is total for any (decision, verifiedCaller) input', () => {
     fc.assert(
       fc.property(decisionArb, callerArb, (decision, caller) => {
-        const r = mayRespond(decision as never, caller);
+        const r = mayRespond(decision, caller);
         return r.ok === true || r.ok === false;
       }),
       { seed: fuzzSeed('respond-total'), numRuns: RUNS },
@@ -80,7 +87,7 @@ describe('Phase 5 fuzz — mayRespond', () => {
     fc.assert(
       fc.property(fc.string({ minLength: 1, maxLength: 64 }), (identity) => {
         const r = mayRespond(
-          { source_agent: identity, tier: undefined } as never,
+          { source_agent: identity, tier: undefined },
           identity,
         );
         return r.ok === false && r.error === 'responder_is_requester';
@@ -96,7 +103,7 @@ describe('Phase 5 fuzz — mayRespond', () => {
     fc.assert(
       fc.property(callerNonOpArb, fc.string({ minLength: 1, maxLength: 32 }), (caller, src) => {
         if (caller === src) return true; // skip self-approval collisions
-        const r = mayRespond({ source_agent: src, tier: undefined } as never, caller);
+        const r = mayRespond({ source_agent: src, tier: undefined }, caller);
         return r.ok === false && r.error === 'operator_required';
       }),
       { seed: fuzzSeed('respond-non-operator'), numRuns: RUNS },
@@ -107,7 +114,7 @@ describe('Phase 5 fuzz — mayRespond', () => {
     const operatorArb = fc.oneof(loopbackArb, notifyArb);
     fc.assert(
       fc.property(operatorArb, (caller) => {
-        const r = mayRespond({ source_agent: undefined, tier: undefined } as never, caller);
+        const r = mayRespond({ source_agent: undefined, tier: undefined }, caller);
         return r.ok === true;
       }),
       { seed: fuzzSeed('respond-legacy-fall-open'), numRuns: RUNS },
@@ -119,7 +126,7 @@ describe('Phase 5 fuzz — mayRespond', () => {
     fc.assert(
       fc.property(operatorArb, fc.string({ minLength: 1, maxLength: 32 }), (caller, src) => {
         if (caller === src) return true; // self-approval — skip
-        const r = mayRespond({ source_agent: src, tier: undefined } as never, caller);
+        const r = mayRespond({ source_agent: src, tier: undefined }, caller);
         return r.ok === true;
       }),
       { seed: fuzzSeed('respond-operator-allow'), numRuns: RUNS },
