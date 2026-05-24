@@ -22,9 +22,10 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use stavr_governor::event_bridge::{EventBridge, EventSink, UreqFetcher, DEFAULT_STREAM_URL};
 use stavr_governor::event_router::EventRouter;
-use stavr_governor::icons::{self};
+use stavr_governor::icons;
 use stavr_governor::notification::TauriToastRenderer;
 use stavr_governor::service::{ServiceQuery, ServiceStatus, SystemServiceQuery};
+use stavr_governor::state::DaemonState;
 use stavr_governor::supervisor::{
     Clock, HealthMonitor, HealthProbe, HttpProbe, SystemClock, DEFAULT_HEALTH_URL,
 };
@@ -97,6 +98,11 @@ fn main() {
         ))
         .setup(move |app| {
             app.manage(monitor.clone());
+            // Phase 4 cluster A — shared tooltip override so operator
+            // actions can paint "stavR · upgrading…" while their script
+            // is in flight without racing the tray watcher.
+            let tray_override = Arc::new(tray::TrayOverride::new());
+            app.manage(tray_override.clone());
             let _tray = tray::build(app.handle())?;
             log::info!("stavR Governor started; tray icon attached");
 
@@ -124,24 +130,30 @@ fn main() {
                 .expect("spawn event-bridge thread");
 
             // Tray watcher: snapshot monitor state + service status every
-            // TRAY_TICK and push it onto the tray (icon + tooltip).
+            // TRAY_TICK and push it onto the tray (icon + tooltip). When
+            // the operator's `TrayOverride` is set ("upgrading…" etc.)
+            // we repaint every tick so the banner survives even when no
+            // pip-color change would otherwise have triggered a paint.
             let watcher_app = app.handle().clone();
             let watcher_state = monitor.state();
             let watcher_service = service_status.clone();
+            let watcher_override = tray_override.clone();
             std::thread::Builder::new()
                 .name("tray-watcher".to_string())
                 .spawn(move || {
-                    let mut prev: Option<(stavr_governor::state::DaemonState, ServiceStatus)> =
-                        None;
+                    let mut prev: Option<(DaemonState, ServiceStatus, Option<String>)> = None;
                     loop {
                         let service = *watcher_service.lock();
                         let snapshot = {
                             let sm = watcher_state.lock();
                             tray::StateSnapshot::from(&sm, service, Instant::now())
                         };
-                        let key = (snapshot.state, snapshot.service);
-                        if Some(key) != prev {
-                            if let Err(e) = tray::apply_state(&watcher_app, &snapshot, false) {
+                        let override_msg = watcher_override.current();
+                        let key = (snapshot.state, snapshot.service, override_msg.clone());
+                        if Some(&key) != prev.as_ref() {
+                            if let Err(e) =
+                                tray::apply_state(&watcher_app, &snapshot, override_msg.as_deref())
+                            {
                                 log::warn!("tray watcher: apply_state failed: {e}");
                             }
                             prev = Some(key);

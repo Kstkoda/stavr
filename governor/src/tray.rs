@@ -22,13 +22,43 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt;
 
+use parking_lot::Mutex as PlMutex;
 use stavr_governor::actions::{self, MuteWindow};
+use stavr_governor::event_router::{Severity, ToastRenderer, ToastSpec};
 use stavr_governor::event_router::EventRouter;
 use stavr_governor::icons::{decode_png_rgba, IconVariant};
+use stavr_governor::notification::TauriToastRenderer;
 use stavr_governor::service::{
     self, ServiceController, ServiceStatus, SystemServiceController,
 };
 use stavr_governor::state::{DaemonState, StateMachine};
+
+/// Banner-style tooltip override shared with the tray watcher. When set,
+/// the watcher uses the override string instead of the computed
+/// state-+-service tooltip — used by long-running operator actions
+/// ("upgrading…") so the operator sees the action is in flight rather
+/// than the stale steady-state tooltip.
+#[derive(Debug, Default)]
+pub struct TrayOverride {
+    tooltip: PlMutex<Option<String>>,
+}
+
+impl TrayOverride {
+    pub fn new() -> Self {
+        Self {
+            tooltip: PlMutex::new(None),
+        }
+    }
+    pub fn set(&self, msg: impl Into<String>) {
+        *self.tooltip.lock() = Some(msg.into());
+    }
+    pub fn clear(&self) {
+        *self.tooltip.lock() = None;
+    }
+    pub fn current(&self) -> Option<String> {
+        self.tooltip.lock().clone()
+    }
+}
 
 /// Canonical id of the one-and-only Governor tray icon. All runtime updates
 /// MUST resolve the live tray via `app.tray_by_id(TRAY_ID)` — never build a
@@ -140,51 +170,138 @@ fn toggle_autostart<R: Runtime>(app: &AppHandle<R>) {
 }
 
 /// Operator clicked "Restart Daemon" — delegate to the OS init system.
-/// We spawn the controller call on a thread so the UAC / sudo prompt
-/// doesn't freeze the Tauri event loop while it waits for the operator.
+/// Runs on a dedicated thread so the UAC / sudo prompt doesn't freeze
+/// the Tauri event loop. On completion, fires an OS toast carrying the
+/// outcome (Phase 4 BOM acceptance — parity with the upgrade flow).
 fn trigger_restart<R: Runtime>(app: &AppHandle<R>) {
-    let _ = app;
+    let app = app.clone();
     std::thread::Builder::new()
         .name("operator-restart".to_string())
         .spawn(move || {
             let controller = SystemServiceController::default();
-            log::info!("tray: operator triggered Restart Daemon → {:?}", controller.name);
+            log::info!(
+                "tray: operator triggered Restart Daemon → {:?}",
+                controller.name
+            );
             match controller.restart() {
-                Ok(()) => log::info!("tray: Restart Daemon dispatched ok"),
-                Err(e) => log::warn!("tray: Restart Daemon failed: {e}"),
+                Ok(()) => {
+                    log::info!("tray: Restart Daemon dispatched ok");
+                    show_action_toast(
+                        &app,
+                        Severity::Info,
+                        "stavR — restart dispatched",
+                        "OS service restart issued. Pip will recover when /healthz comes back.",
+                    );
+                }
+                Err(e) => {
+                    log::warn!("tray: Restart Daemon failed: {e}");
+                    show_action_toast(
+                        &app,
+                        Severity::Crit,
+                        "stavR — restart failed",
+                        &format!("{e}"),
+                    );
+                }
             }
         })
         .expect("spawn operator-restart thread");
 }
 
-/// Operator clicked "Upgrade Daemon" — invoke the hardened upgrade script.
-/// Long-running; spawned on its own thread so the tray stays responsive.
-/// The script enforces the rollback contract: on any failure the daemon
-/// ends up on the pre-upgrade commit with the service restarted.
+/// Operator clicked "Upgrade Daemon" — invoke the hardened upgrade
+/// script. Long-running; spawned on its own thread so the tray stays
+/// responsive. The script enforces the rollback contract: on any failure
+/// the daemon ends up on the pre-upgrade commit with the service
+/// restarted.
+///
+/// Phase 4 BOM acceptance:
+///   - shows "upgrading…" in the tray tooltip while the script runs
+///     (via the shared `TrayOverride`)
+///   - reports the outcome via an OS toast (`Severity::Info` on success,
+///     `Severity::Crit` on failure with the exit code in the body so
+///     the operator knows whether rollback succeeded — exit 2 = rollback
+///     ok, exit 3 = rollback also failed and operator must intervene).
 fn trigger_upgrade<R: Runtime>(app: &AppHandle<R>) {
-    let _ = app;
+    let app = app.clone();
     std::thread::Builder::new()
         .name("operator-upgrade".to_string())
         .spawn(move || {
+            if let Some(ov) = app.try_state::<Arc<TrayOverride>>() {
+                ov.set("stavR · upgrading…");
+            }
             let script = service::resolve_upgrade_script();
-            log::info!("tray: operator triggered Upgrade Daemon → {}", script.display());
-            match service::spawn_upgrade(&script) {
+            log::info!(
+                "tray: operator triggered Upgrade Daemon → {}",
+                script.display()
+            );
+            let (title, severity, body) = match service::spawn_upgrade(&script) {
                 Ok(mut child) => match child.wait() {
                     Ok(status) if status.success() => {
-                        log::info!("tray: Upgrade Daemon completed ok")
-                    }
-                    Ok(status) => {
-                        log::warn!(
-                            "tray: Upgrade Daemon exited with status {} — rollback should have left the daemon on the pre-upgrade commit",
-                            status.code().unwrap_or(-1)
+                        log::info!("tray: Upgrade Daemon completed ok");
+                        (
+                            "stavR — upgrade complete",
+                            Severity::Info,
+                            "Daemon now on the latest commit.".to_string(),
                         )
                     }
-                    Err(e) => log::warn!("tray: Upgrade Daemon wait failed: {e}"),
+                    Ok(status) => {
+                        let code = status.code().unwrap_or(-1);
+                        log::warn!(
+                            "tray: Upgrade Daemon exited with status {code}"
+                        );
+                        let detail = match code {
+                            2 => "Upgrade failed; rollback ok — daemon is back on the pre-upgrade commit.",
+                            3 => "Upgrade AND rollback failed — operator intervention required.",
+                            4 => "Could not capture pre-upgrade commit; nothing was attempted.",
+                            _ => "See operator log for details.",
+                        };
+                        (
+                            "stavR — upgrade failed",
+                            Severity::Crit,
+                            format!("exit {code} · {detail}"),
+                        )
+                    }
+                    Err(e) => {
+                        log::warn!("tray: Upgrade Daemon wait failed: {e}");
+                        (
+                            "stavR — upgrade failed",
+                            Severity::Crit,
+                            format!("wait failed: {e}"),
+                        )
+                    }
                 },
-                Err(e) => log::warn!("tray: Upgrade Daemon spawn failed: {e}"),
+                Err(e) => {
+                    log::warn!("tray: Upgrade Daemon spawn failed: {e}");
+                    (
+                        "stavR — upgrade failed",
+                        Severity::Crit,
+                        format!("spawn failed: {e}"),
+                    )
+                }
+            };
+            if let Some(ov) = app.try_state::<Arc<TrayOverride>>() {
+                ov.clear();
             }
+            show_action_toast(&app, severity, title, &body);
         })
         .expect("spawn operator-upgrade thread");
+}
+
+/// Fire a one-shot OS notification for an operator-triggered action.
+/// Bypasses the `EventRouter` (no mute, no per-kind debounce) — the
+/// operator clicked, the operator gets the outcome.
+fn show_action_toast<R: Runtime>(
+    app: &AppHandle<R>,
+    severity: Severity,
+    title: &str,
+    body: &str,
+) {
+    let spec = ToastSpec {
+        kind: "operator-action".to_string(),
+        title: title.to_string(),
+        body: body.to_string(),
+        severity,
+    };
+    TauriToastRenderer::new(app.clone()).render(&spec);
 }
 
 fn apply_mute<R: Runtime>(app: &AppHandle<R>, window: MuteWindow) {
@@ -457,25 +574,29 @@ impl StateSnapshot {
 }
 
 /// Push current state into the tray icon + tooltip. Called by the watcher
-/// thread spawned in `main.rs`.
+/// thread spawned in `main.rs`. `tooltip_override`, when `Some`, replaces
+/// the computed steady-state tooltip — used by long-running operator
+/// actions (e.g. "stavR · upgrading…") so the operator sees the action
+/// is in flight.
 pub fn apply_state<R: Runtime>(
     app: &AppHandle<R>,
     snapshot: &StateSnapshot,
-    _pulse_phase: bool,
+    tooltip_override: Option<&str>,
 ) -> tauri::Result<()> {
     // Pip color is the combined verdict (service status first, /healthz
-    // second). Pulse phase is no longer used — the OS-native service is
-    // the supervisor, so transient "restarting" pulse states aren't
-    // observable from the Governor.
+    // second).
     let variant = pip_icon(pip_color(snapshot.service, snapshot.state));
     let icon = load_icon(variant)?;
-    let tooltip = format_tooltip(
-        snapshot.state,
-        snapshot.service,
-        snapshot.uptime,
-        snapshot.since_last_probe,
-        snapshot.settle_seconds_in,
-    );
+    let tooltip = match tooltip_override {
+        Some(s) => s.to_string(),
+        None => format_tooltip(
+            snapshot.state,
+            snapshot.service,
+            snapshot.uptime,
+            snapshot.since_last_probe,
+            snapshot.settle_seconds_in,
+        ),
+    };
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         tray.set_icon(Some(icon))?;
         tray.set_tooltip(Some(&tooltip))?;
@@ -779,6 +900,44 @@ mod tests {
         let n = ids.len();
         ids.dedup();
         assert_eq!(ids.len(), n, "menu ids must be unique");
+    }
+
+    /// Phase 4 cluster A — TrayOverride is the shared banner that
+    /// long-running operator actions paint while in flight. set/clear
+    /// round-trip through `current()`.
+    #[test]
+    fn tray_override_round_trips_set_and_clear() {
+        let ov = TrayOverride::new();
+        assert!(ov.current().is_none());
+        ov.set("stavR · upgrading…");
+        assert_eq!(ov.current().as_deref(), Some("stavR · upgrading…"));
+        ov.clear();
+        assert!(ov.current().is_none());
+    }
+
+    /// `apply_state` must prefer the tooltip override over the computed
+    /// steady-state tooltip — that's the contract that lets the
+    /// "upgrading…" banner survive across tray-watcher ticks while the
+    /// pip color underneath stays accurate.
+    #[test]
+    fn apply_state_signature_threads_tooltip_override() {
+        // The function takes `Option<&str>`. We can't easily call it
+        // headless (no Tauri app), so anchor the signature by scanning
+        // source — keeps a future refactor from regressing the
+        // override-aware tooltip path.
+        let src = include_str!("tray.rs");
+        let prod = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("tray.rs non-test prelude");
+        assert!(
+            prod.contains("tooltip_override: Option<&str>"),
+            "apply_state must accept Option<&str> tooltip_override (Phase 4 cluster A)"
+        );
+        assert!(
+            prod.contains("match tooltip_override"),
+            "apply_state must short-circuit to the override when Some(_)"
+        );
     }
 
     /// Phase 1 + 4 invariants: the tray must NEVER reach into a

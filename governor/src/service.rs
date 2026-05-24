@@ -258,40 +258,73 @@ pub fn upgrade_script_name() -> (&'static str, &'static str) {
 /// the daemon is reset to the pre-upgrade commit and the service is
 /// restarted before the script exits non-zero.
 ///
-/// Spawn-and-detach: the script logs to stdout/stderr inherited from the
-/// caller (the Governor's log) and runs asynchronously from the tray
-/// click. The returned `Child` is consumed by the caller, which `wait()`s
-/// in its own thread so the tray can repaint a "upgrading…" tooltip in
-/// the meantime.
+/// **Elevation**: the script calls `Stop-Service` / `Start-Service` (or
+/// `systemctl --user` / `launchctl`). On Windows that requires admin, so
+/// this function spawns the script through `Start-Process -Verb RunAs`
+/// — same elevation pattern as `restart_windows`, one UAC prompt per
+/// click. Linux + macOS use the user-level `--user` / `gui/<uid>` paths
+/// already and need no elevation. Diagnostic output from the elevated
+/// PowerShell console is transient; the toast on completion is the
+/// operator's at-a-glance status, and the script can be re-run manually
+/// from an elevated terminal for full output.
+///
+/// Spawn-and-detach: the returned `Child` is consumed by the caller,
+/// which `wait()`s in its own thread so the tray can repaint a
+/// "upgrading…" tooltip while the script runs.
 pub fn spawn_upgrade(
     script: &std::path::Path,
 ) -> Result<std::process::Child, ServiceError> {
     if !script.exists() {
         return Err(ServiceError::UpgradeScriptMissing(script.to_path_buf()));
     }
-    let (_, launcher) = upgrade_script_name();
-    let child = if cfg!(windows) {
-        std::process::Command::new(launcher)
-            .args([
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                &script.to_string_lossy(),
-            ])
-            .spawn()
-    } else {
+    #[cfg(windows)]
+    {
+        return spawn_upgrade_windows(script);
+    }
+    #[cfg(not(windows))]
+    {
+        let (_, launcher) = upgrade_script_name();
         std::process::Command::new(launcher)
             .arg(script)
             .spawn()
-    };
-    child.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            ServiceError::NotFound(launcher)
-        } else {
-            ServiceError::Spawn(e)
-        }
-    })
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ServiceError::NotFound(launcher)
+                } else {
+                    ServiceError::Spawn(e)
+                }
+            })
+    }
+}
+
+#[cfg(windows)]
+fn spawn_upgrade_windows(script: &std::path::Path) -> Result<std::process::Child, ServiceError> {
+    // Same shape as restart_windows: an outer PowerShell drives
+    // `Start-Process -Verb RunAs` against an inner PowerShell that
+    // actually runs the .ps1. -Wait + -PassThru | ForEach-Object exits
+    // the outer with the inner's exit code, so `Child::wait().status`
+    // carries the script's verdict (0 / 2 / 3 / 4 per the script
+    // contract). Cancelling the UAC prompt surfaces as a non-zero exit.
+    //
+    // Single-quote-escape the script path for PowerShell: single quotes
+    // preserve everything literally; embedded single quotes double up.
+    let script_str = script.to_string_lossy();
+    let escaped = script_str.replace('\'', "''");
+    let inner_args =
+        format!("'-NoProfile','-ExecutionPolicy','Bypass','-File','{escaped}'");
+    let ps_cmd = format!(
+        "Start-Process -FilePath powershell -ArgumentList {inner_args} -Verb RunAs -Wait -PassThru | ForEach-Object {{ exit $_.ExitCode }}"
+    );
+    std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps_cmd])
+        .spawn()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ServiceError::NotFound("powershell")
+            } else {
+                ServiceError::Spawn(e)
+            }
+        })
 }
 
 /// Production probe — shells out to the per-platform tool.
@@ -694,6 +727,47 @@ mod tests {
             ServiceError::UpgradeScriptMissing(p) => assert_eq!(p, path),
             other => panic!("expected UpgradeScriptMissing, got {other:?}"),
         }
+    }
+
+    /// Phase 4 cluster A — the upgrade flow on Windows MUST elevate via
+    /// `Start-Process -Verb RunAs` because the script calls
+    /// Stop-Service / Start-Service, both of which require admin.
+    /// Anchor the elevation pattern in the source so a future refactor
+    /// can't silently drop the UAC prompt and re-introduce the
+    /// "upgrade always exits 3 on Windows" failure mode.
+    #[test]
+    fn spawn_upgrade_on_windows_uses_runas_elevation() {
+        let src = include_str!("service.rs");
+        let prod = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("service.rs should have a non-test prelude");
+        // Match the Windows-only fn explicitly so we don't confuse with
+        // restart_windows (which uses the same pattern by design).
+        assert!(
+            prod.contains("fn spawn_upgrade_windows"),
+            "spawn_upgrade_windows() must exist as the Windows elevation branch"
+        );
+        // The elevated invocation pattern.
+        let after = prod
+            .split("fn spawn_upgrade_windows")
+            .nth(1)
+            .expect("spawn_upgrade_windows source");
+        let body = after
+            .split("\n#[cfg(")
+            .next()
+            .unwrap_or(after)
+            .split("\nfn ")
+            .next()
+            .unwrap_or(after);
+        assert!(
+            body.contains("-Verb RunAs"),
+            "spawn_upgrade_windows must run the script via Start-Process -Verb RunAs"
+        );
+        assert!(
+            body.contains("Start-Process"),
+            "spawn_upgrade_windows must use Start-Process to elevate"
+        );
     }
 
     #[test]
