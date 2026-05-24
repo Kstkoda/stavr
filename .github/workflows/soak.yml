@@ -1,9 +1,28 @@
 name: soak
 
-# bom-oom-leak-hunt C2.5 — weekly long-mode soak. Runs on Linux runners
-# only (heap snapshots are large; Windows runners run the regular matrix).
-# Manual dispatch is enabled so an operator can re-run it on demand after
-# a suspected regression.
+# Bombardment Phase 2 — soak / endurance.
+#
+# Two suites run in the same job, both gated by STAVR_RUN_SOAK=long:
+#
+#   - tests/soak/leak-soak.test.ts (the original v0.6.x regression guard;
+#     serial event pump + dashboard fetch, asserts ceiling + retention)
+#   - tests/soak/multi-mode-soak.test.ts (Phase 2 — boots an in-process
+#     daemon, spawns bombardment/load-runner.mjs as a subprocess against
+#     it, runs the Phase 1 oracle layer continuously, asserts on RSS
+#     ceiling + slope, baseline return for broker.sessionCount +
+#     subscriptionCount, heap per-class diff, event-loop-lag percentiles)
+#
+# Multi-mode soak is the `full` verification window: 30 min of mixed
+# load with sample-window-sec=60s. STAVR_SOAK_MINUTES overrides the
+# duration when an operator wants longer/shorter (workflow_dispatch
+# input or env). Seeded via STAVR_HARDENING_SEED so any failure replays.
+#
+# Bombardment artifacts (heap snapshots, per-class diff, run-summary,
+# load-runner CSV) are uploaded on every run (not just failure) so
+# trend analysis across weeks is possible.
+#
+# Linux-only: heap snapshots are large; Windows runners run the regular
+# matrix via ci.yml.
 
 on:
   schedule:
@@ -11,14 +30,28 @@ on:
     # is most likely idle, so the snapshot dumps don't compete with anything.
     - cron: '0 4 * * 0'
   workflow_dispatch:
+    inputs:
+      seed:
+        description: 'STAVR_HARDENING_SEED (omit for a fresh seed; the run-summary records the resolved seed)'
+        required: false
+        type: string
+      minutes:
+        description: 'STAVR_SOAK_MINUTES override (multi-mode-soak duration; default 30)'
+        required: false
+        type: string
 
 jobs:
   soak:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 60 min cap — leak-soak (~15 min) + multi-mode-soak (~30 min default)
+    # + build + setup + slack. workflow_dispatch with --minutes overrides
+    # may need a manual bump if the operator goes beyond 45 min.
+    timeout-minutes: 60
     env:
       STAVR_RUN_SOAK: long
       STAVR_SOAK_RSS_CEILING_MB: '600'
+      STAVR_HARDENING_SEED: ${{ inputs.seed }}
+      STAVR_SOAK_MINUTES: ${{ inputs.minutes }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,12 +61,15 @@ jobs:
       - run: npm ci
       - name: Build
         run: npm run build
-      - name: Run soak
+      - name: Run soak (leak-soak + multi-mode-soak)
         run: npx vitest run tests/soak --reporter=verbose
-      - name: Upload heap snapshots on failure
-        if: failure()
+      - name: Upload bombardment artifacts (always)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: soak-heap-snapshots
-          path: tmp/heap-snapshots/*.heapsnapshot
+          name: soak-bombardment-artifacts
+          path: |
+            bombardment/artifacts/**
+            tmp/heap-snapshots/*.heapsnapshot
           retention-days: 14
+          if-no-files-found: ignore

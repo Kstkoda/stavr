@@ -1114,7 +1114,7 @@ const DIAGNOSTICS_JS = `
     if (copyBtn) {
       copyBtn.addEventListener('click', async function() {
         const port = (location.port || '7777');
-        const cmd = 'node tmp/perf/load-runner.mjs --port ' + port + ' --minutes 90 --modes mcp_request,sse_churn,mixed_rw,page_nav --rps-mcp 5 --sse-churn-per-sec 2 --rw-rps 3 --nav-rps 1';
+        const cmd = 'node bombardment/load-runner.mjs --port ' + port + ' --minutes 90 --modes mcp_request,sse_churn,mixed_rw,page_nav --rps-mcp 5 --sse-churn-per-sec 2 --rw-rps 3 --nav-rps 1';
         try {
           if (navigator.clipboard && navigator.clipboard.writeText) {
             await navigator.clipboard.writeText(cmd);

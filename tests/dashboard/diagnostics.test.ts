@@ -102,7 +102,7 @@ describe('Diagnostics page — operator-trust empty states (F65)', () => {
     // EXPLICIT-tier handoff: clipboard copy of the load harness command,
     // not a server-side trigger.
     expect(html).toContain('Copy load-runner command');
-    expect(html).toContain('tmp/perf/load-runner.mjs');
+    expect(html).toContain('bombardment/load-runner.mjs');
   });
 
   it('LIVE TRACE TAIL JS reads worker_id + bom_id from event payload, not top level', () => {

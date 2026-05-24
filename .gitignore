@@ -52,3 +52,6 @@ tmp/perf/peer-smoke-artifacts/
 # script renders the xml. Never commit them (see bin/winsw/README.md).
 bin/winsw/StavrDaemon.exe
 bin/winsw/StavrDaemon.xml
+
+# Bombardment rig preserve-on-failure dumps (heap snapshots, event logs)
+bombardment/artifacts/
