@@ -1,9 +1,16 @@
 //! Icon assets embedded at compile time.
 //!
-//! The Raido rune (ᚱ, U+16B1) in iron-palette rust orange (#fa9c4c) is the
-//! stavR brand mark per `CLAUDE.md` visual conventions. Each icon variant
-//! corresponds to a tray-pip color (`tray::pip_color`) and is swapped onto
-//! the tray icon at runtime by `tray::apply_state`.
+//! The Raido rune (ᚱ, U+16B1) is the stavR brand mark. Per the
+//! governor-polish BOM Cluster A (concept 6, "bare glyph") the tray icon
+//! is the rune alone — **no tile, no circle, no halo**. Status is
+//! conveyed by the colour of the rune itself: rust = brand/idle, green =
+//! healthy, amber = degraded, red = down, grey = stopped manually.
+//!
+//! This is an operator-approved exception to `CLAUDE.md` §5 ("status =
+//! halo ring; never use colour to signal status"). §5 governs topology
+//! nodes in the dashboard graph; a 16 px tray icon has no room for a
+//! halo, and Kenneth explicitly chose "no circle" for the tray. The
+//! canonical visual is `design-mockups/dock-icon-mockups.html`.
 //!
 //! Icons are generated from `icons/raido-base.svg` by
 //! `scripts/gen_icons.py`; that script is the source of truth and CI re-runs
@@ -16,14 +23,9 @@
 //! `DaemonState::Restarting`. The observe-only refactor (Phase 1)
 //! removed supervision; `apply_state` no longer animates. The previously
 //! dead variants and `IconVariant::for_state` / `state_pulses` helpers
-//! were dropped in Cluster E. **Open question for Kenneth:** should the
-//! cold-boot pulse return for the case `ServiceStatus::Unknown` (we
-//! haven't queried the OS service yet) and / or `DaemonState::Unknown`
-//! (no /healthz response yet)? The raido-orange{,-dim}-{16,32}.png assets
-//! are still on disk so a restoration is a small change: re-add the
-//! variants here + a `for_pip` helper that takes a `(PipColor,
-//! pulse_phase)` pair, and re-introduce the watcher's pulse-toggle. Flag
-//! this in the BOM follow-up — defaults to "no" until asked.
+//! were dropped in Cluster E; the dim-orange pulse PNGs were retired by
+//! Cluster A (concept-6 redraw). A future restoration would mean adding
+//! a new variant + helpers here AND a fresh pulse-frame asset.
 
 /// Magic bytes that begin every valid PNG file.
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
@@ -228,10 +230,12 @@ mod tests {
     }
 
     #[test]
-    fn halo_variants_differ_from_brand() {
-        // Sanity: each colored halo variant produces different bytes than the
-        // base brand glyph at the same size. If gen_icons.py ever regresses to
-        // producing the same image for every color, this test catches it.
+    fn status_variants_differ_from_brand() {
+        // Sanity: each status-colour variant produces different bytes than
+        // the brand glyph at the same size. Cluster A (concept 6, bare
+        // glyph) recolours the entire rune — green/amber/red/grey must
+        // all produce distinct PNGs. If gen_icons.py regresses to a
+        // single colour for everything, this test catches it.
         let brand = IconVariant::Brand.bytes_32();
         for &v in &[
             IconVariant::Healthy,
@@ -242,7 +246,7 @@ mod tests {
             assert_ne!(
                 v.bytes_32(),
                 brand,
-                "halo variant {v:?} bytes equal brand bytes — gen_icons.py likely regressed"
+                "status variant {v:?} bytes equal brand bytes — gen_icons.py likely regressed"
             );
         }
     }

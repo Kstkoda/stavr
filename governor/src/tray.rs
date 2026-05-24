@@ -554,8 +554,9 @@ fn pip_color_from_state_only(state: DaemonState) -> PipColor {
     }
 }
 
-/// Map a PipColor to the icon variant used by Tauri's tray renderer. The
-/// existing halo set covers all four colors directly; no new assets needed.
+/// Map a PipColor to the icon variant used by Tauri's tray renderer.
+/// Concept 6 (bare glyph): the entire rune is recoloured per status —
+/// see `governor/icons.rs` module doc + `design-mockups/dock-icon-mockups.html`.
 pub fn pip_icon(color: PipColor) -> IconVariant {
     match color {
         PipColor::Green => IconVariant::Healthy,
@@ -790,7 +791,7 @@ mod tests {
     // ---- Phase 2: pip color ---------------------------------------------
 
     /// Running service + Healthy daemon = green. The BOM Phase 2 green
-    /// case — must be the only path that lights the green halo.
+    /// case — must be the only path that paints the rune green.
     #[test]
     fn pip_color_green_only_when_service_running_and_daemon_healthy() {
         assert_eq!(
@@ -798,7 +799,7 @@ mod tests {
             PipColor::Green
         );
         // Stopped / NotInstalled NEVER produce green — only the running
-        // service can light the green halo. (Unknown deliberately defers
+        // service can paint the rune green. (Unknown deliberately defers
         // to the daemon state so a missing `sc`/`systemctl`/`launchctl`
         // still gives the operator a useful pip; that's covered
         // separately in `pip_color_unknown_service_defers_to_daemon_state`.)
@@ -897,7 +898,7 @@ mod tests {
     }
 
     #[test]
-    fn pip_icon_maps_colors_to_existing_halo_assets() {
+    fn pip_icon_maps_colors_to_status_glyph_variants() {
         assert_eq!(pip_icon(PipColor::Green), IconVariant::Healthy);
         assert_eq!(pip_icon(PipColor::Amber), IconVariant::Degraded);
         assert_eq!(pip_icon(PipColor::Red), IconVariant::Down);
