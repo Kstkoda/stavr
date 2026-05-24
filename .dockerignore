@@ -1,0 +1,42 @@
+# Keep the build context small + reproducible. Anything NOT listed in
+# COPY directives inside the Dockerfile is irrelevant to the image; this
+# file just makes the docker build faster + the resulting layer hashes
+# stable.
+
+# Build outputs — rebuilt inside the builder stage.
+dist/
+node_modules/
+
+# Git + editor state.
+.git/
+.gitignore
+.gitattributes
+.github/
+.vscode/
+.idea/
+
+# Test + bombardment artifacts (the rig builds these inside the
+# container at run time; they don't belong in the image).
+artifacts/
+bombardment/artifacts/
+tmp/
+coverage/
+
+# Operator state — never bake personal config into the image.
+.stavr/
+.env
+.env.*
+
+# Local docs / mockups / design references.
+design-mockups/
+docs/
+adr/
+proposed/
+prompts/
+
+# Logs.
+*.log
+
+# OS junk.
+.DS_Store
+Thumbs.db

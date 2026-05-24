@@ -1,0 +1,225 @@
+name: bombardment-docker
+
+# Bombardment Phase 3 — build the daemon container image and verify it.
+#
+# What this catches:
+#   - Phase 3a Definition of Done #1: the daemon ships as a Docker
+#     image, boots, /healthz passes, /status.version == package.json.
+#   - Cross-machine packaging drift (a dep that npm-installs on the
+#     dev host but doesn't compile inside the bookworm-slim base, the
+#     better-sqlite3 native-build trap, the SEA bundler's quirks, etc.)
+#   - Once Phase 3b lands: docker compose stands the federation
+#     topology up and each peer's /api/federation/peers lists the
+#     others. The mDNS-blocked subnet shape is exercised here.
+#   - Once Phase 3c lands: Pumba sidecar applies netem latency/loss
+#     and the federation oracles still pass at the configured budget.
+#
+# This workflow runs on every PR + push to main. It is *fast* on
+# cache hits (a few minutes) — the Dockerfile is structured so
+# `npm ci` is the slow layer and only re-runs when package*.json
+# change. Buildx + GHA cache keeps the runtime under 5 min in the
+# common case.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'bombardment/docker/**'
+      - 'bombardment/compose/**'
+      - 'bombardment/federation/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'src/**'
+      - '.github/workflows/bombardment-docker.yml'
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'bombardment/docker/**'
+      - 'bombardment/compose/**'
+      - 'bombardment/federation/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'src/**'
+      - '.github/workflows/bombardment-docker.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    name: Build image + /healthz + /status smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Read package version
+        id: pkg
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "[bombardment-docker] package.json version=${version}"
+
+      - name: Build stavr:ci image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: stavr:ci
+          cache-from: type=gha,scope=bombardment-docker
+          cache-to: type=gha,scope=bombardment-docker,mode=max
+
+      - name: Boot container + verify /healthz + /status
+        env:
+          EXPECTED_VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          # Run on a fresh volume so STAVR_HOME starts clean.
+          docker run -d --name stavr-smoke \
+            -p 17777:7777 \
+            -e STAVR_ALLOW_NON_LOCAL_WITHOUT_AUTH=1 \
+            -e STAVR_PEER_ID=ci-smoke \
+            -e STAVR_LOG_FORMAT=json \
+            stavr:ci
+
+          # Wait for the HEALTHCHECK to flip the container to "healthy",
+          # not just for /healthz to respond. This validates the docker-
+          # level health contract too.
+          for i in $(seq 1 60); do
+            status=$(docker inspect --format='{{.State.Health.Status}}' stavr-smoke 2>/dev/null || echo "unknown")
+            echo "[smoke] healthcheck status=${status} (attempt ${i})"
+            if [ "${status}" = "healthy" ]; then
+              break
+            fi
+            if [ "${status}" = "unhealthy" ]; then
+              echo "[smoke] container reported unhealthy; dumping logs"
+              docker logs stavr-smoke || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+          if [ "${status}" != "healthy" ]; then
+            echo "[smoke] healthcheck never went healthy"
+            docker logs stavr-smoke || true
+            exit 1
+          fi
+
+          # /healthz from the outside.
+          healthz=$(curl --fail --silent --show-error http://127.0.0.1:17777/healthz)
+          echo "[smoke] /healthz: ${healthz}"
+
+          # /status — version contract is the regression guard for
+          # recon defect #5 (the "0.1.0 forever" bug) applied to the
+          # container build path. If the bake-at-build-time pipeline
+          # ever regresses inside the Dockerfile this assertion catches it.
+          status_body=$(curl --fail --silent --show-error http://127.0.0.1:17777/status)
+          echo "[smoke] /status: ${status_body}"
+
+          version=$(echo "${status_body}" | node -e "let s=''; process.stdin.on('data',d=>s+=d); process.stdin.on('end',()=>{const j=JSON.parse(s); console.log(j.version);});")
+          echo "[smoke] reported version=${version}, expected=${EXPECTED_VERSION}"
+          if [ "${version}" != "${EXPECTED_VERSION}" ]; then
+            echo "[smoke] FAIL: /status.version mismatch"
+            docker logs stavr-smoke || true
+            exit 1
+          fi
+
+      - name: Tear down smoke container
+        if: always()
+        run: |
+          docker logs stavr-smoke || true
+          docker rm -f stavr-smoke || true
+
+  federation-compose:
+    name: docker compose federation topology + oracles
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: build-and-smoke
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '>=25.7'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build stavr:ci image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: stavr:ci
+          cache-from: type=gha,scope=bombardment-docker
+
+      - name: Stand up the compose federation
+        run: |
+          set -euo pipefail
+          cd bombardment/compose
+          docker compose up -d
+          docker compose ps
+
+      - name: Run federation oracles
+        run: |
+          set -euo pipefail
+          # Wait for all peer containers to report healthy via docker
+          # before letting the oracle runner hit them. Catches the
+          # "race the daemon's HTTP listener" class of flake.
+          node bombardment/federation/wait-for-healthy.mjs
+
+          # Run the federation oracle set against the compose topology.
+          # Each oracle is independent + asserts a single invariant;
+          # the runner aggregates pass/fail and exits non-zero on any
+          # violation.
+          node bombardment/federation/run-oracles.mjs
+
+      - name: Run Pumba chaos slice
+        # Phase 3c — netem latency injection at the LAN edge. Oracles
+        # must still pass under a modest impairment budget; harsher
+        # partition + kill is Phase 4.
+        run: |
+          set -euo pipefail
+          node bombardment/federation/run-pumba-slice.mjs
+
+      - name: Collect compose logs on failure
+        if: failure()
+        run: |
+          mkdir -p bombardment-artifacts
+          cd bombardment/compose
+          docker compose ps > ../../bombardment-artifacts/ps.txt || true
+          docker compose logs --no-color > ../../bombardment-artifacts/compose.log || true
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bombardment-docker-failure
+          path: bombardment-artifacts/
+          retention-days: 14
+
+      - name: Tear down compose
+        if: always()
+        run: |
+          cd bombardment/compose
+          docker compose down -v || true
