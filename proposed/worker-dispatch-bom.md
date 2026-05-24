@@ -1,0 +1,101 @@
+# BOM: stavR Worker-Dispatch — invoke + job + the federated job-flow
+
+**Owner:** CC
+**Sensitivity:** `careful`, escalating to `high` for Phase 3 (the worker-subsystem cutover) and Phase 4 (scope-aware enforcement — a security primitive). Operator approval gate between those phases.
+**Verification window:** `targeted` per phase; `full` for Phase 3 (cutover) and Phase 4 (enforcement).
+**Branch:** `feat/worker-dispatch`.
+**Base:** `main`.
+**Estimated scope:** 6 phases (0-5), 5 PRs, multi-week — a core-subsystem migration, not a polish run.
+
+---
+
+## Why this BOM exists
+
+stavR today wraps task delegation in a bespoke "worker" subsystem — `src/workers/*` (orchestrator, lifecycle, spawner-mcp, spawner-protocol, spawners-registry, cc, shell, watchdog, emitter, av-detector, script-writer, unity, tools, types, mcp-workers-config), ~6 `worker_*` MCP tools, a dashboard workers page, worker-retention observability. A 2026-05-24 operator 10-3-1 retired that model. The decision — Option B — drops the word "worker": stand up two primitives, `invoke` and `job`, and decouple the job from a small set of pluggable **executor bindings**. This BOM migrates the bespoke runtime onto invoke+job, then extends the job model across federation so a peer can dispatch a job under a grant (the federated job-flow, designed 2026-05-24).
+
+## Decisions already locked (do not re-litigate)
+
+- **Two primitives.** `invoke` — a synchronous call (one MCP tool call, or a short CLI exec): request → response. `job` — an asynchronous long-running execution with a lifecycle (dispatched → running → heartbeating → terminal → result), a budget, crash recovery, an audit trail. The job record is **owned by stavR**.
+- **The job is only the lifecycle / bookkeeping record** — decoupled from the **executor binding** (how the actual work is reached). One job model; a small, fixed set of binding kinds — keep it to ~4. If the bindings regrow into a sprawling "executor type" taxonomy, the bespoke worker runtime has been quietly rebuilt.
+  - **MCP-call** — to a genuine MCP server (e.g. a git MCP). A short one is just an `invoke`.
+  - **HTTP** — local Ollama, or a remote endpoint.
+  - **process-spawn** — a legacy CLI tool, or headless `claude -p` for a CC job.
+  - **CC-session-attach** — attach to an already-running Claude Code session (no spawn, no lifecycle ownership).
+- **CC binding specifics.** `claude mcp serve` is NOT the CC delegation primitive — it only exposes CC's own tools to an MCP client. A CC job is reached by `claude -p` (process-spawn) or session-attach. **Prefer attach over spawn** — spawn makes stavR own the CC lifecycle, the crash surface that took down the operator's PC (2026-05-20). From 2026-06-15, `claude -p` / Agent-SDK usage on subscription plans draws a separate monthly credit pool; the job budget must record which pool a CC job spends against.
+- **Remote = a binding pointed at a peer.** The job record stays local so stavR keeps authority + audit.
+- **The federated job-flow** (designed 2026-05-24 — inlined here so this BOM is self-contained):
+  - Capability-based: a requester holds a signed **grant** (a trust-scope — resource + features + budget + expiry), never a credential. Resource credentials never cross the wire.
+  - The resource owner's stavR is the **single policy enforcement point** — every job step checked against the grant, remaining budget, the no-go list, and the 4-tier action gate.
+  - Two-plane data model: control plane = JSON-RPC (job requests / status / result-metadata, signed); data plane = content-addressed blobs (SHA-256; `{hash, size, content-type, data-class}` references; fetched out-of-band).
+  - Script invariant: a script never executes on a device whose owner did not authorize it.
+
+## Reference reading (CC, at Phase 0)
+
+- `CLAUDE.md` — invariants.
+- The worker subsystem to be migrated: `src/workers/*` (incl. `types.ts`, `spawner-protocol.ts`, `lifecycle.ts`, `orchestrator.ts`), the `worker_*` MCP tool registrations, `src/dashboard/pages/workers.ts` + `src/dashboard/data/worker-{roster,counters}.ts`, `src/observability/worker-retention.ts`.
+- Persistence — how worker state is persisted today; the job record is a new persisted entity (Phase 1 designs its schema + a migration).
+- The federation peer plumbing (for Phase 5).
+- Prior worker BOMs for context: `proposed/v0_6_6-worker-status-fidelity-bom.md`, `proposed/v0_6_7-worker-spawn-hygiene-bom.md`, `proposed/v0_7-workers-console-bom.md`.
+
+## Scope / don't-touch
+
+This is a **core-subsystem migration** — it explicitly OPENS `src/workers/*`, the `worker_*` MCP tools, `src/persistence.ts` + `migrations/`, `src/types/`, and the dashboard workers page. The don't-touch defaults for those paths are lifted *for this BOM*. It must still be careful: persistence changes get a migration + a `full` verification window; security primitives (Phase 4) get an operator approval gate.
+
+## Phase 0 — Recon
+
+CC produces `proposed/worker-dispatch-recon.md` — the migration map: every `src/workers/*` module and its role, the full `worker_*` MCP tool surface and each tool's callers, how worker state is persisted today, what the dashboard workers page + data fetchers + retention observability consume, and the federation peer plumbing. It classifies each piece — becomes `invoke`, becomes `job`, becomes an executor binding, or is deleted. No code changes. STOP for operator review.
+
+## Phase 1 — The job record + `invoke` + the binding interface
+
+- Define the `job` lifecycle record (dispatched → running → heartbeating → terminal → result), the budget, crash recovery, the audit trail — stavR-owned, persisted (schema + migration).
+- Define `invoke` — the synchronous primitive.
+- Define the **executor binding interface** — the free axis. Phase 1 ships the model end-to-end with **one** binding (process-spawn) so the lifecycle is exercised whole.
+
+## Phase 2 — The remaining executor bindings
+
+MCP-call, HTTP, CC-session-attach. Prefer attach for CC. Each binding is small and conforms to the Phase 1 interface; resist a fifth kind.
+
+## Phase 3 — Migrate the bespoke worker subsystem (the cutover)
+
+Re-point the `worker_*` MCP tools onto invoke+job (rename where the 10-3-1 retired the "worker" terminology); migrate `src/workers/*` consumers; migrate the dashboard workers page + data fetchers + retention observability. Delete what the recon marked dead. `high` sensitivity — operator approval gate, `full` verification window, a migration for any persistence change.
+
+## Phase 4 — Scope-aware enforcement (hard prerequisite for federation)
+
+Today the enforcement chokepoint checks an actor's *tier* but not their *grant scope* (trust scopes only gate the `gatedAction` subset). Make the chokepoint **grant-scope-aware**: every job step from a federated principal is validated against the specific grant — resource, feature, budget, expiry — before it runs. This MUST land before Phase 5. `high` sensitivity — it is a security primitive; operator approval gate.
+
+## Phase 5 — The federated job-flow
+
+- A `job` dispatched by a peer: the binding is "remote → a peer"; the job record stays local.
+- The capability check at dispatch and per-step (Phase 4's scope-aware enforcement).
+- The two-plane data model: job inputs / outputs as content-addressed blobs, each carrying a data-class; control messages as signed JSON-RPC.
+- Durability: cross-node job messages use the outbox pattern — write-to-own-log-first, async delivery with retry, acks + offsets, idempotent at-least-once — so a job survives the link going down.
+
+## PR grouping
+
+- PR 1 — Phase 0 (recon doc).
+- PR 2 — Phases 1-2 (job model + bindings).
+- PR 3 — Phase 3 (the worker-subsystem cutover).
+- PR 4 — Phase 4 (scope-aware enforcement).
+- PR 5 — Phase 5 (federated job-flow).
+
+## Definition of done
+
+1. `invoke` + `job` exist; the job is a stavR-owned, persisted lifecycle record with budget + crash recovery + audit.
+2. Four executor bindings — MCP-call, HTTP, process-spawn, CC-session-attach — conform to one interface; no fifth.
+3. The bespoke `src/workers/*` runtime and the `worker_*` tool surface are migrated or deleted; the dashboard reflects invoke+job.
+4. The enforcement chokepoint is grant-scope-aware.
+5. A peer can dispatch a job under a grant; credentials never cross the wire; job inputs / outputs are content-addressed; cross-node job messages survive a link outage.
+
+## Run prompt for CC
+
+```
+Read CLAUDE.md, then proposed/worker-dispatch-bom.md. Execute Phase 0 (recon) ONLY — produce proposed/worker-dispatch-recon.md, the migration map for the src/workers/* subsystem and the worker_* tools onto the invoke + job model. No code changes. Then STOP for operator review.
+
+Sensitivity: careful. Skärp och hängslen: git status --short + git symbolic-ref HEAD before every mutating git op. Branch feat/worker-dispatch off main. One commit, DCO sign-off (-s).
+
+Go — Phase 0 only.
+```
+
+---
+
+## End of BOM
