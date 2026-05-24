@@ -1,12 +1,16 @@
-//! Supervisor loop — glues the state machine to the health probe and the
-//! restarter. The production loop runs every `POLL_INTERVAL` and:
-//!   1. Issues an HTTP GET to `/healthz`
-//!   2. Records the outcome on the state machine
-//!   3. If state is `Down` and not operator-held, triggers a restart
+//! Health monitor — probes `/healthz`, records the outcome on the state
+//! machine, stops there.
 //!
-//! Trait abstractions (`HealthProbe`, `Restarter`, `Clock`) make every step
-//! injectable for tests. `tick()` is the unit of behavior — `run_forever`
-//! just calls `tick()` in a thread loop.
+//! Phase 1 of the operator-companion refactor
+//! (`proposed/governor-observe-only-bom.md`): the OS-native StavrDaemon service
+//! (WinSW / systemd / launchd) is the sole supervisor for the daemon. The
+//! Governor only observes — it has no code path that can restart the daemon on
+//! its own. The legacy `Supervisor` / `restart.rs` / `port_check.rs` modules
+//! were deleted in the same commit as this rewrite.
+//!
+//! Module name stays `supervisor` for now so the import surface in `main.rs`
+//! and tests doesn't churn unnecessarily — the type that lives here is
+//! `HealthMonitor`, which is what callers should reach for.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,14 +18,12 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use thiserror::Error;
 
-use crate::restart::{RestartError, Restarter};
-use crate::state::{DaemonState, ProbeOutcome, StateChange, StateMachine, SETTLE_WINDOW};
+use crate::state::{ProbeOutcome, StateChange, StateMachine, SETTLE_WINDOW};
 
-/// How often the supervisor polls `/healthz` in production. Tests can drive
-/// `tick()` synchronously and ignore this.
+/// How often the monitor polls `/healthz` in production.
 pub const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
-/// Default health-probe target — Engine's HTTP server listens on 7777.
+/// Default health-probe target — daemon HTTP server listens on 7777.
 pub const DEFAULT_HEALTH_URL: &str = "http://127.0.0.1:7777/healthz";
 
 #[derive(Debug, Error)]
@@ -30,14 +32,14 @@ pub enum ProbeError {
     Http(String),
 }
 
-/// Health-check abstraction. Production is a thin ureq GET; tests use
+/// Health-check abstraction. Production is a thin `ureq` GET; tests use
 /// `MockProbe`.
 pub trait HealthProbe: Send + Sync {
     fn probe(&self) -> ProbeOutcome;
 }
 
 /// Production probe via `ureq`. Short timeouts so the loop never blocks
-/// longer than POLL_INTERVAL.
+/// longer than `POLL_INTERVAL`.
 pub struct HttpProbe {
     pub url: String,
 }
@@ -67,7 +69,6 @@ impl HealthProbe for HttpProbe {
 /// Test double — returns a programmable sequence of outcomes.
 pub struct MockProbe {
     sequence: Mutex<std::collections::VecDeque<ProbeOutcome>>,
-    /// Outcome to repeat once the queued sequence is exhausted.
     fallback: ProbeOutcome,
 }
 
@@ -103,7 +104,7 @@ impl Clock for SystemClock {
     }
 }
 
-/// Fixed clock for tests — advance manually via `set`.
+/// Fixed clock for tests — advance manually via `set` or `advance`.
 pub struct FakeClock {
     inner: Mutex<Instant>,
 }
@@ -128,40 +129,29 @@ impl Clock for FakeClock {
     }
 }
 
-/// Result of one supervisor `tick`. Useful as a return value so tests can
-/// assert on what happened that iteration without scraping logs.
+/// Result of one monitor tick. Restart fields are gone; only the state
+/// transition survives.
 #[derive(Debug, Default, PartialEq)]
 pub struct TickResult {
     pub state_change: Option<StateChange>,
-    pub restart_attempted: bool,
-    pub restart_result: Option<Result<(), String>>,
 }
 
-/// The Governor's supervision orchestrator. Owns the state machine and the
-/// injected probe/restarter/clock. Tray and Tauri concerns live elsewhere.
-pub struct Supervisor {
+/// Health monitor — probes the daemon, records outcomes on the state
+/// machine, never restarts. Lives off the main thread; the OS service is
+/// the only thing that can bounce the daemon.
+pub struct HealthMonitor {
     state: Arc<Mutex<StateMachine>>,
     probe: Arc<dyn HealthProbe>,
-    restarter: Arc<dyn Restarter>,
     clock: Arc<dyn Clock>,
 }
 
-impl Supervisor {
-    pub fn new(
-        probe: Arc<dyn HealthProbe>,
-        restarter: Arc<dyn Restarter>,
-        clock: Arc<dyn Clock>,
-    ) -> Self {
-        Self::with_settle_window(probe, restarter, clock, SETTLE_WINDOW)
+impl HealthMonitor {
+    pub fn new(probe: Arc<dyn HealthProbe>, clock: Arc<dyn Clock>) -> Self {
+        Self::with_settle_window(probe, clock, SETTLE_WINDOW)
     }
 
-    /// Construct a Supervisor with a custom settle window. Tests use a
-    /// 0-duration window so the FakeClock-frozen timeline behaves the same
-    /// as it did pre-P3 (no settle deferment). Production wires through
-    /// `new()` which picks the default 60-second window.
     pub fn with_settle_window(
         probe: Arc<dyn HealthProbe>,
-        restarter: Arc<dyn Restarter>,
         clock: Arc<dyn Clock>,
         settle_window: Duration,
     ) -> Self {
@@ -171,110 +161,41 @@ impl Supervisor {
                 StateMachine::new(start).with_settle_window(settle_window),
             )),
             probe,
-            restarter,
             clock,
         }
     }
 
-    /// Shared handle to the state machine. The tray module (P3) reads from
-    /// this to drive icon swapping; the operator-action paths (P5) write to
-    /// it via `pause` / `reset`.
+    /// Shared handle to the state machine. The tray watcher reads from this
+    /// to drive icon swapping and tooltip rendering.
     pub fn state(&self) -> Arc<Mutex<StateMachine>> {
         self.state.clone()
     }
 
-    /// One iteration of the supervision loop. Returns what happened.
+    /// One iteration of the monitor loop. Probes, records, returns what
+    /// happened. No restart, no operator-action wiring.
     pub fn tick(&self) -> TickResult {
         let outcome = self.probe.probe();
         let now = self.clock.now();
-
-        let mut result = TickResult::default();
-        {
+        let change = {
             let mut sm = self.state.lock();
-            result.state_change = sm.record_probe(outcome, now);
-        }
-
-        // Decide whether to restart. We do this OUTSIDE the lock-on-state
-        // because restarter.restart() can block on subprocess I/O and we
-        // don't want to hold the state lock across that.
-        let should_restart = {
-            let sm = self.state.lock();
-            sm.state() == DaemonState::Down && !sm.state().is_operator_held()
+            sm.record_probe(outcome, now)
         };
-
-        if should_restart {
-            // start_restart transitions to Restarting (or GiveUp if too many
-            // attempts in window). If GiveUp, we don't actually invoke the
-            // restarter.
-            let transition = {
-                let mut sm = self.state.lock();
-                sm.start_restart(now)
-            };
-            if let Some(change) = transition {
-                // Replace the probe-derived change with the restart-trigger one;
-                // tests usually care about the latter when it occurs.
-                result.state_change = Some(change.clone());
-                if change.to == DaemonState::Restarting {
-                    result.restart_attempted = true;
-                    let r = self
-                        .restarter
-                        .restart()
-                        .map_err(|e: RestartError| e.to_string());
-                    let mut sm = self.state.lock();
-                    sm.advance_backoff();
-                    result.restart_result = Some(r);
-                }
-            }
+        TickResult {
+            state_change: change,
         }
-
-        result
-    }
-
-    /// Operator-triggered recovery: clear the GiveUp counter, reset the
-    /// settle window (so the daemon's next cold-boot doesn't immediately
-    /// trip Down), and invoke the restarter once. Used by the tray's
-    /// "Reset & Restart" menu item (v0.6.5 PR #34 amendment P3).
-    ///
-    /// Returns the result of the underlying restart call so the menu
-    /// handler can log success/failure.
-    pub fn force_restart(&self) -> Result<(), String> {
-        let now = self.clock.now();
-        {
-            let mut sm = self.state.lock();
-            sm.reset(now);
-            sm.start_restart(now);
-        }
-        self.restarter
-            .restart()
-            .map_err(|e: RestartError| e.to_string())
-    }
-
-    /// Operator-triggered pause — equivalent to the tray "Pause supervision"
-    /// menu item. Transitions to `StoppedManually`, suppressing further
-    /// auto-restarts until the operator resets.
-    pub fn pause(&self) {
-        let now = self.clock.now();
-        let mut sm = self.state.lock();
-        sm.pause(now);
     }
 
     /// Production loop — never returns. Spawn from a background thread.
     pub fn run_forever(&self) {
-        log::info!("supervisor: starting poll loop ({:?})", POLL_INTERVAL);
+        log::info!("health monitor: starting poll loop ({:?})", POLL_INTERVAL);
         loop {
             let result = self.tick();
             if let Some(change) = &result.state_change {
                 log::info!(
-                    "supervisor: {:?} → {:?}",
+                    "health monitor: {:?} → {:?}",
                     change.from,
                     change.to
                 );
-            }
-            if let Some(r) = &result.restart_result {
-                match r {
-                    Ok(_) => log::info!("supervisor: pm2 restart returned ok"),
-                    Err(e) => log::warn!("supervisor: pm2 restart failed: {e}"),
-                }
             }
             std::thread::sleep(POLL_INTERVAL);
         }
@@ -284,50 +205,34 @@ impl Supervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::restart::MockRestarter;
     use crate::state::DaemonState;
-    use std::time::Instant;
 
-    fn build(
-        probe: MockProbe,
-        restarter: MockRestarter,
-        clock: FakeClock,
-    ) -> (Supervisor, Arc<MockRestarter>) {
-        // Tests freeze the FakeClock, so the settle window (P3) would
-        // suppress every Down transition if left at the production
-        // default. Use a 0-duration settle window in tests — same effect
-        // as the pre-P3 behavior. Tests that specifically exercise the
-        // settle window construct their own Supervisor with
-        // `with_settle_window`.
-        let r = Arc::new(restarter);
-        let sup = Supervisor::with_settle_window(
+    fn build(probe: MockProbe, clock: FakeClock) -> HealthMonitor {
+        // Tests freeze the FakeClock, so a 60-second production settle
+        // window would suppress every Down transition. Use a 0-duration
+        // window for the same shape as the pre-settle behavior; the
+        // dedicated settle-window test below opts back into a real window.
+        HealthMonitor::with_settle_window(
             Arc::new(probe),
-            r.clone() as Arc<dyn Restarter>,
             Arc::new(clock) as Arc<dyn Clock>,
             Duration::from_secs(0),
-        );
-        (sup, r)
+        )
     }
 
     #[test]
-    fn tick_with_ok_probe_results_in_healthy() {
+    fn ok_probe_transitions_state_to_healthy() {
         let now = Instant::now();
-        let probe = MockProbe::always(ProbeOutcome::Ok);
-        let restarter = MockRestarter::new(true);
-        let clock = FakeClock::new(now);
-        let (sup, r) = build(probe, restarter, clock);
-
-        let res = sup.tick();
-        assert_eq!(
-            res.state_change.map(|c| c.to),
-            Some(DaemonState::Healthy)
-        );
-        assert!(!res.restart_attempted);
-        assert_eq!(r.call_count(), 0);
+        let mon = build(MockProbe::always(ProbeOutcome::Ok), FakeClock::new(now));
+        let res = mon.tick();
+        assert_eq!(res.state_change.map(|c| c.to), Some(DaemonState::Healthy));
+        assert_eq!(mon.state().lock().state(), DaemonState::Healthy);
     }
 
     #[test]
-    fn three_unreachable_ticks_trigger_restart() {
+    fn three_unreachable_probes_advance_to_down_without_restarting() {
+        // The state machine still moves Healthy → Degraded → Down on a
+        // streak; what the monitor must *not* do is trigger a restart in
+        // response — the WinSW / systemd / launchd service owns recovery.
         let now = Instant::now();
         let probe = MockProbe::new(
             vec![
@@ -338,204 +243,54 @@ mod tests {
             ],
             ProbeOutcome::Unreachable,
         );
-        let restarter = MockRestarter::new(true);
-        let clock = FakeClock::new(now);
-        let (sup, r) = build(probe, restarter, clock);
-
-        sup.tick();
-        assert_eq!(r.call_count(), 0);
-        sup.tick();
-        sup.tick();
-        // After the third unreachable tick the SM is Down and the tick
-        // logic invokes the restarter in the same iteration.
-        sup.tick();
-        assert_eq!(r.call_count(), 1);
-    }
-
-    #[test]
-    fn restart_attempts_advance_backoff() {
-        let now = Instant::now();
-        // Always unreachable
-        let probe = MockProbe::always(ProbeOutcome::Unreachable);
-        let restarter = MockRestarter::new(false); // restart subprocess fails
-        let clock = FakeClock::new(now);
-        let (sup, r) = build(probe, restarter, clock);
-
-        // First three ticks accumulate failures and trigger first restart
-        sup.tick();
-        sup.tick();
-        sup.tick();
-        assert_eq!(r.call_count(), 1);
-        let backoff_after_one = sup.state().lock().next_backoff();
-        assert_eq!(backoff_after_one, Duration::from_secs(2));
-
-        sup.tick();
-        assert_eq!(r.call_count(), 2);
-        let backoff_after_two = sup.state().lock().next_backoff();
-        assert_eq!(backoff_after_two, Duration::from_secs(4));
-    }
-
-    #[test]
-    fn giveup_after_five_attempts_in_window() {
-        let now = Instant::now();
-        let probe = MockProbe::always(ProbeOutcome::Unreachable);
-        let restarter = MockRestarter::new(false);
-        let clock = FakeClock::new(now);
-        let (sup, r) = build(probe, restarter, clock);
-
-        // Force 5 restart attempts. Each tick that finds Down does one.
-        // The first 3 ticks push the SM to Down; subsequent ticks restart.
-        for _ in 0..3 {
-            sup.tick();
-        }
-        // 1 attempt made; do 4 more
+        let mon = build(probe, FakeClock::new(now));
         for _ in 0..4 {
-            sup.tick();
+            mon.tick();
         }
-        // 5 attempts so far. The next tick that would have been the 6th
-        // restart transitions to GiveUp instead.
-        sup.tick();
-        let final_state = sup.state().lock().state();
-        assert_eq!(final_state, DaemonState::GiveUp);
-        assert_eq!(r.call_count(), 5);
+        assert_eq!(mon.state().lock().state(), DaemonState::Down);
     }
 
     #[test]
-    fn paused_state_suppresses_restart() {
+    fn settle_window_defers_down_during_cold_boot() {
+        // Sanity: the settle-window plumbing still applies. With a non-zero
+        // settle window and a frozen clock, Unreachable probes can't promote
+        // to Down because no wall-clock time has elapsed since "boot".
         let now = Instant::now();
-        let probe = MockProbe::always(ProbeOutcome::Unreachable);
-        let restarter = MockRestarter::new(true);
-        let clock = FakeClock::new(now);
-        let (sup, r) = build(probe, restarter, clock);
-
-        {
-            let sm = sup.state();
-            sm.lock().pause(now);
-        }
-        for _ in 0..5 {
-            sup.tick();
-        }
-        assert_eq!(
-            sup.state().lock().state(),
-            DaemonState::StoppedManually
+        let mon = HealthMonitor::with_settle_window(
+            Arc::new(MockProbe::always(ProbeOutcome::Unreachable)),
+            Arc::new(FakeClock::new(now)) as Arc<dyn Clock>,
+            Duration::from_secs(60),
         );
-        assert_eq!(r.call_count(), 0);
+        for _ in 0..10 {
+            mon.tick();
+        }
+        assert_ne!(mon.state().lock().state(), DaemonState::Down);
     }
 
+    /// Hard invariant: this crate must not link any restart capability into
+    /// the `supervisor` module. Anchor checks for the deleted call sites so
+    /// a future refactor can't quietly bring auto-restart back.
     #[test]
-    fn reset_clears_giveup_and_allows_restart_again() {
-        let now = Instant::now();
-        let probe = MockProbe::always(ProbeOutcome::Unreachable);
-        let restarter = MockRestarter::new(false);
-        let clock = FakeClock::new(now);
-        let (sup, r) = build(probe, restarter, clock);
-
-        for _ in 0..8 {
-            sup.tick();
+    fn no_restart_surface_in_supervisor_module() {
+        let src = include_str!("supervisor.rs");
+        let prod = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("supervisor.rs should have a non-test prelude");
+        for forbidden in [
+            "Restarter",
+            "MockRestarter",
+            "Pm2Restarter",
+            "SidecarRestarter",
+            "OrphanAwareRestarter",
+            "force_restart",
+            "start_restart",
+            "fn pause",
+        ] {
+            assert!(
+                !prod.contains(forbidden),
+                "supervisor.rs prod code must not mention {forbidden:?} after Phase 1 desupervision"
+            );
         }
-        assert_eq!(sup.state().lock().state(), DaemonState::GiveUp);
-        let attempts_before = r.call_count();
-
-        {
-            let sm = sup.state();
-            sm.lock().reset(now);
-        }
-        // After reset, the next batch of unreachable ticks should attempt
-        // a new restart.
-        for _ in 0..4 {
-            sup.tick();
-        }
-        assert!(
-            r.call_count() > attempts_before,
-            "reset should allow new restart attempts; before={}, after={}",
-            attempts_before,
-            r.call_count()
-        );
-    }
-
-    // ---- P3: force_restart (operator "Reset & Restart" menu) -------------
-
-    /// From GiveUp, the operator clicks Reset & Restart. The supervisor
-    /// clears the counter AND invokes the restarter once. State must come
-    /// out of GiveUp (Reset → Unknown → Restarting in one shot).
-    #[test]
-    fn force_restart_clears_giveup_and_invokes_restarter() {
-        let now = Instant::now();
-        let probe = MockProbe::always(ProbeOutcome::Unreachable);
-        let restarter = MockRestarter::new(true);
-        let clock = FakeClock::new(now);
-        let (sup, r) = build(probe, restarter, clock);
-
-        // Drive supervisor into GiveUp
-        for _ in 0..8 {
-            sup.tick();
-        }
-        assert_eq!(sup.state().lock().state(), DaemonState::GiveUp);
-        let attempts_before = r.call_count();
-
-        // Operator force-restart
-        sup.force_restart().expect("force restart should succeed when restarter ok");
-
-        // GiveUp cleared
-        let state_now = sup.state().lock().state();
-        assert!(
-            state_now == DaemonState::Restarting,
-            "expected Restarting after force_restart, got {state_now:?}"
-        );
-        assert_eq!(sup.state().lock().restart_attempts_in_window(), 1);
-        assert_eq!(r.call_count(), attempts_before + 1);
-    }
-
-    /// force_restart from a healthy state still works — operator may want
-    /// to bounce the daemon. The state machine transitions to Restarting
-    /// regardless of where it was; settle window resets so a slow cold-boot
-    /// doesn't immediately flap.
-    #[test]
-    fn force_restart_from_healthy_transitions_to_restarting() {
-        let now = Instant::now();
-        let probe = MockProbe::always(ProbeOutcome::Ok);
-        let restarter = MockRestarter::new(true);
-        let clock = FakeClock::new(now);
-        let (sup, _) = build(probe, restarter, clock);
-
-        sup.tick(); // brings sup to Healthy
-        assert_eq!(sup.state().lock().state(), DaemonState::Healthy);
-
-        sup.force_restart().unwrap();
-        assert_eq!(sup.state().lock().state(), DaemonState::Restarting);
-    }
-
-    /// Restarter error path: force_restart returns Err with the underlying
-    /// reason so the operator-facing handler can surface it.
-    #[test]
-    fn force_restart_surfaces_restarter_failure() {
-        let now = Instant::now();
-        let probe = MockProbe::always(ProbeOutcome::Ok);
-        let restarter = MockRestarter::new(false);
-        let clock = FakeClock::new(now);
-        let (sup, _) = build(probe, restarter, clock);
-
-        let err = sup.force_restart().unwrap_err();
-        assert!(err.contains("status 1"), "got error: {err}");
-    }
-
-    /// `pause()` on the supervisor handle is the tray "Pause supervision"
-    /// menu wiring. Transitions to StoppedManually + suppresses subsequent
-    /// auto-restarts (existing behavior, just confirms the API surface).
-    #[test]
-    fn pause_via_supervisor_handle_transitions_to_stopped_manually() {
-        let now = Instant::now();
-        let probe = MockProbe::always(ProbeOutcome::Unreachable);
-        let restarter = MockRestarter::new(true);
-        let clock = FakeClock::new(now);
-        let (sup, r) = build(probe, restarter, clock);
-
-        sup.pause();
-        assert_eq!(sup.state().lock().state(), DaemonState::StoppedManually);
-        // Subsequent ticks must not restart.
-        for _ in 0..5 {
-            sup.tick();
-        }
-        assert_eq!(r.call_count(), 0);
     }
 }

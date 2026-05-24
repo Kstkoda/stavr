@@ -2,7 +2,7 @@
 name = "stavr-governor"
 version = "0.6.5"
 edition = "2021"
-description = "stavR Governor — Tauri 2 tray companion that supervises the stavR daemon (auto-restart + OS-level status surface)."
+description = "stavR Governor — Tauri 2 tray companion for the stavR daemon (observation, approval notifications, operator-triggered control)."
 authors = ["stavR contributors"]
 license = "MIT"
 rust-version = "1.77"
