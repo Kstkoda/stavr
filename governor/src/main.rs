@@ -88,6 +88,13 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        // Phase 5: login auto-start. On installed apps the OS surface is
+        // Windows Startup folder / macOS LaunchAgent / XDG autostart.
+        // The tray "Start at login" toggle is the operator's control.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(move |app| {
             app.manage(monitor.clone());
             let _tray = tray::build(app.handle())?;

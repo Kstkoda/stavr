@@ -16,10 +16,11 @@ use std::time::{Duration, Instant};
 
 use tauri::{
     image::Image,
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{TrayIcon, TrayIconBuilder},
     AppHandle, Manager, Runtime,
 };
+use tauri_plugin_autostart::ManagerExt;
 
 use stavr_governor::actions::{self, MuteWindow};
 use stavr_governor::event_router::EventRouter;
@@ -45,6 +46,8 @@ pub const MENU_ID_UNMUTE: &str = "unmute";
 /// Phase 4 — operator-triggered control surface.
 pub const MENU_ID_RESTART_DAEMON: &str = "restart_daemon";
 pub const MENU_ID_UPGRADE_DAEMON: &str = "upgrade_daemon";
+/// Phase 5 — login auto-start toggle.
+pub const MENU_ID_AUTOSTART: &str = "autostart";
 
 /// Build the Governor tray icon and attach it to the running Tauri app.
 ///
@@ -106,7 +109,33 @@ pub fn handle_menu_event<R: Runtime>(
         }
         MENU_ID_RESTART_DAEMON => trigger_restart(app),
         MENU_ID_UPGRADE_DAEMON => trigger_upgrade(app),
+        MENU_ID_AUTOSTART => toggle_autostart(app),
         _ => {}
+    }
+}
+
+/// Operator toggled "Start at login". Flips the autostart plugin state.
+/// The check-mark on the tray item is initialised from
+/// `app.autolaunch().is_enabled()` at startup; on subsequent toggles the
+/// visible check mark stays at its prior state until the Governor is
+/// relaunched. That's a small UX wart we tolerate because Tauri 2's
+/// `TrayIcon` does not expose `.menu()` for runtime mutation of an
+/// already-attached menu — wiring a managed `Menu<R>` handle would
+/// add a lot of plumbing for a minor cosmetic. The functional toggle is
+/// what matters; the operator can confirm the new state by reopening
+/// the menu after the next Governor launch, or by checking the OS's
+/// autostart surface (Startup folder / LaunchAgents / XDG).
+fn toggle_autostart<R: Runtime>(app: &AppHandle<R>) {
+    let manager = app.autolaunch();
+    let currently = manager.is_enabled().unwrap_or(false);
+    let result = if currently {
+        manager.disable()
+    } else {
+        manager.enable()
+    };
+    match result {
+        Ok(()) => log::info!("tray: autostart toggled → {}", !currently),
+        Err(e) => log::warn!("tray: autostart toggle failed (was {currently}): {e}"),
     }
 }
 
@@ -235,6 +264,19 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     )?;
     let unmute = MenuItem::with_id(app, MENU_ID_UNMUTE, "Unmute", true, None::<&str>)?;
     let sep3 = PredefinedMenuItem::separator(app)?;
+    // Phase 5: "Start at login" toggle. Initial check state reflects
+    // what the autostart plugin reports — a fresh install on Windows
+    // typically returns false; the installer enables it post-bundling.
+    let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
+    let autostart = CheckMenuItem::with_id(
+        app,
+        MENU_ID_AUTOSTART,
+        "Start at login",
+        true,
+        autostart_on,
+        None::<&str>,
+    )?;
+    let sep4 = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, MENU_ID_QUIT, "Quit Governor", true, None::<&str>)?;
     Menu::with_items(
         app,
@@ -250,6 +292,8 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &mute_1d,
             &unmute,
             &sep3,
+            &autostart,
+            &sep4,
             &quit,
         ],
     )
@@ -267,6 +311,7 @@ pub fn menu_ids() -> &'static [&'static str] {
         MENU_ID_MUTE_1H,
         MENU_ID_MUTE_1D,
         MENU_ID_UNMUTE,
+        MENU_ID_AUTOSTART,
         MENU_ID_QUIT,
     ]
 }
@@ -701,13 +746,12 @@ mod tests {
         assert_eq!(pip_icon(PipColor::Grey), IconVariant::StoppedManually);
     }
 
-    /// Menu contract after Phase 4: 9 ids. The Phase 1 surface
-    /// (observation + notification controls) plus the two operator-action
-    /// items Restart Daemon and Upgrade Daemon.
+    /// Menu contract after Phase 5: 10 ids. Phase-4 surface plus the
+    /// login-autostart toggle.
     #[test]
-    fn menu_ids_expose_phase_four_surface() {
+    fn menu_ids_expose_phase_five_surface() {
         let ids = menu_ids();
-        assert_eq!(ids.len(), 9, "expected 9 menu ids after Phase 4, got {ids:?}");
+        assert_eq!(ids.len(), 10, "expected 10 menu ids after Phase 5, got {ids:?}");
         for required in [
             MENU_ID_OPEN_DASHBOARD,
             MENU_ID_VIEW_LOGS,
@@ -717,14 +761,15 @@ mod tests {
             MENU_ID_MUTE_1H,
             MENU_ID_MUTE_1D,
             MENU_ID_UNMUTE,
+            MENU_ID_AUTOSTART,
             MENU_ID_QUIT,
         ] {
             assert!(ids.contains(&required), "menu_ids missing {required}");
         }
-        // Wire-level strings are stable across refactors — main.rs and
-        // future scripting can hang event handlers off them.
+        // Wire-level strings are stable across refactors.
         assert_eq!(MENU_ID_RESTART_DAEMON, "restart_daemon");
         assert_eq!(MENU_ID_UPGRADE_DAEMON, "upgrade_daemon");
+        assert_eq!(MENU_ID_AUTOSTART, "autostart");
     }
 
     #[test]
