@@ -49,12 +49,11 @@ fn ensure_sidecar_placeholder() {
     let file = dir.join(format!("stavr-daemon-{target_triple}{ext}"));
     if !file.exists() {
         // 1-byte placeholder so the file system entry exists; CI replaces
-        // this with the real SEA (~120 MB) before bundling. The content
-        // is intentionally minimal — anyone running `cargo run` from the
-        // repo is in dev mode and will hit the `Pm2Restarter` fallback
-        // via main.rs's `resolve_sidecar_path` (which only returns Some
-        // when the resolved binary actually exists and is non-empty
-        // enough to be plausibly the daemon — see lib::restart docs).
+        // this with the real SEA (~120 MB) before bundling. The Governor
+        // no longer spawns the daemon (Phase 1 desupervision); the
+        // externalBin entry is kept for bundling-pipeline compatibility
+        // pending a follow-up that reconciles the two deployment models
+        // (OS-service runs `dist/cli.js` vs SEA sidecar).
         fs::write(&file, b"#").expect("write sidecar placeholder");
         #[cfg(unix)]
         {
