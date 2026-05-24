@@ -1,0 +1,51 @@
+# Bombardment Phase 4 — destructive chaos overlay.
+#
+# Apply on top of the base compose file (and optionally on top of the
+# Phase 3c pumba.yml netem overlay) to get fault-injection sidecars:
+#
+#   docker compose -f docker-compose.yml -f chaos.yml up -d
+#
+# What's in here (Phase 4a):
+#   pumba-kill-peer-a — one-shot Pumba `kill --signal SIGKILL` against
+#                       stavr-peer-a. Runs once and exits. The Docker
+#                       `restart: unless-stopped` policy on peer-a is
+#                       the supervisor that brings the container back.
+#
+# What's NOT in here:
+#   The runner script (bombardment/chaos/run-kill-slice.mjs) drives
+#   `docker kill` directly because the kill-recovery oracle needs
+#   deterministic timing — seed the projection, capture the SSE
+#   baseline, THEN kill, THEN wait for restart, THEN assert. The
+#   Pumba sidecar in this overlay is the operator-callable equivalent
+#   for the "show me chaos" demo path; it's not what the CI runner
+#   uses.
+#
+# Phase 4b's netchaos.yml extends this same pattern with heavier netem
+# impairment + a one-sided partition; Phase 4c's projection-corruption
+# work uses only the in-container helpers (no additional sidecars).
+
+services:
+  pumba-kill-peer-a:
+    image: gaiaadm/pumba:0.11.7
+    container_name: stavr-pumba-kill-peer-a
+    # Same Pumba socket mount the netem overlay uses — Pumba needs the
+    # Docker socket to locate the target container and signal it.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # `pumba kill` defaults to a 10s interval between kills; --limit 1
+    # bounds it to a single SIGKILL and Pumba exits, which combined with
+    # restart:"no" on this sidecar makes the whole action a one-shot.
+    command:
+      - "--log-level=info"
+      - "kill"
+      - "--signal=SIGKILL"
+      - "--limit=1"
+      - "stavr-peer-a"
+    # Don't start until the target is up; otherwise Pumba's first
+    # filter pass finds no match and exits with limit=0.
+    depends_on:
+      - peer-a
+    restart: "no"
+    labels:
+      com.stavr.role: "pumba"
+      com.stavr.impairment: "kill"

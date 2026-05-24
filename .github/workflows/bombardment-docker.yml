@@ -202,6 +202,17 @@ jobs:
           set -euo pipefail
           node bombardment/federation/run-pumba-slice.mjs
 
+      - name: Run kill-recovery chaos slice
+        # Phase 4a — SIGKILL peer-a, verify (a) the restart-policy
+        # brings it back, (b) the in-flight decision is recovered by
+        # startupDecisionSweep, (c) SSE clients can reconnect with
+        # since_id and see the late-response in the replay.
+        # Re-uses the existing compose topology — no new image build,
+        # no new container churn.
+        run: |
+          set -euo pipefail
+          node bombardment/chaos/run-kill-slice.mjs
+
       - name: Collect compose logs on failure
         if: failure()
         run: |
