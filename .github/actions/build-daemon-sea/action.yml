@@ -153,8 +153,10 @@ runs:
           "https://nodejs.org/dist/${NODE_RELEASE}/${ARCHIVE}"
         # Verify SHA256 against the SHASUMS256.txt entry. Format is
         # "<64-hex> <space><space><filename>". grep -F to avoid glob /
-        # regex surprises; sha256sum --check confirms or aborts.
-        ( cd "${OUTPUT_DIR}" && grep -F "  ${ARCHIVE}" SHASUMS256.txt | sha256sum --check --strict - )
+        # regex surprises; shasum -a 256 --check confirms or aborts.
+        # `shasum` (Perl) is portable across macOS, Linux and git-bash;
+        # GNU `sha256sum` is absent on macOS runners.
+        ( cd "${OUTPUT_DIR}" && grep -F "  ${ARCHIVE}" SHASUMS256.txt | shasum -a 256 --check --strict - )
         mkdir -p "${OUTPUT_DIR}/node-target"
         tar -xzf "${OUTPUT_DIR}/${ARCHIVE}" -C "${OUTPUT_DIR}/node-target"
         cp "${OUTPUT_DIR}/node-target/node-${NODE_RELEASE}-${NODE_ARCH}/bin/node" \

@@ -614,9 +614,10 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn sidecar_restarter_spawns_existing_binary_on_unix() {
-        // `/bin/true` is universally present; exits 0 immediately.
-        let r = SidecarRestarter::with_args(PathBuf::from("/bin/true"), vec![]);
-        r.restart().expect("spawn of /bin/true should succeed");
+        // `/usr/bin/true` exists on both Linux and macOS (`/bin/true`
+        // is Linux-only); exits 0 immediately.
+        let r = SidecarRestarter::with_args(PathBuf::from("/usr/bin/true"), vec![]);
+        r.restart().expect("spawn of /usr/bin/true should succeed");
     }
 
     #[test]
