@@ -60,6 +60,13 @@ services:
     volumes:
       - peer_a_home:/home/stavr/.stavr
       - ./peers-a.yaml:/home/stavr/.stavr/peers.yaml:ro
+      # Phase 4 chaos helpers — read-only, inert unless invoked via
+      # `docker exec`. Mounted on the BASE topology (not the chaos.yml
+      # overlay) so every compose invocation carries it: a chaos slice
+      # that reconciles the peers under a different -f overlay set
+      # (pumba.yml / netchaos.yml) would otherwise drop an overlay-only
+      # mount and break the in-container helper exec.
+      - ../chaos/in-container:/opt/bombardment-chaos:ro
     restart: unless-stopped
     # com.stavr.role labels let oracles + Pumba target containers by
     # role (peer vs hub) without hard-coding container names.
@@ -86,6 +93,7 @@ services:
     volumes:
       - peer_b_home:/home/stavr/.stavr
       - ./peers-b.yaml:/home/stavr/.stavr/peers.yaml:ro
+      - ../chaos/in-container:/opt/bombardment-chaos:ro  # Phase 4 chaos helpers — see peer-a
     restart: unless-stopped
     labels:
       com.stavr.role: "peer"
@@ -118,6 +126,7 @@ services:
     volumes:
       - hub_home:/home/stavr/.stavr
       - ./peers-hub.yaml:/home/stavr/.stavr/peers.yaml:ro
+      - ../chaos/in-container:/opt/bombardment-chaos:ro  # Phase 4 chaos helpers — see peer-a
     restart: unless-stopped
     labels:
       com.stavr.role: "hub"

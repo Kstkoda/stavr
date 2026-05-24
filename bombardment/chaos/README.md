@@ -1,18 +1,21 @@
 # bombardment/chaos — Phase 4 destructive chaos overlays
 
 Phase 4 of the bombardment rig — fault injection on top of the Phase 3
-docker-compose federation topology. Everything in this directory is
-**destructive** (mutates container state, kills processes, partitions
-networks, corrupts data on disk) and therefore lives in a separate
-compose overlay (`bombardment/compose/chaos.yml`) so the base topology
-stays composable for the read-only oracle layer.
+docker-compose federation topology. The work here is **destructive**
+(mutates container state, kills processes, partitions networks,
+corrupts data on disk). The fault-injection sidecars live in a separate
+compose overlay (`bombardment/compose/chaos.yml`); the in-container
+helper scripts are bind-mounted read-only on the base topology but are
+inert unless invoked via `docker exec`, so the base topology stays
+usable for the read-only oracle layer.
 
 ## Sub-phases
 
 ### Phase 4a — container kill
 
-- **Overlay:** `bombardment/compose/chaos.yml` (Pumba kill sidecar +
-  bind-mounts the in-container helpers).
+- **Overlay:** `bombardment/compose/chaos.yml` (Pumba kill sidecar).
+  The in-container helpers are bind-mounted by the base compose — see
+  "In-container helpers — how they get in" below.
 - **Runner:** `run-kill-slice.mjs` — coordinates the kill cycle and
   invokes the recovery oracle.
 - **Oracle:** `oracles/kill-recovery.mjs` — asserts three invariants on
