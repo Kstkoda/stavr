@@ -1,0 +1,17 @@
+# peers.yaml for peer-b (site_b). Mirror of peers-a.yaml.
+
+self_id: peer-b
+self_display_name: "Peer B (bombardment)"
+
+peers:
+  - id: hub
+    display_name: "Hub (bombardment)"
+    hostname: hub
+    port: 7777
+    trust: verified
+
+  - id: peer-a
+    display_name: "Peer A (bombardment)"
+    hostname: peer-a
+    port: 7777
+    trust: verified

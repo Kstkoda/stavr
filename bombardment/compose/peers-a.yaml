@@ -1,0 +1,25 @@
+# peers.yaml for peer-a (site_a).
+#
+# peer-a's view of the federation:
+#   - hub   — same network (site_a), reachable directly via Docker DNS
+#   - peer-b — different network (site_b), NOT routable from here. The
+#             registry will show this peer as configured + offline until
+#             event-layer forwarding through the hub lands. Phase 3d's
+#             oracle expects this exact "configured-but-unreachable"
+#             shape; Phase 4's chaos slice will reinforce it.
+
+self_id: peer-a
+self_display_name: "Peer A (bombardment)"
+
+peers:
+  - id: hub
+    display_name: "Hub (bombardment)"
+    hostname: hub
+    port: 7777
+    trust: verified
+
+  - id: peer-b
+    display_name: "Peer B (bombardment)"
+    hostname: peer-b
+    port: 7777
+    trust: verified
