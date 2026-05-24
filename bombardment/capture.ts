@@ -52,7 +52,18 @@ export function captureOnFailure(store: EventStore | null, opts: CaptureOpts): C
   const seed = getSeed();
   const runId = opts.runId ?? `${new Date().toISOString().replace(/[:.]/g, '-')}-seed${seed}`;
   const dir = join(ARTIFACTS_ROOT, `${runId}-${opts.reason.replace(/[^a-zA-Z0-9._-]/g, '_')}`);
-  mkdirSync(dir, { recursive: true });
+
+  // Best-effort dir creation. EACCES on a read-only workspace, ENOSPC on a
+  // full disk, or a permission-tightened install dir must not throw out of
+  // captureOnFailure — the file's docstring promises that. When the dir
+  // cannot be created, dump every later step as a no-op and return the
+  // intended path so the caller can log it.
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    process.stderr.write(`[bombardment/capture] mkdir failed (${dir}): ${(err as Error).message}\n`);
+    return { dir, eventsDumped: 0, heapSnapshotPath: null };
+  }
 
   let eventsDumped = 0;
   if (store) {
