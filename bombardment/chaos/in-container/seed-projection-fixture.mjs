@@ -41,7 +41,7 @@ try {
     `INSERT OR IGNORE INTO decisions
        (correlation_id, question, options_json, default_option_id,
         timeout_sec, status, requested_at, expires_at, source_agent, tier)
-     VALUES (?, ?, ?, ?, ?, 'open', ?, ?, 'bombardment-fixture', 'TIER_1')`,
+     VALUES (?, ?, ?, ?, ?, 'open', ?, ?, 'bombardment-fixture', 'CONFIRM')`,
   );
 
   // We push events through a direct INSERT because broker.publish lives
