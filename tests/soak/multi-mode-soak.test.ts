@@ -39,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 import { EventStore } from '../../src/persistence.js';
 import { Broker } from '../../src/broker.js';
 import { mountTransports, type MountedTransports } from '../../src/transports.js';
+import { OPERATIONAL_KINDS } from '../../src/observability/retention.js';
 import {
   defaultOracles,
   makeWorkersReachTerminal,
@@ -60,14 +61,38 @@ import { startEventLoopLagSampler } from '../../bombardment/observability/event-
 
 const SHOULD_RUN = process.env.STAVR_RUN_SOAK === '1' || process.env.STAVR_RUN_SOAK === 'long';
 const LONG = process.env.STAVR_RUN_SOAK === 'long';
-const RSS_CEILING_MB = Number(process.env.STAVR_SOAK_RSS_CEILING_MB ?? '600');
-const RSS_SLOPE_CEILING_BYTES_PER_SEC = Number(process.env.STAVR_SOAK_RSS_SLOPE_BPS ?? `${1_000_000}`); // 1 MB/s
 
-const DURATION_MINUTES = LONG ? Number(process.env.STAVR_SOAK_MINUTES ?? '30') : Number(process.env.STAVR_SOAK_MINUTES ?? '3');
+/**
+ * Env-var → finite number with default fallback. Why this exists:
+ * `??` only catches null/undefined, but GitHub Actions renders an
+ * unfilled workflow_dispatch input as the empty string in env. On a
+ * scheduled cron run, soak.yml's `STAVR_SOAK_MINUTES: ${{ inputs.minutes }}`
+ * resolves to '', `Number('')` returns 0, and the soak silently runs
+ * for zero minutes. Same for STAVR_HARDENING_SEED (handled separately
+ * in bombardment/seed.ts). Treat empty string + non-finite the same as
+ * unset.
+ */
+function envNumber(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+const RSS_CEILING_MB = envNumber('STAVR_SOAK_RSS_CEILING_MB', 600);
+const RSS_SLOPE_CEILING_BYTES_PER_SEC = envNumber('STAVR_SOAK_RSS_SLOPE_BPS', 1_000_000);
+
+const DURATION_MINUTES = envNumber('STAVR_SOAK_MINUTES', LONG ? 30 : 3);
 const SAMPLE_WINDOW_SEC = LONG ? 60 : 15;
 
 // The CI-friendly modes — every mode the load-runner supports.
-const MODES = (process.env.STAVR_SOAK_MODES ?? 'mcp_request,sse_churn,mixed_rw,page_nav').split(',');
+// Empty STAVR_SOAK_MODES would split to [''] then filter to []; default
+// applies if unset OR empty.
+const MODES = (() => {
+  const raw = process.env.STAVR_SOAK_MODES;
+  if (raw === undefined || raw === '') return ['mcp_request', 'sse_churn', 'mixed_rw', 'page_nav'];
+  return raw.split(',').filter(Boolean);
+})();
 
 const ARTIFACTS_DIR = resolve(process.cwd(), 'bombardment', 'artifacts', 'multi-mode-soak');
 
@@ -160,7 +185,7 @@ const SUITE_DESC = SHOULD_RUN
   beforeAll(async () => {
     mkdirSync(ARTIFACTS_DIR, { recursive: true });
     h = await boot();
-    process.stdout.write(`[soak] seed=${getSeed()} port=${h.port} home=${h.stavrHome}\n`);
+    process.stdout.write(`[soak] seed=${getSeed()} port=${h.port} duration=${DURATION_MINUTES}min modes=${MODES.join(',')} home=${h.stavrHome}\n`);
   });
 
   afterAll(async () => {
@@ -200,10 +225,18 @@ const SUITE_DESC = SHOULD_RUN
       // so the test drains in lockstep with it. A hard safety cutoff at
       // duration + 90s catches a wedged runner.
       const rssSamples: RssSample[] = [];
-      const oracleHistory: Array<{ tMs: number; failed: number; firstFail?: OracleResult }> = [];
+      const oracleHistory: Array<{ tMs: number; failed: number; failingNames: string[] }> = [];
       const startMs = Date.now();
       const safetyDeadlineMs = startMs + DURATION_MINUTES * 60_000 + 90_000;
-      let oracleViolation: OracleResult | null = null;
+      // Capture once per distinct oracle name. The previous gate
+      // (`if (firstFail && !oracleViolation)`) dumped only the very first
+      // oracle to fail across the entire run, losing diagnostic evidence
+      // for any other oracle that tripped in a later window. Per-name
+      // bookkeeping preserves a separate artifact bundle for each
+      // distinct violation; the first-fail-overall is still recorded as
+      // the test's primary failure trigger.
+      const capturedOracles = new Set<string>();
+      const allViolations: OracleResult[] = [];
 
       while (loadRunner.exitCode === null && Date.now() < safetyDeadlineMs) {
         await new Promise((r) => setTimeout(r, SAMPLE_WINDOW_SEC * 1000));
@@ -216,19 +249,30 @@ const SUITE_DESC = SHOULD_RUN
           broker: h.broker,
           baseline,
         });
-        const firstFail = summary.results.find((r) => r.ok === false);
-        oracleHistory.push({ tMs: Date.now(), failed: summary.failed, firstFail });
-        if (firstFail && !oracleViolation) {
-          oracleViolation = firstFail;
-          process.stderr.write(`[soak] oracle violation: ${firstFail.name} — ${firstFail.reason}\n`);
-          // Capture but keep running so we collect the full growth-shape sample.
-          captureOnFailure(h.store, {
-            reason: `oracle_${firstFail.name}`,
-            oracleResult: firstFail,
-            extra: { modes: MODES, minutes_elapsed: (Date.now() - startMs) / 60_000 },
-          });
+        const failingResults = summary.results.filter((r) => r.ok === false);
+        oracleHistory.push({
+          tMs: Date.now(),
+          failed: summary.failed,
+          failingNames: failingResults.map((r) => r.name),
+        });
+        for (const fail of failingResults) {
+          allViolations.push(fail);
+          if (!capturedOracles.has(fail.name)) {
+            capturedOracles.add(fail.name);
+            process.stderr.write(`[soak] oracle violation: ${fail.name} — ${fail.reason}\n`);
+            // Capture but keep running so we collect the full growth-shape sample.
+            captureOnFailure(h.store, {
+              reason: `oracle_${fail.name}`,
+              oracleResult: fail,
+              extra: { modes: MODES, minutes_elapsed: (Date.now() - startMs) / 60_000 },
+            });
+          }
         }
       }
+      // The single "first" violation kept for the primary assertion +
+      // run-summary headline. Later violations are still in allViolations
+      // + per-name artifacts.
+      const oracleViolation: OracleResult | null = allViolations[0] ?? null;
 
       // Hit the safety cutoff with the runner still alive — that's a wedge,
       // force-kill it. Otherwise wait for the natural exit so the runner
@@ -239,15 +283,28 @@ const SUITE_DESC = SHOULD_RUN
       }
       await runnerExit;
 
-      // Run the retention sweep so the cap kicks in before the bound check.
-      // The multi-mode soak generates events via the daemon's own pollers
-      // (daemon_memory, sse_session_opened/closed, etc.) rather than a
-      // direct pump, so beforeCount can be small at the bottom of the
-      // short-mode envelope. Assert non-negative — the value of running
-      // pruneEvents() here is exercising the code path, not asserting
-      // we deleted rows.
+      // Restore the leak-soak invariant: the retention sweep must
+      // actually delete operational rows. The HTTP-driven workload alone
+      // may not exceed the cap in short mode (3 min); seed a deterministic
+      // operational-kind spike here so the sweep MUST act regardless of
+      // duration. This is the same shape as tests/soak/leak-soak.test.ts:
+      // pump well past the cap, then assert deletedOperational > 0 after
+      // pruneEvents. If pruneEvents ever regresses to a no-op, this catches
+      // it; the original beforeCount >= 0 assertion was a tautology.
+      const opCap = Number(process.env.STAVR_EVENTS_OP_MAX_ROWS ?? '5000');
+      const seedCount = opCap + 500;
+      for (let i = 0; i < seedCount; i++) {
+        await h.broker.publish({
+          kind: 'worker_progress',
+          at: new Date().toISOString(),
+          source_agent: 'soak-retention-seed',
+          correlation_id: `soak-seed-${i % 100}`,
+          payload: { id: 'w', message: `retention-seed ${i}` },
+        } as never);
+      }
       const sweep = h.store.pruneEvents();
-      expect(sweep.beforeCount).toBeGreaterThanOrEqual(0);
+      expect(sweep.beforeCount).toBeGreaterThan(opCap);
+      expect(sweep.deletedOperational).toBeGreaterThan(0);
 
       lagSampler.stop();
       const lagSummary = lagSampler.summary();
@@ -255,6 +312,7 @@ const SUITE_DESC = SHOULD_RUN
       // End-of-run snapshot + diff.
       const heapEnd = captureHeapSnapshot(join(ARTIFACTS_DIR, `heap-end-${Date.now()}.heapsnapshot`));
       let topGrowers: ReturnType<typeof diffClassCounts> = [];
+      let heapDiffSkipReason: string | null = null;
       try {
         topGrowers = diffClassCounts(summarizeHeapSnapshot(heapStart), summarizeHeapSnapshot(heapEnd), 20);
         writeHeapDiffSummary(join(ARTIFACTS_DIR, 'heap-diff.json'), topGrowers, {
@@ -263,7 +321,22 @@ const SUITE_DESC = SHOULD_RUN
           seed: getSeed(),
         });
       } catch (err) {
-        process.stderr.write(`[soak] heap diff failed: ${(err as Error).message}\n`);
+        heapDiffSkipReason = (err as Error).message;
+        process.stderr.write(`[soak] heap diff failed: ${heapDiffSkipReason}\n`);
+        // Surface the skip in heap-diff.json so the operator can tell
+        // the difference between "no growth" (empty growth list) and
+        // "couldn't parse" (skipped — usually too-large snapshot).
+        try {
+          writeHeapDiffSummary(join(ARTIFACTS_DIR, 'heap-diff.json'), [], {
+            heap_start: heapStart,
+            heap_end: heapEnd,
+            seed: getSeed(),
+            skipped: true,
+            skip_reason: heapDiffSkipReason,
+          });
+        } catch {
+          /* artifacts dir unreachable — soak's main assertions are the source of truth */
+        }
       }
 
       // Growth-shape: RSS slope must be bounded.
@@ -299,6 +372,8 @@ const SUITE_DESC = SHOULD_RUN
           windows: oracleHistory.length,
           windows_with_violation: oracleHistory.filter((w) => w.failed > 0).length,
           first_violation: oracleViolation,
+          distinct_violations: [...capturedOracles],
+          total_violation_events: allViolations.length,
         },
         strict_workers_result: strictWorkersResult,
         top_heap_growers: topGrowers.slice(0, 10),
@@ -319,8 +394,18 @@ const SUITE_DESC = SHOULD_RUN
       expect(sessionsCheck.ok, `sessions did not return to baseline: ${sessionsCheck.current} > ${sessionsCheck.baseline} + ${sessionsCheck.slack}`).toBe(true);
       expect(subsCheck.ok, `subscriptions did not return to baseline: ${subsCheck.current} > ${subsCheck.baseline} + ${subsCheck.slack}`).toBe(true);
 
-      // 5. After the retention sweep, the row count is at-or-near the cap.
-      expect(h.store.eventCount()).toBeLessThanOrEqual(7500);
+      // 5. After the retention sweep, OPERATIONAL events are at-or-near
+      //    the cap. The old `eventCount() <= 7500` assertion conflated
+      //    audit + operational kinds, but STAVR_EVENTS_OP_MAX_ROWS caps
+      //    only the operational bucket (audit kinds are bounded by TTL,
+      //    not row count). On a long-mode soak, audit-class churn from
+      //    SSE lifecycle / worker spawn-terminate can push total over
+      //    7500 without any leak — assert on the right slice.
+      const opKinds = [...OPERATIONAL_KINDS];
+      const operationalCount = (h.store.rawDb
+        .prepare(`SELECT COUNT(*) AS c FROM events WHERE kind IN (${opKinds.map(() => '?').join(',')})`)
+        .get(...opKinds) as { c: number }).c;
+      expect(operationalCount).toBeLessThanOrEqual(opCap);
 
       // 6. The load-runner artifacts landed where expected (catch a silent
       //    subprocess failure that would otherwise leave us asserting on stale

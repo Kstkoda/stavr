@@ -22,7 +22,7 @@
  * No third-party deps — pure stdlib.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { writeHeapSnapshot } from 'node:v8';
 
 export interface RssSample {
@@ -115,7 +115,37 @@ export interface PerClassCounts {
   [className: string]: number;
 }
 
+/**
+ * Hard cap on heap-snapshot file size we'll attempt to parse. Node's
+ * V8 string-length cap sits around 2^29 chars (~512 MB); a UTF-8 file
+ * larger than ~256 MB risks an ERR_STRING_TOO_LONG when readFileSync
+ * tries to assemble it. The whole soak process already has a ~600 MB
+ * RSS ceiling, so attempting to parse anything beyond ~150 MB would
+ * starve the process at exactly the moment we need a heap diff. Skip
+ * the parse and return an empty count map; the soak harness's
+ * try/catch around the diff already tolerates this and writes
+ * heap-diff.json with an empty growth list + a `skipped_too_large`
+ * flag (see writeHeapDiffSummary callers).
+ */
+const HEAP_SNAPSHOT_PARSE_CEILING_BYTES = 150 * 1024 * 1024;
+
+export class HeapSnapshotTooLargeError extends Error {
+  constructor(public readonly path: string, public readonly sizeBytes: number) {
+    super(`heap snapshot ${path} is ${sizeBytes} bytes (> ${HEAP_SNAPSHOT_PARSE_CEILING_BYTES}); skipped parse`);
+    this.name = 'HeapSnapshotTooLargeError';
+  }
+}
+
 export function summarizeHeapSnapshot(path: string): PerClassCounts {
+  let sizeBytes = 0;
+  try {
+    sizeBytes = statSync(path).size;
+  } catch {
+    // File missing — let readFileSync produce the canonical ENOENT.
+  }
+  if (sizeBytes > HEAP_SNAPSHOT_PARSE_CEILING_BYTES) {
+    throw new HeapSnapshotTooLargeError(path, sizeBytes);
+  }
   const raw = readFileSync(path, 'utf8');
   const snap = JSON.parse(raw) as {
     snapshot: { meta: { node_fields: string[]; node_types: string[][] } };
