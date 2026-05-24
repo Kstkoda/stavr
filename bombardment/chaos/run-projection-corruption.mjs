@@ -54,20 +54,36 @@ function execInContainer(scriptPath, ...args) {
   return exec(['exec', target.container, 'node', scriptPath, ...args]);
 }
 
-function parseJson(stdout, ctx) {
+// Return-style parse: callers route parse failures through fail()
+// so the artifact is still written with full diagnostic context
+// (transcript + exec stdout/stderr/status). Throwing here would crash
+// past `pass()` / `fail()` into main().catch with a generic message
+// and no artifact — exactly what review finding #6 flagged.
+function tryParseJson(execResult, ctx) {
   try {
-    return JSON.parse(stdout);
+    return { ok: true, value: JSON.parse(execResult.stdout) };
   } catch (err) {
-    throw new Error(`${ctx}: failed to parse stdout as JSON: ${err.message}\nraw: ${stdout}`);
+    return {
+      ok: false,
+      reason:
+        `${ctx}: failed to parse exec stdout as JSON ` +
+        `(exit=${execResult.status}, parse_err=${err.message})`,
+      diagnostic: {
+        exit: execResult.status,
+        stdout: execResult.stdout,
+        stderr: execResult.stderr,
+      },
+    };
   }
 }
 
-function fail(transcript, reason, start) {
+function fail(transcript, reason, start, diagnostic) {
   const result = {
     name: 'chaos_projection_corruption_rebuild',
     ok: false,
     reason,
     transcript,
+    ...(diagnostic ? { diagnostic } : {}),
     durationMs: Date.now() - start,
   };
   emit(result);
@@ -107,7 +123,11 @@ async function main() {
   if (seed.status !== 0) {
     fail(transcript, `seed failed: ${seed.stderr || seed.stdout}`, start);
   }
-  const seedSummary = parseJson(seed.stdout, 'seed');
+  const seedParse = tryParseJson(seed, 'seed');
+  if (!seedParse.ok) {
+    fail(transcript, seedParse.reason, start, seedParse.diagnostic);
+  }
+  const seedSummary = seedParse.value;
   transcript.push({ phase: 'seed', summary: seedSummary });
   if (seedSummary.correlation_ids.length < 2) {
     fail(transcript, 'seed produced fewer than 2 fixtures — need at least 2 for flip + delete', start);
@@ -116,7 +136,14 @@ async function main() {
   // 2) Pre-corruption replay. Must match.
   console.log('[run-projection-corruption] replay before corruption — expecting clean');
   const preReplay = execInContainer('/opt/bombardment-chaos/replay-projection.mjs');
-  const preSummary = parseJson(preReplay.stdout, 'pre-replay');
+  // replay-projection exits 1 (DB unreachable) to stderr only — parse
+  // failure on empty stdout would otherwise crash past fail() into
+  // main().catch with no artifact (review finding #6).
+  const preParse = tryParseJson(preReplay, 'pre-replay');
+  if (!preParse.ok) {
+    fail(transcript, preParse.reason, start, preParse.diagnostic);
+  }
+  const preSummary = preParse.value;
   transcript.push({ phase: 'pre_corruption_replay', summary: preSummary, exit: preReplay.status });
   if (preReplay.status !== 0 || preSummary.ok !== true) {
     fail(
@@ -134,7 +161,11 @@ async function main() {
   if (corrupt.status !== 0) {
     fail(transcript, `corrupt failed: ${corrupt.stderr || corrupt.stdout}`, start);
   }
-  const corruptSummary = parseJson(corrupt.stdout, 'corrupt');
+  const corruptParse = tryParseJson(corrupt, 'corrupt');
+  if (!corruptParse.ok) {
+    fail(transcript, corruptParse.reason, start, corruptParse.diagnostic);
+  }
+  const corruptSummary = corruptParse.value;
   transcript.push({ phase: 'corrupt', summary: corruptSummary });
   if (corruptSummary.flipped.rows !== 1 || corruptSummary.deleted.rows !== 1) {
     fail(
@@ -147,7 +178,11 @@ async function main() {
   // 4) Post-corruption replay. Must mismatch.
   console.log('[run-projection-corruption] replay after corruption — expecting mismatches');
   const postReplay = execInContainer('/opt/bombardment-chaos/replay-projection.mjs');
-  const postSummary = parseJson(postReplay.stdout, 'post-replay');
+  const postParse = tryParseJson(postReplay, 'post-replay');
+  if (!postParse.ok) {
+    fail(transcript, postParse.reason, start, postParse.diagnostic);
+  }
+  const postSummary = postParse.value;
   transcript.push({ phase: 'post_corruption_replay', summary: postSummary, exit: postReplay.status });
   if (postReplay.status === 0 || postSummary.ok === true) {
     fail(

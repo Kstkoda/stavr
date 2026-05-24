@@ -74,12 +74,28 @@ async function main() {
     console.error(
       '[netchaos-slice] oracles failed under heavier impairment — leaving containers up for triage',
     );
+    // Intentionally do NOT stop the pumba sidecars on failure: leave
+    // the impairment running so the operator can inspect tc state /
+    // peer-a's eth0 / etc. The CI workflow's teardown will clear them.
     process.exit(1);
   }
 
-  console.log('[netchaos-slice] oracles passed under heavier impairment');
-  // Pumba sidecars self-exit when --duration runs out; the caller
-  // (CI workflow) tears the whole topology down via `docker compose down -v`.
+  console.log('[netchaos-slice] oracles passed — stopping Pumba sidecars');
+  // Explicitly stop the sidecars so subsequent slices (e.g., the
+  // projection-corruption step in the CI workflow) don't run with
+  // ~30s of remaining 500ms-latency impairment overlapping on peer-a.
+  // The sidecars would self-exit at --duration=120s anyway, but the
+  // overlap window matters: docker exec via the docker socket isn't
+  // affected by netem, but the daemon's HTTP listener IS, and a
+  // busier daemon increases SQLITE_BUSY probability for the
+  // projection-corruption's separate sqlite handle.
+  const stop = compose(['stop', 'pumba-spike-peer-a', 'pumba-loss-peer-b']);
+  if (stop.status !== 0) {
+    console.warn(
+      '[netchaos-slice] compose stop of pumba sidecars returned non-zero ' +
+        '(impairment self-expires at --duration=120s — slice still considered passing)',
+    );
+  }
   process.exit(0);
 }
 
