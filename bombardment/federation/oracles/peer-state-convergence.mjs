@@ -26,6 +26,15 @@
 import { getJson } from '../http-probe.mjs';
 import { TOPOLOGY, reachableFrom } from '../topology.mjs';
 
+// Under STAVR_BOMBARDMENT_UNDER_CHAOS the pumba slices inject continuous
+// packet loss. A single lost probe flips a reachable peer online ->
+// degraded (peer-registry.ts recordPingResult — no miss threshold), so a
+// strict ===online snapshot false-positives ~2-4% of runs under the very
+// impairment the slice exists to test. `degraded` is only ever entered
+// FROM `online`, so it still proves the peer converged — accept it under
+// chaos. A clean (non-chaos) run keeps the strict assertion.
+const UNDER_CHAOS = process.env.STAVR_BOMBARDMENT_UNDER_CHAOS === '1';
+
 export async function peerStateConvergence() {
   const start = Date.now();
   const violations = [];
@@ -51,7 +60,9 @@ export async function peerStateConvergence() {
       const expectReachable = reachableIds.has(candidate.id);
       perPeer[candidate.id] = { state, expect_reachable: expectReachable };
 
-      if (expectReachable && state !== 'online') {
+      const reachableStateOk =
+        state === 'online' || (UNDER_CHAOS && state === 'degraded');
+      if (expectReachable && !reachableStateOk) {
         violations.push({
           viewer: viewer.id,
           candidate: candidate.id,
