@@ -22,6 +22,18 @@
 #[cfg(any(windows, unix))]
 use std::process::Command;
 
+/// Windows process-creation flag — spawn the child *without* allocating a
+/// console window. Without it, the 1 Hz `sc query StavrDaemon` service
+/// poll (and the operator-triggered restart/upgrade shell-outs) flash a
+/// console window on the operator's desktop every tick. See the
+/// `windows_subprocesses_suppress_console_window` anchor test.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// `CommandExt::creation_flags` lives behind this Windows-only trait.
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 /// Per-platform default service identifier (matches the units shipped under
 /// `bin/`).
 #[cfg(windows)]
@@ -146,6 +158,7 @@ fn restart_windows(name: &str) -> Result<(), ServiceError> {
     );
     let status = std::process::Command::new("powershell")
         .args(["-NoProfile", "-Command", &ps_cmd])
+        .creation_flags(CREATE_NO_WINDOW)
         .status()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -317,6 +330,7 @@ fn spawn_upgrade_windows(script: &std::path::Path) -> Result<std::process::Child
     );
     std::process::Command::new("powershell")
         .args(["-NoProfile", "-Command", &ps_cmd])
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -372,7 +386,11 @@ impl ServiceQuery for SystemServiceQuery {
 fn query_windows(name: &str) -> ServiceStatus {
     // sc.exe ships with every Windows install. stdout and stderr land in
     // different streams; combine for parser convenience.
-    let out = match Command::new("sc").args(["query", name]).output() {
+    let out = match Command::new("sc")
+        .args(["query", name])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
         Ok(o) => o,
         Err(_) => return ServiceStatus::Unknown,
     };
@@ -780,5 +798,39 @@ mod tests {
             assert_eq!(name, "upgrade-daemon.sh");
             assert_eq!(launcher, "bash");
         }
+    }
+
+    /// Regression anchor: every Windows subprocess in this module must be
+    /// spawned with `CREATE_NO_WINDOW`. The 1 Hz `sc query StavrDaemon`
+    /// service poll runs in the background — without the flag it flashes a
+    /// console window on the operator's desktop every tick ("the Governor
+    /// spawns windows"). A future refactor adding a Windows `Command`
+    /// without the flag re-introduces the bug; this scan catches it.
+    ///
+    /// Pure source scan — runs on every platform's CI, same pattern as
+    /// `spawn_upgrade_on_windows_uses_runas_elevation`.
+    #[test]
+    fn windows_subprocesses_suppress_console_window() {
+        let src = include_str!("service.rs");
+        let prod = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("service.rs non-test prelude");
+        assert!(
+            prod.contains("const CREATE_NO_WINDOW"),
+            "service.rs must define the CREATE_NO_WINDOW flag"
+        );
+        assert!(
+            prod.contains("use std::os::windows::process::CommandExt"),
+            "service.rs must import CommandExt so creation_flags() resolves"
+        );
+        // The three Windows shell-outs — `sc query` (poll), the restart
+        // PowerShell, the upgrade PowerShell — must each carry the flag.
+        let flagged = prod.matches(".creation_flags(CREATE_NO_WINDOW)").count();
+        assert!(
+            flagged >= 3,
+            "expected >=3 .creation_flags(CREATE_NO_WINDOW) calls \
+             (sc query + restart + upgrade); found {flagged}"
+        );
     }
 }
