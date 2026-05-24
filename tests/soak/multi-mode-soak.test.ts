@@ -293,6 +293,7 @@ const SUITE_DESC = SHOULD_RUN
       // End-of-run snapshot + diff.
       const heapEnd = captureHeapSnapshot(join(ARTIFACTS_DIR, `heap-end-${Date.now()}.heapsnapshot`));
       let topGrowers: ReturnType<typeof diffClassCounts> = [];
+      let heapDiffSkipReason: string | null = null;
       try {
         topGrowers = diffClassCounts(summarizeHeapSnapshot(heapStart), summarizeHeapSnapshot(heapEnd), 20);
         writeHeapDiffSummary(join(ARTIFACTS_DIR, 'heap-diff.json'), topGrowers, {
@@ -301,7 +302,22 @@ const SUITE_DESC = SHOULD_RUN
           seed: getSeed(),
         });
       } catch (err) {
-        process.stderr.write(`[soak] heap diff failed: ${(err as Error).message}\n`);
+        heapDiffSkipReason = (err as Error).message;
+        process.stderr.write(`[soak] heap diff failed: ${heapDiffSkipReason}\n`);
+        // Surface the skip in heap-diff.json so the operator can tell
+        // the difference between "no growth" (empty growth list) and
+        // "couldn't parse" (skipped — usually too-large snapshot).
+        try {
+          writeHeapDiffSummary(join(ARTIFACTS_DIR, 'heap-diff.json'), [], {
+            heap_start: heapStart,
+            heap_end: heapEnd,
+            seed: getSeed(),
+            skipped: true,
+            skip_reason: heapDiffSkipReason,
+          });
+        } catch {
+          /* artifacts dir unreachable — soak's main assertions are the source of truth */
+        }
       }
 
       // Growth-shape: RSS slope must be bounded.

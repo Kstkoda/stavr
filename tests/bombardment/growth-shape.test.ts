@@ -7,7 +7,10 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { baselineReturn, diffClassCounts, rssSlope } from '../../bombardment/observability/growth-shape.js';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { baselineReturn, diffClassCounts, rssSlope, summarizeHeapSnapshot, HeapSnapshotTooLargeError } from '../../bombardment/observability/growth-shape.js';
 
 describe('bombardment/observability/growth-shape', () => {
   describe('rssSlope', () => {
@@ -73,6 +76,24 @@ describe('bombardment/observability/growth-shape', () => {
       expect(out[0].before).toBe(0);
       expect(out[0].delta).toBe(7);
       expect(out[0].deltaPct).toBe(Number.POSITIVE_INFINITY);
+    });
+  });
+
+  describe('summarizeHeapSnapshot size guard', () => {
+    it('throws HeapSnapshotTooLargeError without reading the file when it exceeds the ceiling', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'bombardment-heap-guard-'));
+      const path = join(dir, 'big.heapsnapshot');
+      try {
+        // Allocate a sparse-ish file slightly above the 150 MB ceiling.
+        // Writing 200 MB of placeholder bytes is fast on tmpfs / NTFS and
+        // exercises the statSync → ceiling path without forcing a 200 MB
+        // string allocation (the guard short-circuits before readFileSync).
+        const big = Buffer.alloc(200 * 1024 * 1024);
+        writeFileSync(path, big);
+        expect(() => summarizeHeapSnapshot(path)).toThrow(HeapSnapshotTooLargeError);
+      } finally {
+        try { rmSync(dir, { recursive: true, force: true }); } catch { /* WAL/locks */ }
+      }
     });
   });
 });
