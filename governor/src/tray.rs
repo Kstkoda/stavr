@@ -24,7 +24,9 @@ use tauri::{
 use stavr_governor::actions::{self, MuteWindow};
 use stavr_governor::event_router::EventRouter;
 use stavr_governor::icons::{decode_png_rgba, IconVariant};
-use stavr_governor::service::ServiceStatus;
+use stavr_governor::service::{
+    self, ServiceController, ServiceStatus, SystemServiceController,
+};
 use stavr_governor::state::{DaemonState, StateMachine};
 
 /// Canonical id of the one-and-only Governor tray icon. All runtime updates
@@ -40,6 +42,9 @@ pub const MENU_ID_VIEW_DECIDE: &str = "view_decide";
 pub const MENU_ID_MUTE_1H: &str = "mute_1h";
 pub const MENU_ID_MUTE_1D: &str = "mute_1d";
 pub const MENU_ID_UNMUTE: &str = "unmute";
+/// Phase 4 — operator-triggered control surface.
+pub const MENU_ID_RESTART_DAEMON: &str = "restart_daemon";
+pub const MENU_ID_UPGRADE_DAEMON: &str = "upgrade_daemon";
 
 /// Build the Governor tray icon and attach it to the running Tauri app.
 ///
@@ -99,8 +104,58 @@ pub fn handle_menu_event<R: Runtime>(
                 );
             }
         }
+        MENU_ID_RESTART_DAEMON => trigger_restart(app),
+        MENU_ID_UPGRADE_DAEMON => trigger_upgrade(app),
         _ => {}
     }
+}
+
+/// Operator clicked "Restart Daemon" — delegate to the OS init system.
+/// We spawn the controller call on a thread so the UAC / sudo prompt
+/// doesn't freeze the Tauri event loop while it waits for the operator.
+fn trigger_restart<R: Runtime>(app: &AppHandle<R>) {
+    let _ = app;
+    std::thread::Builder::new()
+        .name("operator-restart".to_string())
+        .spawn(move || {
+            let controller = SystemServiceController::default();
+            log::info!("tray: operator triggered Restart Daemon → {:?}", controller.name);
+            match controller.restart() {
+                Ok(()) => log::info!("tray: Restart Daemon dispatched ok"),
+                Err(e) => log::warn!("tray: Restart Daemon failed: {e}"),
+            }
+        })
+        .expect("spawn operator-restart thread");
+}
+
+/// Operator clicked "Upgrade Daemon" — invoke the hardened upgrade script.
+/// Long-running; spawned on its own thread so the tray stays responsive.
+/// The script enforces the rollback contract: on any failure the daemon
+/// ends up on the pre-upgrade commit with the service restarted.
+fn trigger_upgrade<R: Runtime>(app: &AppHandle<R>) {
+    let _ = app;
+    std::thread::Builder::new()
+        .name("operator-upgrade".to_string())
+        .spawn(move || {
+            let script = service::resolve_upgrade_script();
+            log::info!("tray: operator triggered Upgrade Daemon → {}", script.display());
+            match service::spawn_upgrade(&script) {
+                Ok(mut child) => match child.wait() {
+                    Ok(status) if status.success() => {
+                        log::info!("tray: Upgrade Daemon completed ok")
+                    }
+                    Ok(status) => {
+                        log::warn!(
+                            "tray: Upgrade Daemon exited with status {} — rollback should have left the daemon on the pre-upgrade commit",
+                            status.code().unwrap_or(-1)
+                        )
+                    }
+                    Err(e) => log::warn!("tray: Upgrade Daemon wait failed: {e}"),
+                },
+                Err(e) => log::warn!("tray: Upgrade Daemon spawn failed: {e}"),
+            }
+        })
+        .expect("spawn operator-upgrade thread");
 }
 
 fn apply_mute<R: Runtime>(app: &AppHandle<R>, window: MuteWindow) {
@@ -116,12 +171,15 @@ fn apply_mute<R: Runtime>(app: &AppHandle<R>, window: MuteWindow) {
     }
 }
 
-/// Build the Phase-1 tray menu.
+/// Build the Phase-4 tray menu.
 ///
 /// ```text
 /// Open Dashboard
 /// View Logs
 /// View Decide Queue
+/// ───────────────
+/// Restart Daemon            (operator-triggered, never autonomous)
+/// Upgrade Daemon            (invokes bin/upgrade-daemon.* with rollback)
 /// ───────────────
 /// Mute notifications · 1 h
 /// Mute notifications · 1 d
@@ -129,10 +187,6 @@ fn apply_mute<R: Runtime>(app: &AppHandle<R>, window: MuteWindow) {
 /// ───────────────
 /// Quit Governor
 /// ```
-///
-/// Daemon-control items (Restart Daemon, Pause supervision) were removed in
-/// the Phase 1 desupervision and are reintroduced in Phase 4 as
-/// service-aware operator actions.
 pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let open_dashboard = MenuItem::with_id(
         app,
@@ -150,6 +204,21 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         None::<&str>,
     )?;
     let sep1 = PredefinedMenuItem::separator(app)?;
+    let restart_daemon = MenuItem::with_id(
+        app,
+        MENU_ID_RESTART_DAEMON,
+        "Restart Daemon",
+        true,
+        None::<&str>,
+    )?;
+    let upgrade_daemon = MenuItem::with_id(
+        app,
+        MENU_ID_UPGRADE_DAEMON,
+        "Upgrade Daemon",
+        true,
+        None::<&str>,
+    )?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
     let mute_1h = MenuItem::with_id(
         app,
         MENU_ID_MUTE_1H,
@@ -165,7 +234,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         None::<&str>,
     )?;
     let unmute = MenuItem::with_id(app, MENU_ID_UNMUTE, "Unmute", true, None::<&str>)?;
-    let sep2 = PredefinedMenuItem::separator(app)?;
+    let sep3 = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, MENU_ID_QUIT, "Quit Governor", true, None::<&str>)?;
     Menu::with_items(
         app,
@@ -174,10 +243,13 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &view_logs,
             &view_decide,
             &sep1,
+            &restart_daemon,
+            &upgrade_daemon,
+            &sep2,
             &mute_1h,
             &mute_1d,
             &unmute,
-            &sep2,
+            &sep3,
             &quit,
         ],
     )
@@ -190,6 +262,8 @@ pub fn menu_ids() -> &'static [&'static str] {
         MENU_ID_OPEN_DASHBOARD,
         MENU_ID_VIEW_LOGS,
         MENU_ID_VIEW_DECIDE,
+        MENU_ID_RESTART_DAEMON,
+        MENU_ID_UPGRADE_DAEMON,
         MENU_ID_MUTE_1H,
         MENU_ID_MUTE_1D,
         MENU_ID_UNMUTE,
@@ -627,17 +701,19 @@ mod tests {
         assert_eq!(pip_icon(PipColor::Grey), IconVariant::StoppedManually);
     }
 
-    /// Menu contract after Phase 1 desupervision: 7 ids; Restart Daemon and
-    /// Pause supervision are gone (returning in Phase 4). The remaining
-    /// surface is the observation + notification controls.
+    /// Menu contract after Phase 4: 9 ids. The Phase 1 surface
+    /// (observation + notification controls) plus the two operator-action
+    /// items Restart Daemon and Upgrade Daemon.
     #[test]
-    fn menu_ids_expose_phase_one_surface() {
+    fn menu_ids_expose_phase_four_surface() {
         let ids = menu_ids();
-        assert_eq!(ids.len(), 7, "expected 7 menu ids after Phase 1, got {ids:?}");
+        assert_eq!(ids.len(), 9, "expected 9 menu ids after Phase 4, got {ids:?}");
         for required in [
             MENU_ID_OPEN_DASHBOARD,
             MENU_ID_VIEW_LOGS,
             MENU_ID_VIEW_DECIDE,
+            MENU_ID_RESTART_DAEMON,
+            MENU_ID_UPGRADE_DAEMON,
             MENU_ID_MUTE_1H,
             MENU_ID_MUTE_1D,
             MENU_ID_UNMUTE,
@@ -645,6 +721,10 @@ mod tests {
         ] {
             assert!(ids.contains(&required), "menu_ids missing {required}");
         }
+        // Wire-level strings are stable across refactors — main.rs and
+        // future scripting can hang event handlers off them.
+        assert_eq!(MENU_ID_RESTART_DAEMON, "restart_daemon");
+        assert_eq!(MENU_ID_UPGRADE_DAEMON, "upgrade_daemon");
     }
 
     #[test]
@@ -656,10 +736,14 @@ mod tests {
         assert_eq!(ids.len(), n, "menu ids must be unique");
     }
 
-    /// Phase 1 desupervision: the tray must not reference daemon-control
-    /// menu ids. Anchor checks so a partial revert can't sneak them back.
+    /// Phase 1 + 4 invariants: the tray must NEVER reach into a
+    /// supervision loop or rebuild the auto-restart graph. The
+    /// operator-triggered Restart Daemon delegates to the OS init system
+    /// via `SystemServiceController` — those names are allowed; the
+    /// pre-refactor `Supervisor` / `force_restart` / `MENU_ID_PAUSE`
+    /// scaffolding stays gone.
     #[test]
-    fn tray_does_not_reference_restart_or_pause_ids() {
+    fn tray_does_not_resurrect_legacy_supervisor_surface() {
         let source = include_str!("tray.rs");
         let prod = source
             .split("#[cfg(test)]")
@@ -669,14 +753,28 @@ mod tests {
             "MENU_ID_RESET_RESTART",
             "MENU_ID_PAUSE",
             "force_restart",
-            "Supervisor",
+            "::Supervisor",
             "reset_restart",
             "\"pause\"",
+            "Pm2Restarter",
+            "SidecarRestarter",
+            "OrphanAwareRestarter",
         ] {
             assert!(
                 !prod.contains(forbidden),
-                "tray.rs prod code must not mention {forbidden:?} after Phase 1 desupervision"
+                "tray.rs prod code must not mention {forbidden:?} (legacy supervision)"
             );
         }
+        // What we DO want present after Phase 4 — operator-triggered
+        // service control. Anchor those so the file can't drift back to
+        // a supervision-loop shape silently.
+        assert!(
+            prod.contains("SystemServiceController"),
+            "tray.rs must wire SystemServiceController for the Restart Daemon menu item"
+        );
+        assert!(
+            prod.contains("spawn_upgrade"),
+            "tray.rs must invoke service::spawn_upgrade for the Upgrade Daemon menu item"
+        );
     }
 }

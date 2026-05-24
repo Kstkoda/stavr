@@ -63,6 +63,237 @@ pub trait ServiceQuery: Send + Sync {
     fn status(&self) -> ServiceStatus;
 }
 
+/// Outcome of a service-control action (`restart`, `upgrade`).
+#[derive(Debug, thiserror::Error)]
+pub enum ServiceError {
+    #[error("failed to spawn control subprocess: {0}")]
+    Spawn(#[from] std::io::Error),
+    #[error("control subprocess exited with status {0}")]
+    NonZeroExit(i32),
+    #[error("control tool not found on PATH ({0})")]
+    NotFound(&'static str),
+    #[error("upgrade script not found at {0}")]
+    UpgradeScriptMissing(std::path::PathBuf),
+}
+
+/// Operator-triggered service control. Phase 4 of the operator-companion
+/// refactor: the Governor delegates restart / upgrade to the OS init
+/// system + a hardened upgrade script — it never spawns or kills the
+/// daemon directly. Nothing fires unless the operator clicks; this is
+/// not a supervision loop.
+pub trait ServiceController: Send + Sync {
+    /// Restart the OS-native service. Returns when the control tool has
+    /// exited; confirmation of the daemon's readiness is the next
+    /// `/healthz` tick (the watcher will repaint the pip).
+    fn restart(&self) -> Result<(), ServiceError>;
+}
+
+/// Production controller — shells out to the platform's init system
+/// (`Restart-Service`, `systemctl --user restart`, `launchctl
+/// kickstart -k`). Windows uses `Start-Process -Verb RunAs` for the
+/// elevation prompt — failures from a cancelled UAC dialog surface as
+/// `ServiceError::NonZeroExit`.
+pub struct SystemServiceController {
+    pub name: String,
+}
+
+impl SystemServiceController {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+        }
+    }
+}
+
+impl Default for SystemServiceController {
+    fn default() -> Self {
+        Self::new(DEFAULT_SERVICE_NAME)
+    }
+}
+
+impl ServiceController for SystemServiceController {
+    fn restart(&self) -> Result<(), ServiceError> {
+        #[cfg(windows)]
+        {
+            return restart_windows(&self.name);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            return restart_linux(&self.name);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            return restart_macos(&self.name);
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        {
+            let _ = &self.name;
+            Err(ServiceError::NotFound("unsupported platform"))
+        }
+    }
+}
+
+#[cfg(windows)]
+fn restart_windows(name: &str) -> Result<(), ServiceError> {
+    // Restart-Service requires admin. Drive the elevation via PowerShell's
+    // Start-Process -Verb RunAs — Windows pops the UAC prompt, the operator
+    // confirms, and the inner command runs elevated. We -Wait so the
+    // ServiceError reflects the inner command's exit code rather than the
+    // launcher's success in *spawning* an elevated child.
+    let inner = format!("Restart-Service -Name {name} -Force");
+    let ps_cmd = format!(
+        "Start-Process -FilePath powershell -ArgumentList '-NoProfile','-Command','{inner}' -Verb RunAs -Wait -PassThru | ForEach-Object {{ exit $_.ExitCode }}"
+    );
+    let status = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps_cmd])
+        .status()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ServiceError::NotFound("powershell")
+            } else {
+                ServiceError::Spawn(e)
+            }
+        })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(ServiceError::NonZeroExit(status.code().unwrap_or(-1)))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn restart_linux(name: &str) -> Result<(), ServiceError> {
+    let status = std::process::Command::new("systemctl")
+        .args(["--user", "restart", name])
+        .status()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ServiceError::NotFound("systemctl")
+            } else {
+                ServiceError::Spawn(e)
+            }
+        })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(ServiceError::NonZeroExit(status.code().unwrap_or(-1)))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn restart_macos(name: &str) -> Result<(), ServiceError> {
+    let uid = current_uid().ok_or(ServiceError::NotFound("id -u"))?;
+    let target = format!("gui/{}/{}", uid, name);
+    let status = std::process::Command::new("launchctl")
+        .args(["kickstart", "-k", &target])
+        .status()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ServiceError::NotFound("launchctl")
+            } else {
+                ServiceError::Spawn(e)
+            }
+        })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(ServiceError::NonZeroExit(status.code().unwrap_or(-1)))
+    }
+}
+
+/// Mock controller — records every call; configurable success/failure.
+pub struct MockServiceController {
+    pub calls: parking_lot::Mutex<u32>,
+    pub succeed: bool,
+}
+
+impl MockServiceController {
+    pub fn new(succeed: bool) -> Self {
+        Self {
+            calls: parking_lot::Mutex::new(0),
+            succeed,
+        }
+    }
+    pub fn call_count(&self) -> u32 {
+        *self.calls.lock()
+    }
+}
+
+impl ServiceController for MockServiceController {
+    fn restart(&self) -> Result<(), ServiceError> {
+        *self.calls.lock() += 1;
+        if self.succeed {
+            Ok(())
+        } else {
+            Err(ServiceError::NonZeroExit(1))
+        }
+    }
+}
+
+/// Resolve the upgrade script path. The Windows installer drops it under
+/// the repo's `bin/` directory; operators running from a checkout use the
+/// same path. `STAVR_UPGRADE_SCRIPT` overrides for advanced layouts.
+pub fn resolve_upgrade_script() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("STAVR_UPGRADE_SCRIPT") {
+        return std::path::PathBuf::from(p);
+    }
+    let (rel_name, _) = upgrade_script_name();
+    std::env::current_dir()
+        .map(|d| d.join("bin").join(rel_name))
+        .unwrap_or_else(|_| std::path::PathBuf::from(format!("bin/{rel_name}")))
+}
+
+/// Per-platform upgrade script name + the launcher used to invoke it.
+#[cfg(windows)]
+pub fn upgrade_script_name() -> (&'static str, &'static str) {
+    ("upgrade-daemon.ps1", "powershell")
+}
+#[cfg(not(windows))]
+pub fn upgrade_script_name() -> (&'static str, &'static str) {
+    ("upgrade-daemon.sh", "bash")
+}
+
+/// Invoke the upgrade script. The script enforces the rollback contract:
+/// on any failure between `git pull` and the post-restart health check
+/// the daemon is reset to the pre-upgrade commit and the service is
+/// restarted before the script exits non-zero.
+///
+/// Spawn-and-detach: the script logs to stdout/stderr inherited from the
+/// caller (the Governor's log) and runs asynchronously from the tray
+/// click. The returned `Child` is consumed by the caller, which `wait()`s
+/// in its own thread so the tray can repaint a "upgrading…" tooltip in
+/// the meantime.
+pub fn spawn_upgrade(
+    script: &std::path::Path,
+) -> Result<std::process::Child, ServiceError> {
+    if !script.exists() {
+        return Err(ServiceError::UpgradeScriptMissing(script.to_path_buf()));
+    }
+    let (_, launcher) = upgrade_script_name();
+    let child = if cfg!(windows) {
+        std::process::Command::new(launcher)
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                &script.to_string_lossy(),
+            ])
+            .spawn()
+    } else {
+        std::process::Command::new(launcher)
+            .arg(script)
+            .spawn()
+    };
+    child.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            ServiceError::NotFound(launcher)
+        } else {
+            ServiceError::Spawn(e)
+        }
+    })
+}
+
 /// Production probe — shells out to the per-platform tool.
 pub struct SystemServiceQuery {
     pub name: String,
@@ -413,5 +644,67 @@ mod tests {
         assert_eq!(q.status(), ServiceStatus::Running);
         q.set(ServiceStatus::Stopped);
         assert_eq!(q.status(), ServiceStatus::Stopped);
+    }
+
+    // ---- Phase 4: ServiceController + upgrade plumbing -----------------
+
+    #[test]
+    fn mock_controller_records_restart_calls() {
+        let c = MockServiceController::new(true);
+        assert_eq!(c.call_count(), 0);
+        c.restart().expect("mock controller programmed to succeed");
+        c.restart().unwrap();
+        assert_eq!(c.call_count(), 2);
+    }
+
+    #[test]
+    fn mock_controller_failure_path_returns_nonzero_exit() {
+        let c = MockServiceController::new(false);
+        let err = c.restart().unwrap_err();
+        assert!(matches!(err, ServiceError::NonZeroExit(1)), "got {err:?}");
+    }
+
+    #[test]
+    fn upgrade_script_resolver_honours_env_override() {
+        std::env::set_var(
+            "STAVR_UPGRADE_SCRIPT",
+            "/tmp/custom/upgrade-daemon.script",
+        );
+        assert_eq!(
+            resolve_upgrade_script(),
+            std::path::PathBuf::from("/tmp/custom/upgrade-daemon.script")
+        );
+        std::env::remove_var("STAVR_UPGRADE_SCRIPT");
+        let fallback = resolve_upgrade_script();
+        let s = fallback.to_string_lossy();
+        let (expected_name, _) = upgrade_script_name();
+        assert!(
+            s.ends_with(expected_name)
+                || s.ends_with(&format!("/{expected_name}"))
+                || s.ends_with(&format!("\\{expected_name}")),
+            "default upgrade-script path should end with {expected_name}; got {s}"
+        );
+    }
+
+    #[test]
+    fn spawn_upgrade_returns_upgrade_script_missing_for_absent_path() {
+        let path = std::path::PathBuf::from("/nonexistent/upgrade-daemon.script");
+        let err = spawn_upgrade(&path).unwrap_err();
+        match err {
+            ServiceError::UpgradeScriptMissing(p) => assert_eq!(p, path),
+            other => panic!("expected UpgradeScriptMissing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn upgrade_script_name_matches_platform() {
+        let (name, launcher) = upgrade_script_name();
+        if cfg!(windows) {
+            assert_eq!(name, "upgrade-daemon.ps1");
+            assert_eq!(launcher, "powershell");
+        } else {
+            assert_eq!(name, "upgrade-daemon.sh");
+            assert_eq!(launcher, "bash");
+        }
     }
 }
