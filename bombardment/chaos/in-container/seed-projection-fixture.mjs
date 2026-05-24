@@ -24,7 +24,6 @@
 // Exit: 0 ok / 1 db err / 2 bad invocation.
 
 import Database from 'better-sqlite3';
-import { randomUUID } from 'node:crypto';
 
 const count = Number(process.argv[2] ?? 0);
 if (!Number.isFinite(count) || count < 1 || count > 1000) {
@@ -50,11 +49,16 @@ try {
   // table schema (persistence.ts:168) requires: id, kind, correlation_id,
   // source_agent, tenant_id (nullable), payload_json, at, persisted_at,
   // seq, created_at.
-  const nextSeqRow = db.prepare(`SELECT COALESCE(MAX(seq), 0) AS m FROM events`).get();
-  let nextSeq = nextSeqRow.m + 1;
-
+  //
+  // INSERT OR IGNORE on events too — the id is now derived
+  // deterministically from correlation_id, so re-running the seeder
+  // against the same named volume does not inject duplicate
+  // decision_request rows per fixture (Angle B finding #2). seq is
+  // read INSIDE the transaction (Angle A/C finding #4) so the
+  // daemon's concurrent broker.publish cannot reuse the value between
+  // our MAX(seq) read and the INSERT.
   const insertEvent = db.prepare(
-    `INSERT INTO events
+    `INSERT OR IGNORE INTO events
        (id, kind, correlation_id, source_agent, tenant_id, payload_json,
         at, persisted_at, seq, created_at)
      VALUES (?, 'decision_request', ?, 'bombardment-fixture', NULL, ?, ?, ?, ?, ?)`,
@@ -65,6 +69,10 @@ try {
   const now = new Date().toISOString();
 
   const tx = db.transaction(() => {
+    // MAX(seq) inside the transaction — see comment above.
+    const seqRow = db.prepare(`SELECT COALESCE(MAX(seq), 0) AS m FROM events`).get();
+    let nextSeq = seqRow.m + 1;
+
     for (let i = 0; i < count; i++) {
       const correlationId = `bombardment-fixture-${i}`;
       correlationIds.push(correlationId);
@@ -80,8 +88,12 @@ try {
         now,
         future,
       );
+      // Deterministic event id keyed on correlation_id — second run
+      // of seed against the same named volume sees an existing event
+      // and skips (INSERT OR IGNORE), so the events table doesn't
+      // accumulate one duplicate decision_request per fixture per run.
       insertEvent.run(
-        randomUUID(),
+        `bombardment-fixture-evt-${i}`,
         correlationId,
         JSON.stringify({
           question: `bombardment fixture question ${i}`,
