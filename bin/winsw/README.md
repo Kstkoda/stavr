@@ -16,7 +16,7 @@ alongside it.
 | WinSW version | **v2.12.0** |
 | Filename | `WinSW-x64.exe` (rename to `StavrDaemon.exe` when placing) |
 | Upstream URL | https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe |
-| SHA256 | `a4f3f3a76b1a1c47ea50f1c41e0d7d3f9b46d36d8e15a1c89c75e9c4d4f1f9c0` |
+| SHA256 | `05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da` |
 
 > **Verify the SHA256 before placing.** If the hash you compute does not
 > match the one above, do NOT place the binary — open an issue. The hash
@@ -34,7 +34,7 @@ Invoke-WebRequest `
     -OutFile $env:TEMP\WinSW-x64.exe
 
 # 2. Verify the SHA256 against the pinned value above.
-$expected = 'a4f3f3a76b1a1c47ea50f1c41e0d7d3f9b46d36d8e15a1c89c75e9c4d4f1f9c0'
+$expected = '05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da'
 $actual   = (Get-FileHash $env:TEMP\WinSW-x64.exe -Algorithm SHA256).Hash.ToLower()
 if ($actual -ne $expected) {
     Write-Error "SHA256 mismatch! expected=$expected actual=$actual"

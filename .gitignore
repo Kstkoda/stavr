@@ -47,3 +47,8 @@ tmp/perf/peer-smoke-artifacts/
 
 # Session-local design notes
 .work/
+
+# WinSW per-machine install artifacts — operator places the exe; the install
+# script renders the xml. Never commit them (see bin/winsw/README.md).
+bin/winsw/StavrDaemon.exe
+bin/winsw/StavrDaemon.xml

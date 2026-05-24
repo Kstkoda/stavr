@@ -19,7 +19,7 @@
   <description>Personal MCP gateway daemon. Local-first agent broker brokering AI assistants (Claude Code, Cowork, Codex) and tools (GitHub, Slack, Ollama).</description>
 
   <!--
-    Foreground daemon invocation — NO --detach. Same node args as the
+    Foreground daemon invocation (no detach flag). Same node args as the
     systemd / launchd templates and the retired ecosystem.config.cjs.
     Path-bearing arguments are quoted with " so Windows-style backslashes
     don't trip WinSW's argument parser.
