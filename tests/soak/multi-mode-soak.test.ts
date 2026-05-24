@@ -263,15 +263,28 @@ const SUITE_DESC = SHOULD_RUN
       }
       await runnerExit;
 
-      // Run the retention sweep so the cap kicks in before the bound check.
-      // The multi-mode soak generates events via the daemon's own pollers
-      // (daemon_memory, sse_session_opened/closed, etc.) rather than a
-      // direct pump, so beforeCount can be small at the bottom of the
-      // short-mode envelope. Assert non-negative — the value of running
-      // pruneEvents() here is exercising the code path, not asserting
-      // we deleted rows.
+      // Restore the leak-soak invariant: the retention sweep must
+      // actually delete operational rows. The HTTP-driven workload alone
+      // may not exceed the cap in short mode (3 min); seed a deterministic
+      // operational-kind spike here so the sweep MUST act regardless of
+      // duration. This is the same shape as tests/soak/leak-soak.test.ts:
+      // pump well past the cap, then assert deletedOperational > 0 after
+      // pruneEvents. If pruneEvents ever regresses to a no-op, this catches
+      // it; the original beforeCount >= 0 assertion was a tautology.
+      const opCap = Number(process.env.STAVR_EVENTS_OP_MAX_ROWS ?? '5000');
+      const seedCount = opCap + 500;
+      for (let i = 0; i < seedCount; i++) {
+        await h.broker.publish({
+          kind: 'worker_progress',
+          at: new Date().toISOString(),
+          source_agent: 'soak-retention-seed',
+          correlation_id: `soak-seed-${i % 100}`,
+          payload: { id: 'w', message: `retention-seed ${i}` },
+        } as never);
+      }
       const sweep = h.store.pruneEvents();
-      expect(sweep.beforeCount).toBeGreaterThanOrEqual(0);
+      expect(sweep.beforeCount).toBeGreaterThan(opCap);
+      expect(sweep.deletedOperational).toBeGreaterThan(0);
 
       lagSampler.stop();
       const lagSummary = lagSampler.summary();
