@@ -83,9 +83,23 @@ Depends on Phase 4 (the Tauri sidecar shell exists) and on family-mode-phase-1's
 
 Add a WiX `.msi` to `.github/workflows/governor-release.yml`: `bundle.targets` explicitly includes `msi`; the CI runner gets the WiX toolchain. `.msi` alongside the existing `.exe`.
 
-## Phase 6 — SUPERSEDED — boot persistence moved to os-native-governor-bom.md
+## Phase 6 — Windows Service boot persistence — SUPERSEDED by os-native-governor BOM
 
-Boot-start, pre-login startup, crash-loop backoff, the Windows Service (WinSW), and PM2 removal are all delivered cross-platform by the standalone `proposed/os-native-governor-bom.md` (decided 2026-05-20, 10-3-1 Option A — OS init is the governor). No work in this phase. **Dependency:** the os-native-governor BOM should land before Phase 7 so the family-pack installer registers the OS-native service rather than a PM2 run-key.
+This phase is now **redundant**. The cross-platform OS-init supervision
+(systemd / launchd / Windows Service via WinSW) landed independently in
+the `os-native-governor` BOM, which covers all three platforms — not
+just Windows — and drops PM2 entirely.
+
+See [`proposed/os-native-governor-bom.md`](./os-native-governor-bom.md).
+The Windows Service work specifically lives in Phase 3 of that BOM:
+`bin/StavrDaemon.xml.template`, `bin/install-windows-service.ps1`,
+`bin/winsw/README.md` (operator places the WinSW binary; the install
+script renders the XML config). The errored `pm2-windows-startup`
+module the original Phase 6 was going to remove is no longer relevant —
+the OS-native install path doesn't use PM2 at all.
+
+When Family-mode Phase 2 is next revisited, drop this section and any
+references to it elsewhere in the BOM.
 
 ## Phase 7 — Family-pack installer layer
 

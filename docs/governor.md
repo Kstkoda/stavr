@@ -1,10 +1,28 @@
 # stavR Governor — operator guide
 
+> **Architecture note (post-os-native-governor BOM):** the daemon's
+> primary supervisor is now the OS init system on each platform
+> (systemd / launchd / Windows Service via WinSW). See
+> [`proposed/os-native-governor-bom.md`](../proposed/os-native-governor-bom.md)
+> and the per-platform installers in `bin/`. The Tray Governor described
+> in this document is now an OPERATOR-FACING COMPANION — its tray icon /
+> tooltip / OS toasts surface daemon state from `/healthz` + the
+> `/dashboard/stream` SSE feed.
+>
+> The Tray Governor's INTERNAL crash-recovery code still shells out to
+> `pm2 start ecosystem.config.cjs` (the Rust binary at `governor/src/`
+> is unchanged by the os-native-governor BOM — that cutover is tracked
+> for a follow-up BOM that rebuilds the signed Tray Governor release).
+> This means: on a fresh OS-native install, the Tray Governor's restart
+> mechanism is non-functional (no PM2 present) but its observability
+> features (state icon, toasts, dashboard launcher) work normally. The
+> OS supervisor handles the actual restart.
+
 > **The Governor is the third party in stavR's three-process architecture
-> (ADR-040)**. Engine = the daemon. PM2 = the underlying supervisor.
-> Governor = the operator-facing tray companion that supervises the daemon,
-> auto-restarts it on crash with exponential backoff, and surfaces operator-
-> relevant events as native OS toasts.
+> (ADR-040)**. Engine = the daemon. Supervisor = the OS init system (per
+> the os-native-governor BOM; legacy installs still use PM2).
+> Governor = the operator-facing tray companion that observes daemon
+> health and surfaces operator-relevant events as native OS toasts.
 >
 > If you just want to *try* the daemon, you don't need the Governor at all.
 > The dashboard is the canonical operator surface. The Governor is what
@@ -241,9 +259,17 @@ rm -rf ~/.stavr/governor
 
 ## What the Governor does NOT do
 
-- It does **not** replace PM2 in the MVP. PM2 is still the underlying
-  supervisor; the Governor calls `pm2 start ecosystem.config.cjs` on
-  restart. Replacement of PM2 is v1.1+ (ADR-040 §4).
+- It does **not** replace the OS init supervisor introduced by the
+  os-native-governor BOM. On OS-native installs (systemd / launchd /
+  WinSW), the OS supervisor handles the actual restart with platform-
+  native crash-loop guards (see `proposed/os-native-governor-bom.md`).
+  The Tray Governor's auto-restart code (which historically shelled out
+  to `pm2 start ecosystem.config.cjs`) is retained in the Rust binary
+  for legacy PM2 installs during migration, and is tracked for
+  replacement with per-platform service-control calls in a follow-up
+  BOM. Replacement of PM2 as the underlying supervisor is complete in
+  the daemon install path; the Tray Governor's internal restart logic
+  follows separately.
 - It does **not** auto-update. Updates ship via the signed-release
   pipeline (`docs/governor-install.md`); re-run `install-from-release.{ps1,sh}`
   then `stavr-governor-install.{ps1,sh}` to point at the new binary.

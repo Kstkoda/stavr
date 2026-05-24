@@ -1,4 +1,28 @@
-// PM2 ecosystem config for stavr.
+// ============================================================================
+// DEPRECATED — PM2 retired from the documented install path.
+// Kept functional only for existing PM2-based installs during migration.
+// ============================================================================
+//
+// stavR's supervisor is now the OS init system on each platform (systemd /
+// launchd / Windows Service via WinSW). See the per-platform installers:
+//
+//   - Linux:    bin/install-systemd.sh        → ~/.config/systemd/user/stavr.service
+//   - macOS:    bin/install-launchd.sh        → ~/Library/LaunchAgents/com.stavr.daemon.plist
+//   - Windows:  bin/install-windows-service.ps1 (operator places WinSW exe per bin/winsw/README.md)
+//
+// Per the os-native-governor BOM (proposed/os-native-governor-bom.md), this
+// PM2 config is retired from the documented install path. It still functions
+// for operators with existing `pm2 start ecosystem.config.cjs` setups during
+// migration — daemon args below are unchanged from the historical config.
+// New installs should NOT use this file; use the per-platform installer.
+//
+// The Tauri Governor tray companion (governor/, ADR-033) currently still
+// shells out to `pm2 start ecosystem.config.cjs` on restart; that internal
+// call is tracked for replacement with service-control commands in a
+// follow-up BOM. This file's continued functionality bridges that gap.
+//
+// ============================================================================
+// HISTORICAL CONTEXT (kept for legacy installs):
 //
 // Runs the FULL daemon (`stavr daemon start`) — this is the only entry point
 // that calls startDaemonForeground, which wires the memory poller, retention
@@ -7,7 +31,7 @@
 // (this bit us on 2026-05-16 — events table grew unbounded even though the
 // retention code was compiled into dist).
 //
-// Usage:
+// Legacy usage (DEPRECATED — see the per-platform installers above instead):
 //   pm2 delete stavr 2>$null    # clean any prior entry
 //   pm2 start ecosystem.config.cjs
 //   pm2 logs stavr -f           # live tail

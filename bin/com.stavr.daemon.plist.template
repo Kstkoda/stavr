@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  stavR daemon LaunchAgent (per-user).
+  Installed by bin/install-launchd.sh; uninstalled by bin/uninstall-launchd.sh.
+  See proposed/os-native-governor-recon.md §7 for the per-platform locked
+  design choices.
+
+  Placeholder convention matches the systemd template: bin/install-launchd.sh
+  substitutes the five tokens (NODE_BIN, INSTALL_DIR, STAVR_HOME, HOME_DIR,
+  PATH_VALUE) via sed.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.stavr.daemon</string>
+
+  <!--
+    ProgramArguments is an argv array, NOT a shell command. Each token is a
+    separate <string>. The foreground daemon invocation — NO --detach,
+    matching the recon §1 finding.
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>@NODE_BIN@</string>
+    <string>--max-old-space-size=8192</string>
+    <string>--heapsnapshot-near-heap-limit=2</string>
+    <string>--report-on-fatalerror</string>
+    <string>--report-directory=@INSTALL_DIR@/tmp/diag-reports</string>
+    <string>@INSTALL_DIR@/dist/cli.js</string>
+    <string>daemon</string>
+    <string>start</string>
+    <string>--port</string>
+    <string>7777</string>
+    <string>--db</string>
+    <string>@STAVR_HOME@/runestone.db</string>
+    <string>--log-format</string>
+    <string>json</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>@INSTALL_DIR@</string>
+
+  <!--
+    launchd inherits very little env by default — set HOME / PATH explicitly
+    so node + the daemon's subprocess invocations resolve correctly. The
+    install script captures the operator's $PATH at install time and writes
+    it verbatim.
+  -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>@HOME_DIR@</string>
+    <key>STAVR_HOME</key>
+    <string>@STAVR_HOME@</string>
+    <key>STAVR_DEBUG_ENABLED</key>
+    <string>1</string>
+    <key>PATH</key>
+    <string>@PATH_VALUE@</string>
+  </dict>
+
+  <!-- Boot-start: load the agent at user login. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!--
+    Crash-loop guard — launchd throttles relaunches to no more than once per
+    ThrottleInterval. 30s matches systemd RestartSec + PM2 restart_delay.
+    launchd has no burst-cap equivalent of StartLimitBurst — once throttled,
+    it will keep restarting indefinitely. The operator install doc documents
+    this OS limitation explicitly.
+  -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <!--
+    KeepAlive with SuccessfulExit=false: restart only on non-zero exit.
+    A clean SIGTERM (e.g. via `launchctl bootout`) exits 0 and is not
+    restarted — operator-driven stops stay stopped.
+  -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <!--
+    Logging: pino writes JSON to stderr; both streams land in per-user
+    files under ~/Library/Logs/stavr/. The install script creates the dir.
+  -->
+  <key>StandardOutPath</key>
+  <string>@HOME_DIR@/Library/Logs/stavr/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>@HOME_DIR@/Library/Logs/stavr/stderr.log</string>
+
+  <!--
+    SIGTERM grace before SIGKILL — equivalent to systemd TimeoutStopSec +
+    PM2 kill_timeout. 10s matches the daemon's shutdown handler budget.
+  -->
+  <key>ExitTimeOut</key>
+  <integer>10</integer>
+
+  <!-- Process type: Interactive matches a user-facing background agent
+       (the daemon serves the operator's dashboard + tools). -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+</dict>
+</plist>

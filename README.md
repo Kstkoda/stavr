@@ -61,19 +61,52 @@ npm install
 npm run build
 ```
 
-Run under PM2 (recommended — restart policy, log rotation, env var capture):
+Install as a per-platform OS service (recommended — boot-start, crash-loop
+backoff, OS-native log rotation). The install scripts write the service
+definition; the operator runs the platform's service-control commands. See
+[`proposed/os-native-governor-recon.md`](proposed/os-native-governor-recon.md)
+for the design.
+
+**Linux (systemd user instance):**
 
 ```sh
-pm2 start ecosystem.config.cjs
-pm2 logs stavr --lines 30
-pm2 status
+bin/install-systemd.sh
+systemctl --user daemon-reload
+systemctl --user enable --now stavr.service
+journalctl --user -u stavr.service -f
+# Headless host: sudo loginctl enable-linger $USER
 ```
 
-Or run the daemon directly (no supervisor):
+**macOS (LaunchAgent):**
+
+```sh
+bin/install-launchd.sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.stavr.daemon.plist
+launchctl enable    gui/$(id -u)/com.stavr.daemon
+launchctl kickstart gui/$(id -u)/com.stavr.daemon
+tail -F ~/Library/Logs/stavr/stderr.log
+```
+
+**Windows (WinSW Service):**
+
+```powershell
+# One-time: place the WinSW binary per bin\winsw\README.md (SHA256-pinned).
+# Then from elevated PowerShell:
+.\bin\install-windows-service.ps1
+.\bin\winsw\StavrDaemon.exe install
+.\bin\winsw\StavrDaemon.exe start
+Get-Content -Wait -Tail 30 .\logs\StavrDaemon.err.log
+```
+
+Or run the daemon directly without a supervisor (development / one-shot):
 
 ```sh
 node dist/cli.js daemon start
 ```
+
+> The legacy `pm2 start ecosystem.config.cjs` path still works for existing
+> installs during migration but is **deprecated** — see the deprecation
+> banner in `ecosystem.config.cjs` and the per-platform installers above.
 
 The daemon binds `127.0.0.1:7777`. Confirm it's up and watch events:
 

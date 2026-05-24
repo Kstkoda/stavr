@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  stavR daemon Windows Service definition for WinSW.
+  Installed by bin/install-windows-service.ps1; uninstalled by
+  bin/uninstall-windows-service.ps1. See proposed/os-native-governor-recon.md
+  §7 (Windows) for the design choices locked here.
+
+  Placeholder convention matches the systemd / launchd templates: the install
+  script substitutes five tokens (NODE_BIN, INSTALL_DIR, STAVR_HOME, HOME_DIR,
+  PATH_VALUE) via PowerShell `-replace` on this file.
+
+  WinSW reads a sibling XML file with the same basename — so this renders to
+  bin/winsw/StavrDaemon.xml alongside bin/winsw/StavrDaemon.exe (the WinSW
+  binary; see bin/winsw/README.md for the pinned version + SHA256).
+-->
+<service>
+  <id>StavrDaemon</id>
+  <name>stavR — local-first MCP gateway daemon</name>
+  <description>Personal MCP gateway daemon. Local-first agent broker brokering AI assistants (Claude Code, Cowork, Codex) and tools (GitHub, Slack, Ollama).</description>
+
+  <!--
+    Foreground daemon invocation — NO --detach. Same node args as the
+    systemd / launchd templates and the retired ecosystem.config.cjs.
+    Path-bearing arguments are quoted with " so Windows-style backslashes
+    don't trip WinSW's argument parser.
+  -->
+  <executable>@NODE_BIN@</executable>
+  <arguments>--max-old-space-size=8192 --heapsnapshot-near-heap-limit=2 --report-on-fatalerror "--report-directory=@INSTALL_DIR@\tmp\diag-reports" "@INSTALL_DIR@\dist\cli.js" daemon start --port 7777 --db "@STAVR_HOME@\runestone.db" --log-format json</arguments>
+
+  <workingdirectory>@INSTALL_DIR@</workingdirectory>
+
+  <!--
+    Service runs as LocalSystem by default (Windows allows auto-start services
+    without storing a password). The daemon's homedir() resolution reads
+    USERPROFILE on Windows (node:os), so we set USERPROFILE + HOME +
+    STAVR_HOME to the OPERATOR's values explicitly — that way the daemon
+    reads/writes the operator's data directory, not LocalSystem's profile.
+    PATH is captured at install time so subprocesses (git, gh, node-for-workers,
+    claude) resolve correctly.
+
+    If the operator prefers running the service as their own account, they
+    can change the "Log On" tab in services.msc after install. The
+    USERPROFILE env vars stay correct either way.
+  -->
+  <env name="USERPROFILE" value="@HOME_DIR@"/>
+  <env name="HOME" value="@HOME_DIR@"/>
+  <env name="STAVR_HOME" value="@STAVR_HOME@"/>
+  <env name="STAVR_DEBUG_ENABLED" value="1"/>
+  <env name="PATH" value="@PATH_VALUE@"/>
+
+  <!--
+    Boot-start: automatic + delayed. delayedAutoStart lets dependent
+    services come up first; the daemon doesn't need to race for the start.
+  -->
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+
+  <!--
+    Crash-loop guard (the BOM's mandatory requirement). WinSW reads
+    <onfailure> entries in order and applies them to consecutive failures:
+    first crash → 30s delay → restart; second crash → 1min delay → restart;
+    third crash → 5min delay → restart; fourth crash → halt (service stays
+    stopped, operator sees it in services.msc).
+
+    resetfailure=1h means after an hour of healthy uptime the failure
+    counter resets — same idea as PM2's min_uptime=30s × resume.
+  -->
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="restart" delay="1 min"/>
+  <onfailure action="restart" delay="5 min"/>
+  <onfailure action="none"/>
+  <resetfailure>1 hour</resetfailure>
+
+  <!--
+    Graceful shutdown: send the equivalent of SIGTERM and wait 10 sec
+    before SIGKILL. Matches systemd TimeoutStopSec + PM2 kill_timeout.
+    stopparentprocessfirst=false because WinSW IS the parent — we want
+    it to signal the node process first, not itself.
+  -->
+  <stoptimeout>10 sec</stoptimeout>
+  <stopparentprocessfirst>false</stopparentprocessfirst>
+
+  <!--
+    Logs land under <install>\logs\StavrDaemon.{out,err,wrapper}.log.
+    WinSW rotates by size: 10 MB threshold, keeps the last 5 files.
+    pino writes JSON to stderr by default; the rotation policy applies
+    uniformly to both streams.
+  -->
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <logpath>@INSTALL_DIR@\logs</logpath>
+</service>
