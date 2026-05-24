@@ -213,6 +213,15 @@ jobs:
           set -euo pipefail
           node bombardment/chaos/run-kill-slice.mjs
 
+      - name: Run network-chaos slice (heavier impairment)
+        # Phase 4b — 500ms ±100ms latency spike on peer-a + 10% loss
+        # on peer-b via Pumba netem. The Phase 3d federation oracles
+        # must still pass under this heavier budget (Phase 3c covers
+        # the modest budget; Phase 4b is the "WAN-going-bad" envelope).
+        run: |
+          set -euo pipefail
+          node bombardment/chaos/run-netchaos-slice.mjs
+
       - name: Collect compose logs on failure
         if: failure()
         run: |
