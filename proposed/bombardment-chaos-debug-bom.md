@@ -25,15 +25,11 @@ Debugging Docker-integration code through CI round-trips is the slowest possible
 - **Already fixed — do not redo:** the `/app/bombardment-chaos` mount path and the base-mount of the helpers (committed in PR #82).
 - **The SSE loopback fence is by design.** `/events/sse` (and `/dashboard/*`) is restricted to loopback callers — `transports.ts` ~538-561, the family-mode-phase-1 Phase 5 fence — because it exposes the operator's audit log. A containerized daemon reached via a published host port sees the caller as non-loopback → 403. Correct daemon behaviour; it will **not** be weakened to suit a test.
 
-## Open decision — kill-recovery oracle invariant 3
+## Decision (locked 2026-05-25) — kill-recovery oracle invariant 3
 
-The kill-recovery oracle asserts three invariants on one kill cycle: (1) the restart policy brings `/healthz` back, (2) `startupDecisionSweep` produces a `decision_late_response` event, (3) an SSE consumer reconnects with `?since_id=` across the kill. Invariants 1-2 are sound. **Invariant 3 is structurally incompatible** with the containerized topology + the SSE loopback fence: from the host → 403; inside the container → the consumer dies *with* the container at kill; from a Docker-network sidecar → still non-loopback → 403.
+The kill-recovery oracle asserts three invariants on one kill cycle: (1) the restart policy brings `/healthz` back, (2) `startupDecisionSweep` produces a `decision_late_response` event, (3) an SSE consumer reconnects with `?since_id=` across the kill. Invariants 1-2 are sound. **Invariant 3 is structurally incompatible** with the containerized topology + the SSE loopback fence: from the host → 403; inside the container → the consumer dies *with* the container at kill; a netns-sharing sidecar (`network_mode: service:peer-a`) would read as loopback but loses its namespace when the target container is SIGKILL'd → also fails.
 
-Three options — **operator picks** before Phase 1:
-
-- **(a) Drop invariant 3 from the kill oracle. — Lead recommendation.** `tests/chaos.test.ts` already covers SSE `since_id` reconnect in-process ("disconnected client can reconnect and resume from since_event_id"). The kill oracle keeps invariants 1-2, which need no `/events/sse`. Least code, no daemon change, no coverage genuinely lost.
-- (b) Rework invariant 3 so the SSE consumer is loopback to the target daemon *and* survives the kill. Hard — likely needs a daemon-side test hook regardless.
-- (c) Add an env-gated daemon test-mode exception to the SSE fence. Weakens a security fence for test convenience — discouraged.
+**Decision: option (a) — drop invariant 3 from the kill oracle.** Verified independently: there is no consumer that is *both* loopback to the daemon *and* survives a SIGKILL of the daemon's container — the topology makes it impossible, not merely awkward. Coverage is not lost — `tests/chaos.test.ts` already exercises the SSE `since_id` reconnect-and-resume logic in-process ("disconnected client can reconnect and resume from since_event_id"); only the across-a-container-kill wrapper, the impossible part, is dropped. Option (b) (rework so the consumer is loopback *and* kill-surviving) would add a daemon-side test seam for a path already covered in-process — not worth the daemon surface. Option (c) (env-gated exception to the SSE loopback fence) is rejected outright: that fence is the family-mode-phase-1 Phase 5 operator-audit boundary — it is not weakened for test convenience. The kill oracle keeps invariants 1-2, which need no `/events/sse`. (The `docker/hub-mcp` reference Dockerfile — clean multi-stage, non-root, `ENTRYPOINT ["node","dist/index.js"]`, no init-system, restart left to Docker's policy — reinforces this: keep container and daemon clean; let the restart policy do recovery, which is exactly invariants 1-2. It offers nothing that rescues invariant 3, because the SSE fence is a daemon-level loopback check, not a container concern.)
 
 ## Phases
 
@@ -65,7 +61,7 @@ Until this BOM completes, `bombardment-docker` is **not a gating check** — its
 ```
 Read CLAUDE.md, then proposed/bombardment-chaos-debug-bom.md. This BOM runs LOCALLY — you need a working Docker host (WSL2 or Linux). Do NOT debug via CI.
 
-Confirm the invariant-3 decision with the operator first (default: option (a), drop it). Then execute Phase 0 (local rig bring-up) and Phase 1 (kill-slice to green) ONLY. Iterate against `docker compose` locally until run-kill-slice.mjs passes, then STOP for operator review before Phases 2-5.
+Invariant 3 is DECIDED — dropped (option a); see "Decision (locked)" above. Apply it, do not re-litigate. Then execute Phase 0 (local rig bring-up) and Phase 1 (kill-slice to green) ONLY. Iterate against `docker compose` locally until run-kill-slice.mjs passes, then STOP for operator review before Phases 2-5.
 
 Sensitivity: careful. Skärp och hängslen: git status --short + git symbolic-ref HEAD before every mutating git op. Branch feat/bombardment-chaos-green off main. Per-phase commits, DCO sign-off (-s).
 
