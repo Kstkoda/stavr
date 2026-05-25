@@ -360,5 +360,137 @@ PowerShell variant uses `Invoke-WebRequest -SkipHttpErrorCheck` to capture non-2
 
 ---
 
-<!-- Phase 4 appended in the next commit. -->
+## Phase 4 — MCP channel + son-side CC config
+
+The son's Claude Code points at the operator's `/mcp` endpoint and carries the Phase 3 bearer token on every request. The operator authors a tight `actor_permissions` matrix in the dashboard so the son's `peer:<son-handle>` actor can only do what was agreed.
+
+### 4.1 — Son-side Claude Code MCP entry
+
+Claude Code reads MCP server configs from one of:
+
+- **User scope:** `~/.claude.json` (or platform equivalent: `%USERPROFILE%\.claude.json` on Windows, `~/Library/Application Support/Claude/.claude.json` on macOS — `claude mcp list` will print the resolved path).
+- **Project scope:** `.mcp.json` in the project root.
+
+For the family-mode model, **user scope** is correct — the son's stavR connection follows him across projects.
+
+**Preferred — let the Claude Code CLI write the entry:**
+
+```bash
+claude mcp add --transport http --scope user stavr \
+  http://helm.stavr.mesh:7777/mcp \
+  --header "Authorization: Bearer <paste-token-from-phase-3.3>"
+```
+
+If the local `claude mcp add` doesn't accept `--header` (older CLI), fall back to the manual JSON below.
+
+**Manual fallback — edit `~/.claude.json`:**
+
+```json
+{
+  "mcpServers": {
+    "stavr": {
+      "type": "http",
+      "url": "http://helm.stavr.mesh:7777/mcp",
+      "headers": {
+        "Authorization": "Bearer <paste-token-from-phase-3.3>"
+      }
+    }
+  }
+}
+```
+
+Save, then restart any open Claude Code session so the new config is read.
+
+### 4.2 — Verify the son's CC sees stavR
+
+In a fresh Claude Code session on the son's machine:
+
+```
+> /mcp
+```
+
+Claude Code prints the configured MCP servers and their connection state. `stavr` should appear in the list and resolve as connected. If it appears but shows an auth error, the bearer header is wrong — re-check the token.
+
+### 4.3 — Operator-side — author the actor_permissions matrix
+
+> **Operator-only step.** Matrix writes are gated to the operator via the dashboard (MCP tool writes are blocked at the transport layer for safety). I do not author rows.
+
+Until the operator adds rows for `peer:<son-handle>`, EVERY tool the son's CC tries will be denied at the chokepoint with `per-actor NO_GO: actor "peer:<son-handle>" cannot invoke <tool> (source=default-deny)`. That is the structural fence — see `proposed/family-son-mcp-recon.md` §2 for the full mechanic.
+
+In the operator's browser, open `http://localhost:7777/dashboard/permissions`. The matrix is a (actor × tool) grid. Add the son's actor first if it isn't there (the Phase 3 paired device should have caused it to surface).
+
+**Recommended seed — Option A baseline from the recon doc.** Tool granularity, default-deny everything else:
+
+| Tool (registered id) | Tier | Why |
+|---|---|---|
+| `github.list_branches` | AUTO | Cheap listing; per-repo is rarely sensitive |
+| `github.list_commits` | AUTO | Listing |
+| `github.list_issues` | AUTO | Listing |
+| `github.list_prs` | AUTO | Listing |
+| `github.list_pr_files` | AUTO | Listing |
+| `github.list_labels` | AUTO | Listing |
+| `github.list_workflow_runs` | AUTO | Listing |
+| `github.read_file` | **CONFIRM** | Content read — operator wants visibility per-call so per-repo can be checked at confirm time |
+| `github.read_commit` | CONFIRM | Content read |
+| `github.read_issue` | CONFIRM | Content read |
+| `github.read_pr` | CONFIRM | Content read |
+| `github.read_pr_diff` | CONFIRM | Content read |
+| `github.read_pr_review_comments` | CONFIRM | Content read |
+| `github.read_workflow_run` | CONFIRM | Content read |
+| **Every other tool** | **(no row — default-deny → NO_GO)** | The son can't invoke them at all |
+
+**No write tools** in the son's matrix to start. If the son needs to propose a PR later, the operator adds `github.create_pr` at tier `CONFIRM` then — never `AUTO` for a write tool.
+
+The CONFIRM-tier reads land in the operator's decision queue (Telegram + `/dashboard/decide`). That is the per-resource gate today: the operator sees the repo + path the son requested and approves or rejects per call. It is operationally heavier than a per-resource scope fence but uses zero new code — see Option A in the recon.
+
+### 4.4 — Two-machine smoke
+
+End-to-end proof that the channel works. Each item is one observable behaviour.
+
+**Pre-flight:**
+
+- Operator dashboard `/dashboard/permissions` shows `peer:<son-handle>` rows per §4.3.
+- Operator has Telegram notifications configured (or accepts that decisions only land in the dashboard).
+- Son's Claude Code session shows `stavr` connected in `/mcp`.
+
+**Tests, in order:**
+
+1. **AUTO read — silent pass.** Son's CC: "list the branches on Kstkoda/stavr." CC invokes `github.list_branches`. Expected: response returns within seconds, no operator prompt. Operator-side audit event `tool_invoked` carries `actor: peer:<son-handle>`, `source: matrix`, tier `AUTO`.
+
+2. **CONFIRM read — operator prompted.** Son's CC: "read the README of Kstkoda/stavr." CC invokes `github.read_file`. Expected: son's CC blocks. Operator's dashboard `/dashboard/decide` (and Telegram, if wired) shows a decision request: `Approve github.read_file call (tier=CONFIRM, actor=peer:<son-handle>)?` with the args (repo + path) visible. Operator approves. Son's CC unblocks with the file content.
+
+3. **Out-of-scope tool — structural deny.** Son's CC: "create a PR on Kstkoda/stavr that adds X." CC tries `github.create_pr`. Expected: immediate denial at the chokepoint with `per-actor NO_GO: actor "peer:<son-handle>" cannot invoke github.create_pr (source=default-deny)`. No operator prompt is created (default-deny is silent on the operator side; only the deny event lands in the audit log). Son's CC reports the denial reason.
+
+4. **No-go floor — operator can't override.** Son's CC (or any actor): attempt one of the no-go-list entries (e.g., a no-go-list rooted hard-deny tool). Expected: chokepoint denies with `no-go floor: ...`. The operator-side audit event `no_go_match` lands.
+
+5. **Token revocation kills access immediately.** Operator: `stavr devices revoke <device_id>`. Son's CC retries any tool. Expected: 401 at the transport, before the chokepoint runs. No new decisions open.
+
+6. **Tier-3 EXPLICIT path (only if the son's matrix ever includes an EXPLICIT tool).** Currently the seed leaves nothing at EXPLICIT, so this is informational: an EXPLICIT call would first require a recent operator passkey assertion at `/dashboard/settings#identity` (60-second TTL) and THEN open a confirmation decision.
+
+7. **Credential boundary.** Operator: verify the son's machine has no stavR tokens for the GitHub PAT. The son sees only the bearer for `helm.stavr.mesh`; the GitHub PAT lives in the operator's credential store and is never returned over the wire. (The chokepoint forwards calls server-side; the son's CC sees only tool responses, never credentials.)
+
+### 4.5 — What "done" looks like
+
+- The son's Claude Code, on his own machine, makes tool calls brokered through `helm.stavr.mesh:7777/mcp`.
+- Every call passes through the 4-tier chokepoint; out-of-scope calls are denied with `default-deny` at the actor-permissions layer.
+- CONFIRM-tier reads route an approval to the operator; the operator can see args (repo + path) and approve or reject per call. This is the per-resource gate today.
+- No credential and no daemon ever lands on the son's machine. No CC worker processes are spawned for him.
+- Verified by the two-machine smoke above, not CI alone.
+
+### 4.6 — What's deliberately NOT included
+
+- **No restriction of the son's NATIVE Claude Code tools (Bash, Write, Edit).** Per operator decision, native-tool fencing is out of scope. The son's CC runs his Bash and writes his own files with full native permissions; only the MCP layer is gateway'd.
+- **No Phase 5 work** — the Anthropic-compatible LLM gateway endpoint (the son's `ANTHROPIC_BASE_URL` pointing at stavR, billing-metered per son) is a separate high-sensitivity BOM that needs its own operator go-ahead.
+- **No per-resource (per-repo, per-path) scope fence at the chokepoint.** That is the Option B work in the recon doc. Today's per-resource gate is "tier CONFIRM + operator eyes per call" — operationally heavier but zero new code.
+
+---
+
+## Reference
+
+- `proposed/family-son-mcp-onboarding-bom.md` — the BOM.
+- `proposed/family-son-mcp-recon.md` — Phase 0 recon, esp. §2 (default-deny mechanic) and §6 (Option A rationale).
+- `src/security/decision-gate.ts::buildChokepointGate` — the multi-layer gate the son's calls flow through.
+- `src/security/actor-permissions.ts::resolve` — the default-deny logic.
+- `src/transports.ts:526-536` — where `peer:<son-handle>` gets stamped onto the request.
+
 
