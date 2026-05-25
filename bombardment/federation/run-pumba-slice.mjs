@@ -69,6 +69,40 @@ async function main() {
   console.log('[pumba-slice] settling 5s before re-running oracles');
   await sleep(5000);
 
+  // Surface silent Pumba failures. Pumba spawns a tc-container that
+  // shares the target's netns and runs `tc qdisc`; on every Docker
+  // host we've tested (Docker Desktop on Windows AND ubuntu-latest
+  // GHA runners) the tc-container can exit before Pumba's
+  // `docker exec` lands, sidecar exits non-zero with
+  //   "failed to create tc-container exec: container ... is not running"
+  // and the netem rule is never installed — the slice's oracles then
+  // run against UN-impaired traffic and trivially "pass". Don't exit
+  // hard (the rest of the slice still validates oracle reliability +
+  // peer-state machinery), but loudly flag the substrate issue so a
+  // CI green doesn't claim chaos coverage it didn't actually exercise.
+  // Mirrored from bombardment/chaos/run-netchaos-slice.mjs — same
+  // Pumba 0.11.7 race, same diagnostic shape.
+  for (const sidecar of ['stavr-pumba-delay-a', 'stavr-pumba-loss-b', 'stavr-pumba-jitter-hub']) {
+    const inspect = spawnSync(
+      'docker',
+      ['inspect', '--format', '{{.State.Status}}|{{.State.ExitCode}}', sidecar],
+      { encoding: 'utf8' },
+    );
+    if (inspect.status !== 0) {
+      console.warn(`[pumba-slice] could not inspect ${sidecar}: ${inspect.stderr.trim()}`);
+      continue;
+    }
+    const [status, exitCode] = inspect.stdout.trim().split('|');
+    if (status === 'exited' && exitCode !== '0') {
+      console.warn(
+        `[pumba-slice] WARN ${sidecar} exited ${exitCode} — impairment likely NOT applied. ` +
+          `Last 3 lines of pumba log:`,
+      );
+      const logs = spawnSync('docker', ['logs', '--tail', '3', sidecar], { encoding: 'utf8' });
+      console.warn((logs.stdout || logs.stderr || '').trim());
+    }
+  }
+
   console.log('[pumba-slice] running federation oracles under impairment');
   const oracles = spawnSync(process.execPath, [RUN_ORACLES], {
     stdio: 'inherit',
