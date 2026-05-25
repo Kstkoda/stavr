@@ -1,0 +1,83 @@
+# Bombardment — dashboard relay overlay (operator convenience).
+#
+# NOT part of the system under test. Apply only when you want to view the
+# daemons' dashboards from the host.
+#
+# Why this exists
+# ---------------
+# The daemon gates /dashboard/* and /events/sse to LOOPBACK callers only
+# (src/transports.ts — family-mode-phase-1 Phase 5: "operator audit data,
+# restricted to loopback callers; remote dashboard access is not a Phase 5
+# surface"). The check is on the TCP socket's remote address; there is no
+# env/flag escape hatch, and --allow-non-local-without-auth does not lift it.
+#
+# A request arriving through Docker's published-port mapping reaches the
+# daemon FROM THE BRIDGE GATEWAY, not 127.0.0.1 — so opening a dashboard
+# from the Windows host returns {"ok":false,"error":"loopback_only"}.
+#
+# Fix: one tiny socat sidecar per daemon. Each sidecar shares its daemon's
+# network namespace (network_mode: service:<daemon>), listens on :7778
+# inside that namespace, and forwards to 127.0.0.1:7777. socat dials the
+# daemon over the namespace's own loopback, so the daemon sees a genuine
+# 127.0.0.1 caller and serves the dashboard. No daemon code change, no
+# stavr:ci rebuild.
+#
+# Apply on top of the base topology:
+#   docker compose -f docker-compose.yml -f dashboard-relay.yml up -d
+#
+# Stacks with the chaos overlay too:
+#   docker compose -f docker-compose.yml -f pumba.yml -f dashboard-relay.yml up -d
+#
+# Dashboards then reachable from the host at:
+#   peer-a  http://127.0.0.1:17787/dashboard/helm
+#   peer-b  http://127.0.0.1:17788/dashboard/helm
+#   hub     http://127.0.0.1:17789/dashboard/helm
+#
+# The base ports (17777/17778/17779) keep serving /healthz + /api/* as
+# before — those are not loopback-gated.
+#
+# Note: adding these ports recreates the three daemon containers (a few
+# seconds of downtime). The named volumes persist, so daemon state survives.
+
+services:
+  # --- extra published port on each daemon's network namespace ---
+  peer-a:
+    ports:
+      - "17787:7778"
+  peer-b:
+    ports:
+      - "17788:7778"
+  hub:
+    ports:
+      - "17789:7778"
+
+  # --- one socat loopback relay per daemon ---
+  dash-relay-a:
+    image: alpine/socat
+    container_name: stavr-dash-relay-a
+    network_mode: "service:peer-a"
+    command: "TCP-LISTEN:7778,fork,reuseaddr TCP:127.0.0.1:7777"
+    depends_on: [peer-a]
+    restart: unless-stopped
+    labels:
+      com.stavr.role: "dash-relay"
+
+  dash-relay-b:
+    image: alpine/socat
+    container_name: stavr-dash-relay-b
+    network_mode: "service:peer-b"
+    command: "TCP-LISTEN:7778,fork,reuseaddr TCP:127.0.0.1:7777"
+    depends_on: [peer-b]
+    restart: unless-stopped
+    labels:
+      com.stavr.role: "dash-relay"
+
+  dash-relay-hub:
+    image: alpine/socat
+    container_name: stavr-dash-relay-hub
+    network_mode: "service:hub"
+    command: "TCP-LISTEN:7778,fork,reuseaddr TCP:127.0.0.1:7777"
+    depends_on: [hub]
+    restart: unless-stopped
+    labels:
+      com.stavr.role: "dash-relay"
