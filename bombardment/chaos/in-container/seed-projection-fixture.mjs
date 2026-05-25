@@ -19,7 +19,15 @@
 //   docker exec stavr-peer-a node /app/bombardment-chaos/seed-projection-fixture.mjs <count>
 //
 // Output (stdout): one JSON line { ok, count, correlation_ids }.
-// Idempotent — re-running with the same count is a no-op (INSERT OR IGNORE).
+// Idempotent and RESET-ON-RE-RUN — decisions are UPSERTed
+// (`ON CONFLICT(correlation_id) DO UPDATE`), so a fixture row that was
+// mutated by a prior run's corrupt-projection helper (status flipped
+// to 'responded', or row deleted) is restored to the clean
+// `status='open'` baseline. Without that reset, a re-run's
+// pre-corruption replay finds the previous run's corruption as a
+// "fixture inconsistency" and the slice fails on a stale-state false
+// negative. Events use INSERT OR IGNORE on a deterministic id so they
+// stay write-once.
 //
 // Exit: 0 ok / 1 db err / 2 bad invocation.
 
@@ -37,11 +45,26 @@ try {
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
 
+  // UPSERT (not INSERT OR IGNORE) so a fixture row mutated by a prior
+  // run's corruption helper (status='responded', or row deleted then
+  // re-inserted at re-seed) is reset to a clean `status='open'`
+  // baseline. INSERT OR REPLACE would also work but rotates the
+  // ROWID; this preserves it.
   const insertDecision = db.prepare(
-    `INSERT OR IGNORE INTO decisions
+    `INSERT INTO decisions
        (correlation_id, question, options_json, default_option_id,
         timeout_sec, status, requested_at, expires_at, source_agent, tier)
-     VALUES (?, ?, ?, ?, ?, 'open', ?, ?, 'bombardment-fixture', 'CONFIRM')`,
+     VALUES (?, ?, ?, ?, ?, 'open', ?, ?, 'bombardment-fixture', 'CONFIRM')
+     ON CONFLICT(correlation_id) DO UPDATE SET
+       question = excluded.question,
+       options_json = excluded.options_json,
+       default_option_id = excluded.default_option_id,
+       timeout_sec = excluded.timeout_sec,
+       status = 'open',
+       requested_at = excluded.requested_at,
+       expires_at = excluded.expires_at,
+       source_agent = excluded.source_agent,
+       tier = excluded.tier`,
   );
 
   // We push events through a direct INSERT because broker.publish lives

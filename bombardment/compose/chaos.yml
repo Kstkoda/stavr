@@ -22,11 +22,10 @@
 # What's NOT in here:
 #   The runner script (bombardment/chaos/run-kill-slice.mjs) drives
 #   `docker kill` directly because the kill-recovery oracle needs
-#   deterministic timing — seed the projection, capture the SSE
-#   baseline, THEN kill, THEN wait for restart, THEN assert. The
-#   Pumba sidecar in this overlay is the operator-callable equivalent
-#   for the "show me chaos" demo path; it's not what the CI runner
-#   uses.
+#   deterministic timing — seed the projection, THEN kill, THEN wait
+#   for restart, THEN assert. The Pumba sidecar in this overlay is
+#   the operator-callable equivalent for the "show me chaos" demo
+#   path; it's not what the CI runner uses.
 #
 # Phase 4b's netchaos.yml extends this same pattern with heavier netem
 # impairment + a one-sided partition; Phase 4c's projection-corruption

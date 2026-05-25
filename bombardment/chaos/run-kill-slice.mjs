@@ -14,7 +14,6 @@
 // Tunables (env):
 //   STAVR_BOMBARDMENT_RESTART_BUDGET_MS  /healthz recovery budget (default 90_000)
 //   STAVR_BOMBARDMENT_SWEEP_BUDGET_MS    decision_late_response budget (default 30_000)
-//   STAVR_BOMBARDMENT_SSE_BASELINE_MS    SSE settle + drain window (default 3_000)
 //
 // Exit codes: 0 = pass, 1 = fail. Artifact at
 // bombardment/artifacts/kill-slice-<ts>.json carries the transcript.

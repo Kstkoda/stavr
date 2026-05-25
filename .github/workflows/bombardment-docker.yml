@@ -1,21 +1,40 @@
 name: bombardment-docker
 
-# Bombardment Phase 3 — build the daemon container image and verify it.
+# Bombardment Phase 3-4 — build the daemon container image, stand up
+# the federation topology, and run the chaos slices.
+#
+# Re-armed as a gating CI check at the close of the chaos-debug BOM
+# (proposed/bombardment-chaos-debug-bom.md Phase 5, 2026-05-25). Every
+# step in this workflow blocks the job on failure EXCEPT the two Pumba
+# chaos slices ("Run Pumba chaos slice" 3c and "Run network-chaos
+# slice" 4b) — see their `continue-on-error: true` comments for why
+# (the Pumba 0.11.7 tc-container exec race makes them silent no-ops on
+# every Docker host we've tried, including this Linux runner; arming a
+# no-op as a required gate would lie about coverage). The kill-recovery
+# (4a) and projection-corruption (4c) slices block normally — both
+# verified green locally + in CI before this commit.
 #
 # What this catches:
-#   - Phase 3a Definition of Done #1: the daemon ships as a Docker
-#     image, boots, /healthz passes, /status.version == package.json.
+#   - Phase 3a: daemon ships as a Docker image, boots, /healthz passes,
+#     /status.version == package.json.
 #   - Cross-machine packaging drift (a dep that npm-installs on the
 #     dev host but doesn't compile inside the bookworm-slim base, the
 #     better-sqlite3 native-build trap, the SEA bundler's quirks, etc.)
-#   - Once Phase 3b lands: docker compose stands the federation
-#     topology up and each peer's /api/federation/peers lists the
-#     others. The mDNS-blocked subnet shape is exercised here.
-#   - Once Phase 3c lands: Pumba sidecar applies netem latency/loss
-#     and the federation oracles still pass at the configured budget.
+#   - Phase 3b: docker compose stands the federation topology up and
+#     each peer's /api/federation/peers lists the others; the
+#     mDNS-blocked subnet shape is exercised here.
+#   - Phase 3c: Pumba sidecar wires netem latency/loss (best-effort —
+#     see the 3c + 4b carve-out below) and the federation oracles still
+#     pass at the configured budget.
+#   - Phase 4a: SIGKILL of peer-a's daemon process from inside the
+#     container; the restart policy brings the container back +
+#     startupDecisionSweep recovers the in-flight decision.
+#   - Phase 4c: out-of-band projection corruption is detectable by
+#     replaying the event log; freshness-gated convergence oracle
+#     surfaces a stuck-degraded peer (the multi-homed peer-client bug
+#     fixed in this BOM's Phase 4 follow-up).
 #
-# This workflow runs on every PR + push to main. It is *fast* on
-# cache hits (a few minutes) — the Dockerfile is structured so
+# Fast on cache hits (a few minutes) — the Dockerfile is structured so
 # `npm ci` is the slow layer and only re-runs when package*.json
 # change. Buildx + GHA cache keeps the runtime under 5 min in the
 # common case.
@@ -206,17 +225,34 @@ jobs:
         # Phase 3c — netem latency injection at the LAN edge. Oracles
         # must still pass under a modest impairment budget; harsher
         # partition + kill is Phase 4.
+        #
+        # Non-blocking: same Pumba 0.11.7 `--tc-image=gaiadocker/iproute2`
+        # race the 4b slice carries (see that step for the full
+        # diagnosis). The tc-container exits before Pumba's
+        # `docker exec` lands, sidecar exits non-zero with
+        #   "failed to create tc-container exec: container ... is not running"
+        # and the netem rule never installs. The runner's WARN emits
+        # the pumba log excerpt when this happens; oracles then run
+        # against UN-impaired traffic and trivially "pass" — gating on
+        # a green no-op would lie about chaos coverage. Promoting to
+        # required check is gated on the same three upstream fixes
+        # listed in the 4b carve-out: (a) bump Pumba past the race,
+        # (b) tc-image with a long-running entrypoint, (c) install
+        # iproute2 directly into stavr:ci and drop --tc-image.
+        continue-on-error: true
         run: |
           set -euo pipefail
           node bombardment/federation/run-pumba-slice.mjs
 
       - name: Run kill-recovery chaos slice
         # Phase 4a — SIGKILL peer-a, verify (a) the restart-policy
-        # brings it back, (b) the in-flight decision is recovered by
-        # startupDecisionSweep, (c) SSE clients can reconnect with
-        # since_id and see the late-response in the replay.
-        # Re-uses the existing compose topology — no new image build,
-        # no new container churn.
+        # brings it back (RestartCount increments + /healthz returns)
+        # and (b) the in-flight decision is recovered by
+        # startupDecisionSweep. The originally-specified third
+        # invariant (SSE since_id reconnect across the kill) was
+        # dropped — see proposed/bombardment-chaos-debug-bom.md
+        # "Decision (locked 2026-05-25)". Re-uses the existing
+        # compose topology — no new image build, no new container churn.
         run: |
           set -euo pipefail
           node bombardment/chaos/run-kill-slice.mjs
@@ -226,6 +262,24 @@ jobs:
         # on peer-b via Pumba netem. The Phase 3d federation oracles
         # must still pass under this heavier budget (Phase 3c covers
         # the modest budget; Phase 4b is the "WAN-going-bad" envelope).
+        #
+        # Non-blocking: Pumba 0.11.7's `--tc-image=gaiadocker/iproute2`
+        # pattern races (the tc-container exits before Pumba's
+        # `docker exec` lands), so on every Docker host we've tested
+        # (Docker Desktop on Windows AND ubuntu-latest GHA runners)
+        # both pumba sidecars exit non-zero with
+        #   "failed to create tc-container exec: container ... is not running"
+        # and the netem rule never installs. The slice's runner then
+        # runs the oracles against UN-impaired traffic and "passes" —
+        # so gating on this step today would lie about chaos coverage.
+        # The runner already emits a loud WARN with the pumba log
+        # excerpt when this happens; promoting to required check is
+        # blocked on either (a) bumping Pumba past the race, (b)
+        # switching to a tc-image with a long-running entrypoint, or
+        # (c) installing iproute2 directly into stavr:ci and dropping
+        # --tc-image. Tracked in proposed/bombardment-chaos-debug-bom.md
+        # Phase 5 follow-up notes; 4a + 4c stay blocking.
+        continue-on-error: true
         run: |
           set -euo pipefail
           node bombardment/chaos/run-netchaos-slice.mjs

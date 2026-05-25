@@ -18,16 +18,24 @@ usable for the read-only oracle layer.
   "In-container helpers — how they get in" below.
 - **Runner:** `run-kill-slice.mjs` — coordinates the kill cycle and
   invokes the recovery oracle.
-- **Oracle:** `oracles/kill-recovery.mjs` — asserts three invariants on
+- **Oracle:** `oracles/kill-recovery.mjs` — asserts two invariants on
   one kill cycle:
   1. Docker's `restart: unless-stopped` policy brings the container
-     back, and `/healthz` returns 200 within the budget.
+     back, and `/healthz` returns 200 within the budget. The container's
+     `RestartCount` must also increment relative to a pre-kill snapshot
+     (positive proof the policy fired).
   2. An in-flight decision (pre-seeded with a past `expires_at`) is
      swept by `startupDecisionSweep` on the daemon's restart, producing
      a `decision_late_response` event.
-  3. An SSE consumer that captured the latest event id before the kill
-     can reconnect with `?since_id=<id>` after the restart, and the
-     reconnect succeeds without dropping events.
+
+  A third invariant — an SSE consumer reconnecting with `?since_id=`
+  across the kill — was specified originally but dropped on 2026-05-25
+  (see `proposed/bombardment-chaos-debug-bom.md` "Decision (locked)"):
+  the SSE endpoint is loopback-gated, so no consumer can be both
+  loopback to the daemon AND survive a SIGKILL of the daemon's
+  container. The since_id replay logic is already covered in-process by
+  `tests/chaos.test.ts`; the across-a-container-kill wrapper adds no
+  coverage and is impossible by topology.
 
 ### Phase 4b — network chaos
 

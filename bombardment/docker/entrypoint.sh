@@ -25,6 +25,16 @@ if [ "${STAVR_ALLOW_NON_LOCAL_WITHOUT_AUTH:-0}" = "1" ]; then
     EXTRA_FLAGS="--allow-non-local-without-auth"
 fi
 
+# Always pass --force in the container: Docker's restart policy is the
+# supervisor here, so any stavr.pid file the new process finds is by
+# definition stale (the previous PID belonged to a now-dead process in
+# a now-destroyed namespace). Without --force, the daemon's "already
+# running" guard rejects every restart after a SIGKILL — observed by
+# the kill-recovery chaos slice. The guard is correct for host-level
+# invocations where two daemons could genuinely race; in a container
+# it can only ever be wrong.
+EXTRA_FLAGS="${EXTRA_FLAGS} --force"
+
 # `--log-format json` keeps container logs grep-able by structured
 # tooling (the bombardment harness reads them on failure). The flag
 # defaults to text when STAVR_LOG_FORMAT is unset.

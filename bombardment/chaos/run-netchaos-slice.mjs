@@ -64,6 +64,40 @@ async function main() {
   console.log('[netchaos-slice] settling 8s before re-running oracles');
   await sleep(8000);
 
+  // Surface silent Pumba failures. Pumba spawns a tc-container that
+  // shares the target's netns and runs `tc qdisc`; on some Docker
+  // hosts (notably Docker Desktop on Windows/WSL2) the tc-container
+  // can exit before Pumba's `docker exec` lands, and the netem rule
+  // is never installed — sidecar exits non-zero with
+  //   "failed to create tc-container exec: container ... is not running"
+  // — and the rest of the slice runs against UN-impaired traffic,
+  // turning the "oracles pass under heavy impairment" assertion into
+  // "oracles pass against clean traffic" (false negative on clean
+  // runs, false positive if the oracle is over-strict). Don't exit
+  // hard — the rest of the slice still validates oracle reliability —
+  // but loudly flag the substrate issue so a CI green doesn't claim
+  // chaos coverage it didn't actually exercise.
+  for (const sidecar of ['stavr-pumba-spike-peer-a', 'stavr-pumba-loss-peer-b']) {
+    const inspect = spawnSync(
+      'docker',
+      ['inspect', '--format', '{{.State.Status}}|{{.State.ExitCode}}', sidecar],
+      { encoding: 'utf8' },
+    );
+    if (inspect.status !== 0) {
+      console.warn(`[netchaos-slice] could not inspect ${sidecar}: ${inspect.stderr.trim()}`);
+      continue;
+    }
+    const [status, exitCode] = inspect.stdout.trim().split('|');
+    if (status === 'exited' && exitCode !== '0') {
+      console.warn(
+        `[netchaos-slice] WARN ${sidecar} exited ${exitCode} — impairment likely NOT applied. ` +
+          `Last 3 lines of pumba log:`,
+      );
+      const logs = spawnSync('docker', ['logs', '--tail', '3', sidecar], { encoding: 'utf8' });
+      console.warn((logs.stdout || logs.stderr || '').trim());
+    }
+  }
+
   console.log('[netchaos-slice] running federation oracles under heavier impairment');
   const oracles = spawnSync(process.execPath, [RUN_ORACLES], {
     stdio: 'inherit',

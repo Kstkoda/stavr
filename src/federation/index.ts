@@ -132,6 +132,19 @@ export function createFederation(): FederationSubsystem {
           // never-discovered peers can't be reached until mDNS resolves.
           if (peer.addresses.length === 0 && !peer.hostname) return;
           const result = await peerClient!.health(peer);
+          if (!result.ok) {
+            // Surface probe failures. Previously silent — a misrouted
+            // multi-homed peer (peer-client picking an unreachable IP
+            // out of the mDNS-discovered list) would flip to degraded
+            // and stay there with zero diagnostic in the daemon log.
+            // health() now returns an `error` summarising every
+            // candidate that was tried, so a stuck peer points straight
+            // at which addresses are failing.
+            log.warn('federation: peer probe failed', {
+              peer_id: peer.id,
+              error: result.error,
+            });
+          }
           registry.recordPingResult(peer.id, result.ok);
         }),
       );
