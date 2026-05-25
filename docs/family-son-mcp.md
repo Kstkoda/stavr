@@ -186,4 +186,179 @@ If any of these fail, do NOT proceed. Phase 3's pair-complete request runs throu
 
 ---
 
-<!-- Phase 3 and Phase 4 appended in subsequent commits. -->
+## Phase 3 — Device pairing
+
+Bootstrap the son's machine as a paired device of the operator's daemon. Outputs a long-term bearer token the son's Claude Code will carry on every `/mcp` request.
+
+The ceremony is two commands across two machines; the token is shown exactly once.
+
+### 3.1 — Prerequisite — daemon back on loopback for the bootstrap
+
+`stavr pair bootstrap` is loopback-only by design (the `/pair/initiate` endpoint refuses non-loopback callers). If Phase 2's `network.bind: helm.stavr.mesh` is still in `~/.stavr/stavr.yaml`, the daemon currently refuses to start because no paired devices exist yet. Temporarily set:
+
+```yaml
+network:
+  bind: localhost
+  require_auth_when_non_local: true
+```
+
+Restart the daemon (the right `restart` invocation per Phase 2.3 for your supervisor). The daemon is now on `127.0.0.1:7777` — Phase 3 uses that.
+
+After Phase 3 completes successfully, flip `bind` back to `helm.stavr.mesh` and restart once more.
+
+### 3.2 — Operator side — open the pairing window
+
+On the operator's machine, from any terminal:
+
+```powershell
+stavr pair bootstrap
+```
+
+Output (JSON):
+
+```json
+{
+  "ok": true,
+  "code": "123456",
+  "expires_at": "2026-05-25T12:34:56.789Z",
+  "instructions": "Run `stavr pair remote-host --daemon-url <addr> --code 123456 --name <device-name>` on the new device."
+}
+```
+
+The 6-digit code is valid for **5 minutes**. If it expires, re-run `stavr pair bootstrap` for a new one.
+
+### 3.3 — Son side — exchange the code for a token
+
+The son's machine needs to reach the operator's daemon via the WG mesh. The mesh hostname is `helm.stavr.mesh:7777`. The son has TWO options for the exchange:
+
+**Option A — raw curl (no stavR install on son's machine, recommended for BOM intent).**
+
+```bash
+# Substitute the real 6-digit code and a neutral device handle.
+curl -sS -X POST http://helm.stavr.mesh:7777/pair/complete \
+  -H 'Content-Type: application/json' \
+  -d '{"code":"123456","device_name":"<son-handle>"}'
+```
+
+PowerShell equivalent:
+
+```powershell
+$body = @{ code = '123456'; device_name = '<son-handle>' } | ConvertTo-Json
+Invoke-RestMethod -Method POST `
+  -Uri 'http://helm.stavr.mesh:7777/pair/complete' `
+  -ContentType 'application/json' `
+  -Body $body
+```
+
+Response (JSON):
+
+```json
+{
+  "device_id": "9c1f...",
+  "device_name": "<son-handle>",
+  "paired_at": "2026-05-25T12:35:10.123Z",
+  "token": "8e2a1f...long-opaque-string"
+}
+```
+
+**The `token` is the bearer the son's Claude Code will use in Phase 4.** Save it somewhere durable — a password manager entry is the right place. The daemon stores only the SHA-256 hash; the raw value is shown exactly once and cannot be recovered.
+
+**Option B — stavR CLI installed on the son's machine.** Slightly more polished, also slightly larger footprint. If the son has stavR installed:
+
+```bash
+stavr pair remote-host \
+  --daemon-url http://helm.stavr.mesh:7777 \
+  --code 123456 \
+  --name <son-handle>
+```
+
+This calls `/pair/complete` for you and writes the token to the son's local `~/.stavr/devices.yaml`. Same response shape. Either path produces the same server-side state.
+
+> **BOM intent.** The BOM specifies the son runs Claude Code only — no stavR daemon, no CC worker processes. The stavR CLI is technically more than that, but a one-shot CLI for pairing is a small concession. **Option A (curl) is the cleaner match for the BOM** because it leaves the son's machine with nothing stavR-related except the bearer token pasted into the CC config.
+
+### 3.4 — Operator side — verify the device landed
+
+```powershell
+stavr devices list
+```
+
+Output should include the new device:
+
+```json
+[
+  {
+    "id": "9c1f...",
+    "name": "<son-handle>",
+    "paired_at": "2026-05-25T12:35:10.123Z",
+    "paired_from_ip": "10.0.0.42",
+    "revoked_at": null
+  }
+]
+```
+
+`paired_from_ip` should be the son's WG-side IP — sanity-check it matches the address WG hands out to the son.
+
+### 3.5 — Bring the daemon back up on the mesh
+
+The first paired device exists, so `authConfigured` is now true and the bind-auth gate will accept the non-loopback bind. Flip `~/.stavr/stavr.yaml`:
+
+```yaml
+network:
+  bind: helm.stavr.mesh
+  require_auth_when_non_local: true
+```
+
+Restart the daemon. Logs should show:
+
+```
+HTTP/SSE listening on helm.stavr.mesh:7777
+```
+
+### 3.6 — Verification
+
+**From the son's machine.** The token is what we're testing.
+
+```bash
+# Without token — 401
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' \
+  --data '{}' http://helm.stavr.mesh:7777/mcp
+# expect: 401
+
+# With token — 400 or 406 (MCP-protocol error, NOT 401). That's the win:
+# bearer-auth let us in; the request body is invalid MCP, which is what
+# we want to prove at the auth layer.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <paste-token-here>' \
+  --data '{}' http://helm.stavr.mesh:7777/mcp
+# expect: 400 or 406 (NOT 401)
+
+# /healthz — public allowlist, always 200
+curl -s -o /dev/null -w '%{http_code}\n' http://helm.stavr.mesh:7777/healthz
+# expect: 200
+```
+
+PowerShell variant uses `Invoke-WebRequest -SkipHttpErrorCheck` to capture non-2xx codes without exception machinery.
+
+### 3.7 — If pairing fails
+
+| Symptom | Likely cause |
+|---|---|
+| `connect: connection refused` from `pair/complete` | Daemon not running on `helm.stavr.mesh:7777`, or `network.bind` is still `localhost`. Phase 2 verification didn't fully pass. |
+| `404 not_found` or `400 invalid_code` | Code expired (5-min TTL) or mistyped. Re-run `stavr pair bootstrap`. |
+| `400 device_name required` | The `device_name` field is required and must be non-empty in `/pair/complete`. |
+| Operator's `stavr pair bootstrap` returns `403 loopback_only` | The bootstrap command was run against a non-loopback URL. `/pair/initiate` refuses non-loopback callers. Run on the operator's machine against `http://127.0.0.1:7777`. |
+| Son's curl hangs forever | WG tunnel down, or no route. Re-run the Phase 2 `Test-NetConnection` / `nc -vz` reachability probe. |
+
+### 3.8 — Phase 3 done — what's verified
+
+- One device row exists in the operator's `devices` table, paired from the son's WG IP.
+- The son holds a long-term bearer token (in his password manager, or in his stavR `devices.yaml` if Option B).
+- Non-loopback `/mcp` with the token is accepted (returns an MCP protocol error, not 401).
+- Without the token, `/mcp` returns 401.
+- The daemon is back on `helm.stavr.mesh:7777`.
+
+---
+
+<!-- Phase 4 appended in the next commit. -->
+
