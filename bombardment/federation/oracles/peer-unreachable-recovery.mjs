@@ -52,15 +52,6 @@ async function readState() {
   return view ? view.state : 'missing';
 }
 
-async function pingViaTool(toolName, viewerBaseUrl) {
-  // Trigger an explicit ping cycle by hitting the daemon's federation
-  // reload endpoint if present; otherwise just sleep one POLL_INTERVAL.
-  // Phase 3 doesn't add a /api/federation/ping endpoint — the daemon's
-  // own 60s setInterval drives convergence. The 60s wait is built in
-  // to BUDGET_MS.
-  await sleep(POLL_INTERVAL_MS);
-}
-
 export async function peerUnreachableRecovery() {
   const start = Date.now();
   const target = TOPOLOGY.peers.find((p) => p.id === TARGET_ID);
