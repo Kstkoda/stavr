@@ -68,6 +68,8 @@ network:
   require_auth_when_non_local: true
 ```
 
+> **F3 — Do NOT use `bind: lan` on a multi-homed host.** `resolveBind('lan')` returns the first non-loopback IPv4 interface it finds, with no preference for WireGuard over Ethernet or other adapters. On a Windows machine with both a physical NIC and a WireGuard interface the daemon may silently bind to the wrong address and the son's machine will never connect. Always use the **explicit WireGuard hostname or IP** (`bind: helm.stavr.mesh` above, or `bind: 10.0.0.1` if you prefer the raw WG IP — though then set `STAVR_WEBAUTHN_RP_ID` to the hostname separately). The `bind: lan` shortcut is only safe on a single-NIC host.
+
 ### 2.3 — Set environment variables (operator side)
 
 Two env vars on the daemon process. The exact mechanism depends on the supervisor:
@@ -285,18 +287,21 @@ stavr devices list
 Output should include the new device:
 
 ```json
-[
-  {
-    "id": "9c1f...",
-    "name": "<son-handle>",
-    "paired_at": "2026-05-25T12:35:10.123Z",
-    "paired_from_ip": "10.0.0.42",
-    "revoked_at": null
-  }
-]
+{
+  "devices": [
+    {
+      "id": "9c1f...",
+      "name": "<son-handle>",
+      "paired_at": "2026-05-25T12:35:10.123Z",
+      "paired_from_ip": "10.0.0.42"
+    }
+  ]
+}
 ```
 
 `paired_from_ip` should be the son's WG-side IP — sanity-check it matches the address WG hands out to the son.
+
+> **F8 note:** `revoked_at` is absent from the JSON for active devices (the CLI maps `undefined` and `JSON.stringify` omits undefined-valued keys). If you are scripting a "not revoked" check, test `device.revoked_at === undefined` or `!device.revoked_at` — not `=== null`.
 
 ### 3.5 — Bring the daemon back up on the mesh
 
@@ -319,24 +324,29 @@ HTTP/SSE listening on helm.stavr.mesh:7777
 **From the son's machine.** The token is what we're testing.
 
 ```bash
-# Without token — 401
-curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' \
+# /healthz — public allowlist, always 200 regardless of token
+curl -s -o /dev/null -w '%{http_code}\n' http://helm.stavr.mesh:7777/healthz
+# expect: 200
+
+# Without token — 401 (bearer-auth middleware rejects before reaching MCP layer)
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
   --data '{}' http://helm.stavr.mesh:7777/mcp
 # expect: 401
 
-# With token — 400 or 406 (MCP-protocol error, NOT 401). That's the win:
-# bearer-auth let us in; the request body is invalid MCP, which is what
-# we want to prove at the auth layer.
+# With token + correct Accept header — NOT 401 (bearer-auth passed; MCP SDK
+# rejects the empty body as malformed JSON-RPC → 400). 400 is the success
+# signal here: auth gate was satisfied, SDK is processing.
 curl -s -o /dev/null -w '%{http_code}\n' -X POST \
   -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
   -H 'Authorization: Bearer <paste-token-here>' \
   --data '{}' http://helm.stavr.mesh:7777/mcp
-# expect: 400 or 406 (NOT 401)
-
-# /healthz — public allowlist, always 200
-curl -s -o /dev/null -w '%{http_code}\n' http://helm.stavr.mesh:7777/healthz
-# expect: 200
+# expect: 400 (NOT 401, NOT 406)
 ```
+
+> **F9 note:** Always include `Accept: application/json, text/event-stream` in the with-token request. Without it the MCP SDK returns 406 before the auth gate is ever evaluated, making 401 and 406 indistinguishable from the client's perspective. The unambiguous check is: no-token → 401, token + correct Accept → 400 (MCP body error, auth satisfied). A 406 on the token request means the `Accept` header is missing or wrong, not that the token was rejected.
 
 PowerShell variant uses `Invoke-WebRequest -SkipHttpErrorCheck` to capture non-2xx codes without exception machinery.
 
@@ -345,8 +355,8 @@ PowerShell variant uses `Invoke-WebRequest -SkipHttpErrorCheck` to capture non-2
 | Symptom | Likely cause |
 |---|---|
 | `connect: connection refused` from `pair/complete` | Daemon not running on `helm.stavr.mesh:7777`, or `network.bind` is still `localhost`. Phase 2 verification didn't fully pass. |
-| `404 not_found` or `400 invalid_code` | Code expired (5-min TTL) or mistyped. Re-run `stavr pair bootstrap`. |
-| `400 device_name required` | The `device_name` field is required and must be non-empty in `/pair/complete`. |
+| `401 invalid_code` | Code expired (5-min TTL) or mistyped (`transports.ts:/pair/complete` returns 401 for any invalid code, not 400). Re-run `stavr pair bootstrap`. |
+| `400 code and device_name required` | Both `code` and `device_name` must be present and non-empty in the request body. The server checks both fields together and returns this exact string when either is absent. |
 | Operator's `stavr pair bootstrap` returns `403 loopback_only` | The bootstrap command was run against a non-loopback URL. `/pair/initiate` refuses non-loopback callers. Run on the operator's machine against `http://127.0.0.1:7777`. |
 | Son's curl hangs forever | WG tunnel down, or no route. Re-run the Phase 2 `Test-NetConnection` / `nc -vz` reachability probe. |
 
@@ -368,7 +378,7 @@ The son's Claude Code points at the operator's `/mcp` endpoint and carries the P
 
 Claude Code reads MCP server configs from one of:
 
-- **User scope:** `~/.claude.json` (or platform equivalent: `%USERPROFILE%\.claude.json` on Windows, `~/Library/Application Support/Claude/.claude.json` on macOS — `claude mcp list` will print the resolved path).
+- **User scope:** `~/.claude.json` — same path on macOS, Linux, and Windows (use `%USERPROFILE%\.claude.json` on Windows). Run `claude mcp list` to confirm the resolved path on the son's machine.
 - **Project scope:** `.mcp.json` in the project root.
 
 For the family-mode model, **user scope** is correct — the son's stavR connection follows him across projects.
@@ -418,6 +428,8 @@ Claude Code prints the configured MCP servers and their connection state. `stavr
 Until the operator adds rows for `peer:<son-handle>`, EVERY tool the son's CC tries will be denied at the chokepoint with `per-actor NO_GO: actor "peer:<son-handle>" cannot invoke <tool> (source=default-deny)`. That is the structural fence — see `proposed/family-son-mcp-recon.md` §2 for the full mechanic.
 
 In the operator's browser, open `http://localhost:7777/dashboard/permissions`. The matrix is a (actor × tool) grid. Add the son's actor first if it isn't there (the Phase 3 paired device should have caused it to surface).
+
+> **Critical — tool IDs in the matrix must exactly match the registered dotted form.** `actor_permissions.resolve()` does a verbatim key lookup. The adapters register tools as `github.read_file`, `github.list_prs`, etc. A row entered with underscores (`github_read_file`) silently never matches and the son stays default-deny NO_GO on every call.
 
 **Recommended seed — Option A baseline from the recon doc.** Tool granularity, default-deny everything else:
 
