@@ -13,14 +13,24 @@
 // repeatedly reads every viewer's /api/federation/peers and asserts:
 //
 //   - every peer that SHOULD be reachable (shares a Docker network
-//     with the viewer) is observed `online` AT LEAST ONCE. That proves
-//     the PeerClient probe loop ran and `recordPingResult` flowed into
-//     the registry. A clean probe always succeeds; even a chaos probe
-//     succeeds ~90%, so across a couple of probe cycles every
-//     reachable peer is seen online at some poll.
+//     with the viewer) is observed in a CONVERGED state AT LEAST ONCE.
+//     Converged = `online`, or `degraded` under STAVR_BOMBARDMENT_UNDER_CHAOS.
+//     A clean probe always succeeds → state is `online`; under chaos,
+//     even one lost probe flips the cached state online → degraded
+//     (peer-registry.ts:155 — no miss threshold), and the next polling
+//     window may catch the daemon in that degraded gap rather than at
+//     the next `online` tick. Accept it under chaos: `degraded` is only
+//     ever entered FROM `online`, so the transition itself proves the
+//     PeerClient loop ran and `recordPingResult` flowed into the
+//     registry — which is the actual liveness signal this oracle is
+//     looking for. The original tolerance was added in 8949c5b, then
+//     dropped by the polling rewrite (c45b536) on the theory that the
+//     window would always catch an `online` tick; empirically it
+//     doesn't under the Phase 4b 500ms + jitter budget. Non-chaos runs
+//     keep the strict `online`-only assertion.
 //   - no cross-subnet peer is EVER observed `online` across the whole
 //     window — the federation safety invariant, strictly stronger than
-//     a single-instant check.
+//     a single-instant check. This stays strict even under chaos.
 //
 // It exits early the moment every reachable peer has converged (the
 // common case — convergence is usually already done after run-oracles'
@@ -64,7 +74,7 @@ export async function peerStateConvergence() {
         viewer: viewer.id,
         candidate: candidate.id,
         expectReachable: reachableIds.has(candidate.id),
-        everOnline: false, // reachable peer seen `online` >= once
+        everConverged: false, // reachable peer seen in a converged state >= once
         everUnexpectedOnline: false, // cross-subnet peer seen `online` (a breach)
         lastState: 'missing',
       });
@@ -99,17 +109,21 @@ export async function peerStateConvergence() {
         const state = stateById.get(pair.candidate) ?? 'missing';
         pair.lastState = state;
         if (state === 'online') {
-          if (pair.expectReachable) pair.everOnline = true;
+          if (pair.expectReachable) pair.everConverged = true;
           else pair.everUnexpectedOnline = true;
+        } else if (state === 'degraded' && UNDER_CHAOS && pair.expectReachable) {
+          // Under chaos, `degraded` proves liveness (PeerClient ran +
+          // recordPingResult fired) for a reachable pair — see header.
+          pair.everConverged = true;
         }
       }
     }
 
-    // Converged: every reachable pair has been seen `online` at least
-    // once. The cross-subnet safety check keeps running until then — a
-    // cross-subnet `online` is a deterministic config break, so the
-    // convergence window is ample to surface it.
-    const converged = pairs.every((p) => !p.expectReachable || p.everOnline);
+    // Converged: every reachable pair has been seen in a converged
+    // state at least once. The cross-subnet safety check keeps running
+    // until then — a cross-subnet `online` is a deterministic config
+    // break, so the convergence window is ample to surface it.
+    const converged = pairs.every((p) => !p.expectReachable || p.everConverged);
     if (converged) break;
 
     // Bail fast if nothing is listening at all — no amount of waiting
@@ -123,11 +137,11 @@ export async function peerStateConvergence() {
 
   const violations = [];
   for (const p of pairs) {
-    if (p.expectReachable && !p.everOnline) {
+    if (p.expectReachable && !p.everConverged) {
       violations.push({
         viewer: p.viewer,
         candidate: p.candidate,
-        kind: 'expected_online_but_not',
+        kind: UNDER_CHAOS ? 'expected_converged_but_not' : 'expected_online_but_not',
         last_state: p.lastState,
       });
     }
@@ -163,7 +177,7 @@ export async function peerStateConvergence() {
         viewer: p.viewer,
         candidate: p.candidate,
         expect_reachable: p.expectReachable,
-        ever_online: p.everOnline,
+        ever_converged: p.everConverged,
         last_state: p.lastState,
       })),
     },
