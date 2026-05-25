@@ -152,8 +152,12 @@ function isIPv4(addr: string): boolean {
   return /^(\d+\.){3}\d+$/.test(addr);
 }
 
+function isIPv6(addr: string): boolean {
+  return addr.includes(':');
+}
+
 function baseUrl(host: string, port: number): string {
-  return `http://${host}:${port}`;
+  return isIPv6(host) ? `http://[${host}]:${port}` : `http://${host}:${port}`;
 }
 
 function dedupe(arr: string[]): string[] {
