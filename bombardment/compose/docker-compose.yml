@@ -66,7 +66,7 @@ services:
       # that reconciles the peers under a different -f overlay set
       # (pumba.yml / netchaos.yml) would otherwise drop an overlay-only
       # mount and break the in-container helper exec.
-      - ../chaos/in-container:/opt/bombardment-chaos:ro
+      - ../chaos/in-container:/app/bombardment-chaos:ro
     restart: unless-stopped
     # com.stavr.role labels let oracles + Pumba target containers by
     # role (peer vs hub) without hard-coding container names.
@@ -93,7 +93,7 @@ services:
     volumes:
       - peer_b_home:/home/stavr/.stavr
       - ./peers-b.yaml:/home/stavr/.stavr/peers.yaml:ro
-      - ../chaos/in-container:/opt/bombardment-chaos:ro  # Phase 4 chaos helpers — see peer-a
+      - ../chaos/in-container:/app/bombardment-chaos:ro  # Phase 4 chaos helpers — see peer-a
     restart: unless-stopped
     labels:
       com.stavr.role: "peer"
@@ -126,7 +126,7 @@ services:
     volumes:
       - hub_home:/home/stavr/.stavr
       - ./peers-hub.yaml:/home/stavr/.stavr/peers.yaml:ro
-      - ../chaos/in-container:/opt/bombardment-chaos:ro  # Phase 4 chaos helpers — see peer-a
+      - ../chaos/in-container:/app/bombardment-chaos:ro  # Phase 4 chaos helpers — see peer-a
     restart: unless-stopped
     labels:
       com.stavr.role: "hub"

@@ -177,7 +177,7 @@ jobs:
         run: |
           set -euo pipefail
           cd bombardment/compose
-          # chaos.yml overlay supplies the /opt/bombardment-chaos bind-
+          # chaos.yml overlay supplies the /app/bombardment-chaos bind-
           # mount the Phase 4 runners need; restrict `up` to the three
           # peer services so the pumba kill sidecar declared alongside
           # the mount does NOT start here (the kill-recovery oracle

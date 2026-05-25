@@ -224,7 +224,7 @@ export async function killRecovery() {
     'exec',
     target.container,
     'node',
-    '/opt/bombardment-chaos/seed-decision.mjs',
+    '/app/bombardment-chaos/seed-decision.mjs',
     correlationId,
   ]);
   if (seed.status !== 0) {
@@ -392,7 +392,7 @@ export async function killRecovery() {
       'exec',
       target.container,
       'node',
-      '/opt/bombardment-chaos/find-late-response.mjs',
+      '/app/bombardment-chaos/find-late-response.mjs',
       correlationId,
     ]);
     if (probe.status === 0) {

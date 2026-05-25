@@ -119,7 +119,7 @@ async function main() {
 
   // 1) Seed fixture.
   console.log(`[run-projection-corruption] seeding ${FIXTURE_COUNT} fixture pairs in ${target.container}`);
-  const seed = execInContainer('/opt/bombardment-chaos/seed-projection-fixture.mjs', String(FIXTURE_COUNT));
+  const seed = execInContainer('/app/bombardment-chaos/seed-projection-fixture.mjs', String(FIXTURE_COUNT));
   if (seed.status !== 0) {
     fail(transcript, `seed failed: ${seed.stderr || seed.stdout}`, start);
   }
@@ -135,7 +135,7 @@ async function main() {
 
   // 2) Pre-corruption replay. Must match.
   console.log('[run-projection-corruption] replay before corruption — expecting clean');
-  const preReplay = execInContainer('/opt/bombardment-chaos/replay-projection.mjs');
+  const preReplay = execInContainer('/app/bombardment-chaos/replay-projection.mjs');
   // replay-projection exits 1 (DB unreachable) to stderr only — parse
   // failure on empty stdout would otherwise crash past fail() into
   // main().catch with no artifact (review finding #6).
@@ -157,7 +157,7 @@ async function main() {
   const flipId = seedSummary.correlation_ids[0];
   const deleteId = seedSummary.correlation_ids[1];
   console.log(`[run-projection-corruption] corrupting projection — flip=${flipId} delete=${deleteId}`);
-  const corrupt = execInContainer('/opt/bombardment-chaos/corrupt-projection.mjs', flipId, deleteId);
+  const corrupt = execInContainer('/app/bombardment-chaos/corrupt-projection.mjs', flipId, deleteId);
   if (corrupt.status !== 0) {
     fail(transcript, `corrupt failed: ${corrupt.stderr || corrupt.stdout}`, start);
   }
@@ -177,7 +177,7 @@ async function main() {
 
   // 4) Post-corruption replay. Must mismatch.
   console.log('[run-projection-corruption] replay after corruption — expecting mismatches');
-  const postReplay = execInContainer('/opt/bombardment-chaos/replay-projection.mjs');
+  const postReplay = execInContainer('/app/bombardment-chaos/replay-projection.mjs');
   const postParse = tryParseJson(postReplay, 'post-replay');
   if (!postParse.ok) {
     fail(transcript, postParse.reason, start, postParse.diagnostic);

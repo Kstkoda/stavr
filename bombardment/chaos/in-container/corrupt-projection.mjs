@@ -15,7 +15,7 @@
 // row from the log.
 //
 // Usage:
-//   docker exec stavr-peer-a node /opt/bombardment-chaos/corrupt-projection.mjs <flip_id> <delete_id>
+//   docker exec stavr-peer-a node /app/bombardment-chaos/corrupt-projection.mjs <flip_id> <delete_id>
 //
 // Output: one JSON line summarising what changed.
 // Exit: 0 ok / 1 db err / 2 bad invocation.

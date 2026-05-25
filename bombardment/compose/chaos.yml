@@ -11,7 +11,7 @@
 #     `restart: unless-stopped` policy on peer-a is the supervisor
 #     that brings the container back.
 #
-# The in-container helper bind-mount (`/opt/bombardment-chaos`) is NOT
+# The in-container helper bind-mount (`/app/bombardment-chaos`) is NOT
 # here — it lives on the base docker-compose.yml. An overlay-only mount
 # gets dropped when a chaos slice reconciles the peers under a different
 # -f set (pumba.yml / netchaos.yml); base-mounting makes it

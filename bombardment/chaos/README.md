@@ -59,9 +59,9 @@ usable for the read-only oracle layer.
 ## In-container helpers — how they get in
 
 The base compose file bind-mounts `bombardment/chaos/in-container/`
-read-only at `/opt/bombardment-chaos/` on every peer container. The
+read-only at `/app/bombardment-chaos/` on every peer container. The
 helpers are JavaScript modules invoked via
-`docker exec stavr-peer-a node /opt/bombardment-chaos/<helper>.mjs ...`
+`docker exec stavr-peer-a node /app/bombardment-chaos/<helper>.mjs ...`
 from the runner scripts. They use the daemon's bundled
 `better-sqlite3` to open `${STAVR_HOME}/runestone.db` directly — same
 DB the daemon writes to — and either insert a fixture row (seed) or

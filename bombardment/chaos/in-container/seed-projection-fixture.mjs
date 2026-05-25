@@ -16,7 +16,7 @@
 //     correlation_id, payload_json carrying question + options
 //
 // Usage:
-//   docker exec stavr-peer-a node /opt/bombardment-chaos/seed-projection-fixture.mjs <count>
+//   docker exec stavr-peer-a node /app/bombardment-chaos/seed-projection-fixture.mjs <count>
 //
 // Output (stdout): one JSON line { ok, count, correlation_ids }.
 // Idempotent — re-running with the same count is a no-op (INSERT OR IGNORE).

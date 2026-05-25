@@ -3,7 +3,7 @@
 // `decision_late_response` event has landed for a given correlation_id.
 //
 // Invoked from the runner after the daemon restarts:
-//   docker exec stavr-peer-a node /opt/bombardment-chaos/find-late-response.mjs <correlation_id>
+//   docker exec stavr-peer-a node /app/bombardment-chaos/find-late-response.mjs <correlation_id>
 //
 // The startupDecisionSweep publishes one decision_late_response per
 // open-and-expired decision it finds at boot. We assert by reading the

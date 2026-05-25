@@ -4,7 +4,7 @@
 // projection + event log, both with a past expires_at.
 //
 // Invoked from the runner via:
-//   docker exec stavr-peer-a node /opt/bombardment-chaos/seed-decision.mjs <correlation_id>
+//   docker exec stavr-peer-a node /app/bombardment-chaos/seed-decision.mjs <correlation_id>
 //
 // The row is intentionally written through better-sqlite3 (NOT through
 // the daemon's createDecision / publish path), because the test we're
