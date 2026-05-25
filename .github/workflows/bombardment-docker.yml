@@ -212,11 +212,13 @@ jobs:
 
       - name: Run kill-recovery chaos slice
         # Phase 4a — SIGKILL peer-a, verify (a) the restart-policy
-        # brings it back, (b) the in-flight decision is recovered by
-        # startupDecisionSweep, (c) SSE clients can reconnect with
-        # since_id and see the late-response in the replay.
-        # Re-uses the existing compose topology — no new image build,
-        # no new container churn.
+        # brings it back (RestartCount increments + /healthz returns)
+        # and (b) the in-flight decision is recovered by
+        # startupDecisionSweep. The originally-specified third
+        # invariant (SSE since_id reconnect across the kill) was
+        # dropped — see proposed/bombardment-chaos-debug-bom.md
+        # "Decision (locked 2026-05-25)". Re-uses the existing
+        # compose topology — no new image build, no new container churn.
         run: |
           set -euo pipefail
           node bombardment/chaos/run-kill-slice.mjs

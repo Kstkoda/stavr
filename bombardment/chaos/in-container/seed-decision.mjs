@@ -16,16 +16,13 @@
 // the past — semantically identical to a decision that opened then
 // timed out while the process was down.
 //
-// We ALSO write a matching `decision_request` event for two reasons:
-//   - It satisfies the rebuild-from-log invariant (every projected
-//     decision has at least one corresponding request event in the
-//     log). Without it, the chaos seed leaves an orphan row that
-//     would break a stricter replay oracle.
-//   - It guarantees the SSE consumer's baseline window in the
-//     kill-recovery oracle sees at least one event id, so the
-//     subsequent reconnect can actually exercise `?since_id=` rather
-//     than silently falling back to the no-filter full-history
-//     replay path.
+// We ALSO write a matching `decision_request` event so the seed
+// satisfies the rebuild-from-log invariant (every projected decision
+// has at least one corresponding request event in the log). Without
+// it, the chaos seed would leave an orphan row that breaks a stricter
+// replay oracle. (Earlier revisions of the kill-recovery oracle also
+// relied on this event to seed an SSE consumer's baseline window; that
+// invariant was dropped — see oracles/kill-recovery.mjs.)
 //
 // Both inserts are idempotent (deterministic event id derived from
 // correlation_id + INSERT OR IGNORE on both tables) and live inside a

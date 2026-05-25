@@ -1,32 +1,37 @@
 // Bombardment Phase 4a — kill-recovery oracle.
 //
-// One destructive cycle, three invariants:
+// One destructive cycle, two invariants:
 //
 //   1. RESTART POLICY — after `docker kill` SIGKILLs peer-a, the
 //      `restart: unless-stopped` policy brings the container back and
-//      /healthz returns 200 within RESTART_BUDGET_MS.
+//      /healthz returns 200 within RESTART_BUDGET_MS. The container's
+//      RestartCount must also increment relative to a pre-kill snapshot;
+//      /healthz answering again is necessary but not sufficient evidence
+//      that the policy fired.
 //
 //   2. STARTUP DECISION SWEEP — a decision row that was `open` and had
 //      `expires_at` in the past at kill time appears as a
 //      decision_late_response event in the event log after restart
 //      (proves startupDecisionSweep ran and wrote through publish()).
 //
-//   3. SSE RECONNECT — an SSE consumer that captured the latest event
-//      id BEFORE the kill can reconnect to /events/sse?since_id=<id>
-//      AFTER the restart, and the reconnect succeeds (header 200,
-//      `:ok` ack, no immediate close). Replay correctness over the
-//      cut is asserted by checking that the late-response event from
-//      invariant 2 is included in the post-reconnect stream.
+// Invariant 3 (SSE consumer reconnect across kill, with ?since_id=)
+// was dropped — see proposed/bombardment-chaos-debug-bom.md "Decision
+// (locked 2026-05-25)". The SSE endpoint is loopback-gated; from the
+// host the consumer gets 403, from inside the container it dies with
+// the container, and a netns-sharing sidecar loses its namespace at
+// SIGKILL. The since_id replay path is already covered in-process by
+// `tests/chaos.test.ts` ("disconnected client can reconnect and
+// resume from since_event_id"). The across-a-container-kill wrapper
+// is impossible by topology and adds no coverage.
 //
-// Why one oracle, not three: each invariant requires the SAME kill +
-// restart cycle. Splitting them would either kill the container three
-// times (cumulative blast radius, slow) or rely on shared state across
-// oracles (fragile). One driver, one kill, three assertions.
+// Why one oracle, not two: each invariant requires the SAME kill +
+// restart cycle. Splitting them would either kill the container twice
+// (cumulative blast radius, slow) or rely on shared state across
+// oracles (fragile). One driver, one kill, two assertions.
 
 import { spawnSync } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { randomUUID } from 'node:crypto';
-import { request as httpRequest } from 'node:http';
 import { getJson } from '../../federation/http-probe.mjs';
 import { TOPOLOGY } from '../../federation/topology.mjs';
 
@@ -36,9 +41,6 @@ const RESTART_BUDGET_MS = Number(
 );
 const SWEEP_BUDGET_MS = Number(
   process.env.STAVR_BOMBARDMENT_SWEEP_BUDGET_MS ?? 30_000,
-);
-const SSE_BASELINE_MS = Number(
-  process.env.STAVR_BOMBARDMENT_SSE_BASELINE_MS ?? 3_000,
 );
 const POLL_INTERVAL_MS = 1_000;
 
@@ -56,136 +58,6 @@ function inspectRestartCount(container) {
   if (r.status !== 0) return -1;
   const n = Number.parseInt((r.stdout ?? '').trim(), 10);
   return Number.isFinite(n) ? n : -1;
-}
-
-// Opens an SSE connection, collects events for a settle window, then
-// returns the latest event id seen + the open socket so the caller
-// can keep the consumer alive across the kill. The daemon's stream
-// will fail naturally when the container dies; we listen for that
-// to confirm the cut happened from the consumer's side.
-function openSseConsumer(baseUrl) {
-  return new Promise((resolveOuter, rejectOuter) => {
-    const url = new URL('/events/sse', baseUrl);
-    const req = httpRequest(
-      {
-        hostname: url.hostname,
-        port: url.port,
-        path: url.pathname,
-        method: 'GET',
-        headers: { Accept: 'text/event-stream' },
-      },
-      (res) => {
-        if (res.statusCode !== 200) {
-          rejectOuter(new Error(`baseline SSE returned HTTP ${res.statusCode}`));
-          return;
-        }
-        const consumer = {
-          req,
-          res,
-          lastEventId: null,
-          closed: false,
-          dropDetected: false,
-        };
-        res.setEncoding('utf8');
-        let buf = '';
-        res.on('data', (chunk) => {
-          buf += chunk;
-          let nlIdx;
-          // SSE messages are separated by a blank line; parse on
-          // double-newline boundary so we never half-read a JSON event.
-          while ((nlIdx = buf.indexOf('\n\n')) !== -1) {
-            const frame = buf.slice(0, nlIdx);
-            buf = buf.slice(nlIdx + 2);
-            if (frame.startsWith('data:')) {
-              const json = frame.slice('data:'.length).trim();
-              try {
-                const ev = JSON.parse(json);
-                if (ev && typeof ev.id === 'string') consumer.lastEventId = ev.id;
-              } catch {
-                /* ignore non-JSON frames (comments, heartbeat) */
-              }
-            }
-          }
-        });
-        res.on('end', () => {
-          consumer.closed = true;
-          consumer.dropDetected = true;
-        });
-        res.on('error', () => {
-          consumer.closed = true;
-          consumer.dropDetected = true;
-        });
-        resolveOuter(consumer);
-      },
-    );
-    req.on('error', rejectOuter);
-    req.setTimeout(5_000, () => {
-      req.destroy(new Error('timeout connecting baseline SSE'));
-    });
-    req.end();
-  });
-}
-
-// Returns true if /events/sse?since_id=<id> returns a successful 200
-// stream that includes the seeded late-response event for the given
-// correlation_id. Drains the stream for SSE_BASELINE_MS then closes.
-function verifyReconnect(baseUrl, sinceId, expectedCorrelationId) {
-  return new Promise((resolveOuter) => {
-    const url = new URL('/events/sse', baseUrl);
-    if (sinceId) url.searchParams.set('since_id', sinceId);
-    const req = httpRequest(
-      {
-        hostname: url.hostname,
-        port: url.port,
-        path: url.pathname + url.search,
-        method: 'GET',
-        headers: { Accept: 'text/event-stream' },
-      },
-      (res) => {
-        if (res.statusCode !== 200) {
-          resolveOuter({ ok: false, reason: `reconnect HTTP ${res.statusCode}` });
-          return;
-        }
-        let buf = '';
-        let lateResponseSeen = false;
-        let frameCount = 0;
-        res.setEncoding('utf8');
-        res.on('data', (chunk) => {
-          buf += chunk;
-          let nlIdx;
-          while ((nlIdx = buf.indexOf('\n\n')) !== -1) {
-            const frame = buf.slice(0, nlIdx);
-            buf = buf.slice(nlIdx + 2);
-            if (frame.startsWith('data:')) {
-              frameCount++;
-              const json = frame.slice('data:'.length).trim();
-              try {
-                const ev = JSON.parse(json);
-                if (
-                  ev?.kind === 'decision_late_response' &&
-                  ev?.correlation_id === expectedCorrelationId
-                ) {
-                  lateResponseSeen = true;
-                }
-              } catch {
-                /* skip non-JSON */
-              }
-            }
-          }
-        });
-        setTimeout(() => {
-          req.destroy();
-          resolveOuter({ ok: true, frameCount, lateResponseSeen });
-        }, SSE_BASELINE_MS);
-      },
-    );
-    req.on('error', (err) => resolveOuter({ ok: false, reason: err.message }));
-    req.setTimeout(10_000, () => {
-      req.destroy();
-      resolveOuter({ ok: false, reason: 'reconnect timed out' });
-    });
-    req.end();
-  });
 }
 
 export async function killRecovery() {
@@ -238,74 +110,44 @@ export async function killRecovery() {
   }
   note('decision_seeded', seed.stdout.trim());
 
-  // 3) Open the SSE consumer + let it settle so lastEventId is current.
-  let consumer;
-  try {
-    consumer = await openSseConsumer(target.baseUrl);
-  } catch (err) {
-    return {
-      name: 'chaos_kill_recovery',
-      ok: false,
-      reason: `baseline SSE open failed: ${err.message}`,
-      evidence: { transcript },
-      durationMs: Date.now() - start,
-    };
-  }
-  await sleep(SSE_BASELINE_MS);
-  const sinceId = consumer.lastEventId;
-  note('sse_baseline_last_id', sinceId);
-
-  // Fail-fast when sinceId is null. Without a baseline event id the
-  // post-kill reconnect at step 7 would call /events/sse with no
-  // ?since_id= query param; the daemon's SSE handler then replays its
-  // ENTIRE event history on connect (persistence.ts getEvents with no
-  // sinceEventId returns all historical rows up to limit=500). That
-  // path would surface the late-response event via the no-filter
-  // full-replay, silently turning invariant 3 into a tautology
-  // instead of a since_id correctness test. The seed-decision helper
-  // writes a `decision_request` event for exactly this purpose, so
-  // sinceId being null here means SSE never delivered the historical
-  // replay — that is itself a real failure to flag.
-  if (!sinceId) {
-    consumer.req.destroy();
-    return {
-      name: 'chaos_kill_recovery',
-      ok: false,
-      reason:
-        'baseline SSE consumer captured no event id during settle window — ' +
-        'reconnect step would fall back to no-filter full replay, masking a ' +
-        'since_id regression. Check that seed-decision wrote its decision_request ' +
-        'event and that the SSE historical replay path is firing.',
-      evidence: { transcript },
-      durationMs: Date.now() - start,
-    };
-  }
-
   // Snapshot the container's restart count BEFORE the kill so we can
   // assert post-recovery that the restart-policy actually fired (vs.
   // /healthz happening to keep answering through some other path).
   const preKillRestarts = inspectRestartCount(target.container);
   note('pre_kill_restart_count', preKillRestarts);
 
-  // 4) The kill. We use `docker kill` directly because it's the only
-  //    primitive that guarantees the daemon process dies synchronously
-  //    before this script proceeds — Pumba's kill is asynchronous from
-  //    the runner's POV. The Pumba sidecar in chaos.yml exists for
-  //    the operator-driven demo path.
-  const kill = dockerExec(['kill', '-s', 'SIGKILL', target.container]);
+  // 3) The kill. We can't use `docker kill` here: Docker marks any
+  //    container stopped via `docker stop` OR `docker kill` as
+  //    "manually stopped" and `restart: unless-stopped` then explicitly
+  //    refuses to restart it (the documented semantics of the policy).
+  //    The kill-recovery test wants the opposite — a daemon-crash
+  //    scenario where the restart policy DOES fire — so the kill has
+  //    to happen from inside the container, where Docker sees it as an
+  //    unexpected child-process death rather than an operator action.
+  //    The in-container `kill-daemon.mjs` helper finds the node PID
+  //    via /proc and sends SIGKILL directly; once the daemon is gone,
+  //    tini (PID 1) exits, the container dies, and the restart policy
+  //    brings it back. This is more realistic than `docker kill` for
+  //    the test scenario regardless of the manual-stop quirk — a real
+  //    daemon crash is a process exit, not a Docker API action.
+  const kill = dockerExec([
+    'exec',
+    target.container,
+    'node',
+    '/app/bombardment-chaos/kill-daemon.mjs',
+  ]);
   if (kill.status !== 0) {
-    consumer.req.destroy();
     return {
       name: 'chaos_kill_recovery',
       ok: false,
-      reason: `docker kill failed: ${kill.stderr.trim()}`,
+      reason: `kill-daemon failed: ${(kill.stderr || kill.stdout || '').trim()}`,
       evidence: { transcript },
       durationMs: Date.now() - start,
     };
   }
-  note('docker_kill_issued', true);
+  note('kill_daemon_issued', kill.stdout.trim());
 
-  // 5) Invariant 1 — restart-policy recovery. Poll /healthz until it
+  // 4) Invariant 1 — restart-policy recovery. Poll /healthz until it
   //    returns 200 or budget expires. Inside the same poll loop, note
   //    when docker reports the container as running again so the
   //    transcript can distinguish "restart never happened" from
@@ -326,7 +168,6 @@ export async function killRecovery() {
     }
   }
   if (!recovered) {
-    consumer.req.destroy();
     return {
       name: 'chaos_kill_recovery',
       ok: false,
@@ -346,7 +187,6 @@ export async function killRecovery() {
   const postRecoveryRestarts = inspectRestartCount(target.container);
   note('post_recovery_restart_count', postRecoveryRestarts);
   if (postRecoveryRestarts <= preKillRestarts) {
-    consumer.req.destroy();
     return {
       name: 'chaos_kill_recovery',
       ok: false,
@@ -359,27 +199,7 @@ export async function killRecovery() {
     };
   }
 
-  // The SSE consumer's connection died with the container; assert the
-  // consumer noticed the drop. Without this, a future change that kept
-  // a long-lived TCP socket alive across the kill would silently pass.
-  await sleep(500);
-  note('sse_consumer_drop_detected', consumer.dropDetected);
-  if (!consumer.dropDetected) {
-    consumer.req.destroy();
-    return {
-      name: 'chaos_kill_recovery',
-      ok: false,
-      reason:
-        'SSE consumer did not observe the connection drop after the kill — ' +
-        'the original stream stayed alive somehow, which means the post-kill ' +
-        'reconnect is not actually exercising a fresh connection',
-      evidence: { transcript },
-      durationMs: Date.now() - start,
-    };
-  }
-  consumer.req.destroy();
-
-  // 6) Invariant 2 — startupDecisionSweep produced a
+  // 5) Invariant 2 — startupDecisionSweep produced a
   //    decision_late_response event for the seeded row. Poll the
   //    in-container helper because the sweep races daemon startup
   //    (it can land before /healthz answers, but it can also lag by a
@@ -418,30 +238,6 @@ export async function killRecovery() {
     };
   }
   note('decision_late_response_found', lateEvent?.id ?? '<unknown id>');
-
-  // 7) Invariant 3 — SSE reconnect with the pre-kill since_id, and
-  //    confirm the late-response event from invariant 2 is included
-  //    in the post-reconnect replay.
-  const reconnect = await verifyReconnect(target.baseUrl, sinceId, correlationId);
-  if (!reconnect.ok) {
-    return {
-      name: 'chaos_kill_recovery',
-      ok: false,
-      reason: `SSE reconnect failed: ${reconnect.reason}`,
-      evidence: { transcript, sinceId },
-      durationMs: Date.now() - start,
-    };
-  }
-  if (!reconnect.lateResponseSeen) {
-    return {
-      name: 'chaos_kill_recovery',
-      ok: false,
-      reason: `SSE reconnect succeeded but did not include the late-response event for ${correlationId} (frames=${reconnect.frameCount}) — replay-from-since_id may have skipped it`,
-      evidence: { transcript, sinceId },
-      durationMs: Date.now() - start,
-    };
-  }
-  note('sse_reconnect_replay_ok', { frameCount: reconnect.frameCount });
 
   return {
     name: 'chaos_kill_recovery',
