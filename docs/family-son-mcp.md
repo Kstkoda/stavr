@@ -122,7 +122,7 @@ After 2.2/2.3, restart and check logs. The daemon WILL refuse to bind:
 
 ```
 stavr daemon refusing to bind non-local without auth configured.
-Run `stavr pair --bootstrap` first or set `network.require_auth_when_non_local: false`
+Run `stavr pair bootstrap` first or set `network.require_auth_when_non_local: false`
 if you know what you're doing.
 ```
 
