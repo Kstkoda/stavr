@@ -47,7 +47,17 @@ function compose(args) {
 
 async function main() {
   console.log('[pumba-slice] starting Pumba sidecars (delay/loss/jitter)');
-  const up = compose(['up', '-d', 'pumba-delay-a', 'pumba-loss-b', 'pumba-jitter-hub']);
+  // --remove-orphans clears stale pumba sidecars from a prior aborted
+  // run that share fixed container names; otherwise compose up collides
+  // and impairment silently never starts.
+  const up = compose([
+    'up',
+    '-d',
+    '--remove-orphans',
+    'pumba-delay-a',
+    'pumba-loss-b',
+    'pumba-jitter-hub',
+  ]);
   if (up.status !== 0) {
     console.error('[pumba-slice] failed to start Pumba sidecars');
     process.exit(1);
