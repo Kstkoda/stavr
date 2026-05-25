@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stavᚱ rig console</title>
+<style>
+  :root{
+    --bg:#0b0c11; --panel:rgba(22,24,33,.66); --panel2:rgba(30,33,44,.7);
+    --line:rgba(255,255,255,.09); --line2:rgba(255,255,255,.16);
+    --ink:#e8e9ef; --dim:#9498a6; --faint:#6b6f7d;
+    --rust:#c86a3e; --ok:#54b87a; --warn:#d8a53d; --crit:#d8543f;
+    --peer:#4f93dd; --hub:#2bb3a0;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{
+    background:
+      radial-gradient(900px 520px at 10% -10%, rgba(200,106,62,.12), transparent 60%),
+      radial-gradient(820px 520px at 102% -4%, rgba(43,179,160,.08), transparent 55%),
+      var(--bg);
+    color:var(--ink);
+    font:13.5px/1.5 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex;flex-direction:column;min-height:100%;
+  }
+  code{font-family:"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;}
+  .glass{
+    background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;backdrop-filter:blur(14px);
+  }
+
+  header{
+    display:flex;align-items:center;gap:16px;
+    padding:14px 20px;border-bottom:1px solid var(--line);
+  }
+  .wordmark{font-size:17px;font-weight:700;letter-spacing:.3px;white-space:nowrap;}
+  .wordmark .rune{color:var(--rust);font-weight:700;}
+  .wordmark .sub{color:var(--dim);font-weight:500;font-size:13px;margin-left:7px;}
+  .chip{
+    font-size:11.5px;color:var(--dim);padding:3px 9px;border-radius:20px;
+    border:1px solid var(--line2);white-space:nowrap;
+  }
+  .chip b{color:var(--ink);font-weight:600;}
+  .grow{flex:1;}
+  button.act{
+    font:inherit;font-size:12.5px;color:var(--ink);cursor:pointer;
+    background:var(--panel2);border:1px solid var(--line2);
+    border-radius:8px;padding:6px 12px;
+  }
+  button.act:hover{border-color:var(--rust);color:#fff;}
+
+  .note{
+    margin:12px 20px 0;padding:9px 14px;font-size:12px;color:var(--dim);
+    border-left:2px solid var(--rust);background:rgba(200,106,62,.06);
+    border-radius:0 8px 8px 0;
+  }
+  .note b{color:var(--ink);}
+
+  main{display:flex;gap:16px;padding:16px 20px 22px;flex:1;align-items:flex-start;}
+  .stage{flex:1;min-width:0;}
+  .rail{width:362px;flex:none;}
+  @media (max-width:1100px){
+    main{flex-direction:column;}
+    .rail{width:100%;}
+  }
+
+  .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;}
+  .tab{
+    font:inherit;font-size:12.5px;cursor:pointer;color:var(--dim);
+    background:transparent;border:1px solid var(--line);border-radius:8px;
+    padding:7px 14px;display:flex;align-items:center;gap:7px;
+  }
+  .tab:hover{color:var(--ink);border-color:var(--line2);}
+  .tab.on{color:#fff;border-color:var(--rust);background:rgba(200,106,62,.12);}
+  .tab .dot{width:8px;height:8px;border-radius:50%;flex:none;}
+  .dot.peer{background:var(--peer);}
+  .dot.hub{background:var(--hub);}
+  .dot.all{background:linear-gradient(135deg,var(--peer),var(--hub));}
+
+  .pages{display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap;}
+  .page{
+    font:inherit;font-size:11.5px;cursor:pointer;color:var(--dim);
+    background:transparent;border:1px solid var(--line);border-radius:14px;
+    padding:4px 11px;text-transform:capitalize;
+  }
+  .page:hover{color:var(--ink);}
+  .page.on{color:#fff;border-color:var(--peer);background:rgba(79,147,221,.14);}
+
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+  @media (max-width:1500px){.grid{grid-template-columns:repeat(2,1fr);}}
+  @media (max-width:980px){.grid{grid-template-columns:1fr;}}
+  .framecard{overflow:hidden;display:flex;flex-direction:column;}
+  .framehead{
+    display:flex;align-items:center;gap:8px;padding:9px 12px;
+    border-bottom:1px solid var(--line);
+  }
+  .framehead .name{font-weight:600;font-size:13px;}
+  .framehead .meta{color:var(--faint);font-size:11px;}
+  .framehead .grow{flex:1;}
+  .iconbtn{
+    font:inherit;font-size:11px;cursor:pointer;color:var(--dim);
+    background:transparent;border:1px solid var(--line);border-radius:6px;
+    padding:3px 8px;white-space:nowrap;
+  }
+  .iconbtn:hover{color:#fff;border-color:var(--rust);}
+  iframe{width:100%;border:0;background:#0e0f15;display:block;}
+  .grid iframe{height:430px;}
+  .solo iframe{height:calc(100vh - 250px);min-height:460px;}
+  .framehint{
+    padding:6px 12px;font-size:10.5px;color:var(--faint);
+    border-top:1px solid var(--line);
+  }
+
+  .rail h2{
+    font-size:12px;text-transform:uppercase;letter-spacing:.8px;
+    color:var(--dim);margin:0 0 4px;font-weight:600;
+  }
+  .railpad{padding:14px 14px 16px;}
+  .cwd{font-size:11px;color:var(--faint);margin-bottom:14px;}
+  .cwd code{color:var(--rust);}
+  .cmdgroup{margin-bottom:15px;}
+  .cmdgroup:last-child{margin-bottom:0;}
+  .grouphd{
+    font-size:11px;font-weight:600;color:var(--ink);
+    margin-bottom:6px;display:flex;align-items:center;gap:7px;
+  }
+  .grouphd .gcwd{font-weight:400;color:var(--faint);font-size:10px;}
+  .cmd{
+    display:flex;align-items:center;gap:8px;padding:6px 8px;
+    border:1px solid var(--line);border-radius:7px;margin-bottom:5px;
+    background:rgba(255,255,255,.015);
+  }
+  .cmd:hover{border-color:var(--line2);}
+  .cmd.danger{border-color:rgba(216,84,63,.32);background:rgba(216,84,63,.05);}
+  .cmd.key{border-color:rgba(84,184,122,.4);background:rgba(84,184,122,.06);}
+  .cmd .txt{flex:1;min-width:0;}
+  .cmd .lbl{font-size:11.5px;color:var(--ink);}
+  .cmd .lbl .tag{
+    font-size:9px;color:var(--crit);border:1px solid rgba(216,84,63,.4);
+    border-radius:4px;padding:0 4px;margin-left:6px;vertical-align:1px;
+  }
+  .cmd .line{
+    font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;display:block;margin-top:1px;
+  }
+  .copy{
+    font:inherit;font-size:10.5px;cursor:pointer;flex:none;
+    color:var(--dim);background:var(--panel2);
+    border:1px solid var(--line2);border-radius:6px;padding:4px 9px;
+  }
+  .copy:hover{color:#fff;border-color:var(--rust);}
+  .copy.done{color:var(--ok);border-color:var(--ok);}
+
+  footer{padding:8px 20px 16px;font-size:10.5px;color:var(--faint);}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wordmark">stav<span class="rune">ᚱ</span><span class="sub">rig console</span></div>
+  <span class="chip">project <b>stavr-bombardment</b></span>
+  <span class="chip">3 daemons &middot; local Docker</span>
+  <div class="grow"></div>
+  <button class="act" id="reload">&#x21bb; Reload dashboards</button>
+</header>
+
+<div class="note">
+  The dashboards are <b>loopback-gated</b> by the daemon, so they're served through a
+  <b>socat relay</b> &mdash; bring the rig up with the <b>dashboard-relay overlay</b> (green
+  command in the right rail) or the boxes below show a <code>loopback_only</code> error.
+  This console copies commands to your clipboard; it can't run them &mdash; paste into PowerShell.
+  Open this file in <b>Chrome or Edge</b>.
+</div>
+
+<main>
+  <section class="stage">
+    <div class="tabs" id="tabs"></div>
+    <div class="pages" id="pages" style="display:none"></div>
+    <div id="view"></div>
+  </section>
+
+  <aside class="rail glass">
+    <div class="railpad">
+      <h2>Launch &amp; inspect</h2>
+      <div class="cwd">Commands are grouped by the folder to run them from.</div>
+      <div id="cmds"></div>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  Dashboard reads (<code>/dashboard/*</code>, <code>/events/sse</code>) are restricted to
+  loopback callers; the relay sidecars make a host request look local. Health + federation
+  APIs are not gated and answer on the base ports directly.
+</footer>
+
+<script>
+"use strict";
+
+var DAEMONS = [
+  { id:"peer-a", name:"Peer A", port:17777, dash:17787, site:"site_a",          accent:"peer", container:"stavr-peer-a", service:"peer-a" },
+  { id:"peer-b", name:"Peer B", port:17778, dash:17788, site:"site_b",          accent:"peer", container:"stavr-peer-b", service:"peer-b" },
+  { id:"hub",    name:"Hub",    port:17779, dash:17789, site:"site_a + site_b", accent:"hub",  container:"stavr-hub",    service:"hub"    }
+];
+var PAGES = ["helm","topology","workers","history","plans","decide","toolkit",
+             "mcps","tools","permissions","capabilities","diagnostics","family-mode","settings"];
+
+var state = {
+  view: localStorage.getItem("rc.view") || "overview",
+  page: localStorage.getItem("rc.page") || "helm"
+};
+function save(){ localStorage.setItem("rc.view",state.view); localStorage.setItem("rc.page",state.page); }
+function url(d,page){ return "http://127.0.0.1:"+d.dash+"/dashboard/"+page; }
+function el(tag,cls,html){ var e=document.createElement(tag); if(cls)e.className=cls; if(html!=null)e.innerHTML=html; return e; }
+
+function renderTabs(){
+  var t=document.getElementById("tabs"); t.innerHTML="";
+  var ov=el("button","tab"+(state.view==="overview"?" on":""),
+            '<span class="dot all"></span>Overview &mdash; all three');
+  ov.onclick=function(){ state.view="overview"; save(); render(); };
+  t.appendChild(ov);
+  DAEMONS.forEach(function(d){
+    var b=el("button","tab"+(state.view===d.id?" on":""),
+             '<span class="dot '+d.accent+'"></span>'+d.name+' &middot; :'+d.dash);
+    b.onclick=function(){ state.view=d.id; save(); render(); };
+    t.appendChild(b);
+  });
+}
+
+function renderPages(){
+  var p=document.getElementById("pages");
+  if(state.view==="overview"){ p.style.display="none"; return; }
+  p.style.display="flex"; p.innerHTML="";
+  PAGES.forEach(function(pg){
+    var b=el("button","page"+(state.page===pg?" on":""),pg.replace("-"," "));
+    b.onclick=function(){ state.page=pg; save(); render(); };
+    p.appendChild(b);
+  });
+}
+
+function frameCard(d,page,solo){
+  var card=el("div","framecard glass"+(solo?" solo":""));
+  var head=el("div","framehead");
+  head.appendChild(el("span","dot "+d.accent));
+  head.appendChild(el("span","name",d.name));
+  head.appendChild(el("span","meta","&middot; "+d.site+" &middot; dash :"+d.dash));
+  head.appendChild(el("span","grow"));
+  var open=el("button","iconbtn","Open in tab &#8599;");
+  open.onclick=function(){ window.open(url(d,page),"_blank"); };
+  head.appendChild(open);
+  card.appendChild(head);
+  var f=el("iframe"); f.src=url(d,page); f.title=d.name+" dashboard";
+  card.appendChild(f);
+  card.appendChild(el("div","framehint",
+    "<code>loopback_only</code> error or blank? Bring the rig up with the "+
+    "dashboard-relay overlay (green command, right) &mdash; or that daemon is down."));
+  return card;
+}
+
+function render(){
+  renderTabs(); renderPages();
+  var v=document.getElementById("view"); v.innerHTML="";
+  if(state.view==="overview"){
+    var g=el("div","grid");
+    DAEMONS.forEach(function(d){ g.appendChild(frameCard(d,"helm",false)); });
+    v.appendChild(g);
+  } else {
+    var d=DAEMONS.filter(function(x){return x.id===state.view;})[0];
+    v.appendChild(frameCard(d,state.page,true));
+  }
+}
+document.getElementById("reload").onclick=function(){ render(); };
+
+var COMPOSE = "C:\\dev\\cowire\\bombardment\\compose";
+var ROOT    = "C:\\dev\\cowire";
+var GROUPS = [
+  { title:"Health checks", cwd:"any folder", items:[
+    { lbl:"peer-a /healthz",      cmd:"curl.exe http://127.0.0.1:17777/healthz" },
+    { lbl:"peer-b /healthz",      cmd:"curl.exe http://127.0.0.1:17778/healthz" },
+    { lbl:"hub /healthz",         cmd:"curl.exe http://127.0.0.1:17779/healthz" },
+    { lbl:"peer-a federation",    cmd:"curl.exe http://127.0.0.1:17777/api/federation/peers" },
+    { lbl:"hub federation",       cmd:"curl.exe http://127.0.0.1:17779/api/federation/peers" }
+  ]},
+  { title:"Rig lifecycle", cwd:COMPOSE, items:[
+    { lbl:"Status (ps)",          cmd:"docker compose ps" },
+    { lbl:"Bring up (base)",      cmd:"docker compose up -d" },
+    { lbl:"Bring up + dashboard relay (needed for the boxes above)", key:true,
+                                  cmd:"docker compose -f docker-compose.yml -f dashboard-relay.yml up -d" },
+    { lbl:"Bring up + chaos overlay (Pumba netem)",
+                                  cmd:"docker compose -f docker-compose.yml -f pumba.yml up -d" },
+    { lbl:"Bring up + chaos + dashboard relay",
+                                  cmd:"docker compose -f docker-compose.yml -f pumba.yml -f dashboard-relay.yml up -d" },
+    { lbl:"Restart peer-a",       cmd:"docker compose restart peer-a" },
+    { lbl:"Restart peer-b",       cmd:"docker compose restart peer-b" },
+    { lbl:"Restart hub",          cmd:"docker compose restart hub" },
+    { lbl:"Stop all (keep state)",cmd:"docker compose stop" },
+    { lbl:"Tear down",            cmd:"docker compose down" },
+    { lbl:"Tear down + wipe daemon volumes", danger:true,
+                                  cmd:"docker compose down -v" }
+  ]},
+  { title:"Logs (live tail)", cwd:COMPOSE, items:[
+    { lbl:"peer-a",               cmd:"docker compose logs -f peer-a" },
+    { lbl:"peer-b",               cmd:"docker compose logs -f peer-b" },
+    { lbl:"hub",                  cmd:"docker compose logs -f hub" },
+    { lbl:"All three",            cmd:"docker compose logs -f" }
+  ]},
+  { title:"Shell into a container", cwd:"any folder", items:[
+    { lbl:"peer-a",               cmd:"docker exec -it stavr-peer-a sh" },
+    { lbl:"peer-b",               cmd:"docker exec -it stavr-peer-b sh" },
+    { lbl:"hub",                  cmd:"docker exec -it stavr-hub sh" }
+  ]},
+  { title:"Federation oracles", cwd:ROOT, items:[
+    { lbl:"Wait for all healthy", cmd:"node bombardment/federation/wait-for-healthy.mjs" },
+    { lbl:"Run oracle set",       cmd:"node bombardment/federation/run-oracles.mjs" },
+    { lbl:"Pumba slice (impair + re-run oracles)",
+                                  cmd:"node bombardment/federation/run-pumba-slice.mjs" },
+    { lbl:"Recovery slice (pause/unpause)", danger:true,
+                                  cmd:"node bombardment/federation/run-recovery-slice.mjs" }
+  ]}
+];
+
+function renderCmds(){
+  var host=document.getElementById("cmds"); host.innerHTML="";
+  GROUPS.forEach(function(g){
+    var grp=el("div","cmdgroup");
+    grp.appendChild(el("div","grouphd",
+      g.title+'<span class="gcwd">'+g.cwd+'</span>'));
+    g.items.forEach(function(it){
+      var row=el("div","cmd"+(it.danger?" danger":"")+(it.key?" key":""));
+      var txt=el("div","txt");
+      txt.appendChild(el("div","lbl",it.lbl+(it.danger?'<span class="tag">destructive</span>':"")));
+      var line=el("code","line"); line.textContent=it.cmd;
+      txt.appendChild(line);
+      row.appendChild(txt);
+      var btn=el("button","copy","Copy");
+      btn.onclick=function(){
+        var ok=function(){ btn.textContent="Copied"; btn.classList.add("done");
+          setTimeout(function(){ btn.textContent="Copy"; btn.classList.remove("done"); },1400); };
+        if(navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(it.cmd).then(ok,function(){ fallback(it.cmd); ok(); });
+        } else { fallback(it.cmd); ok(); }
+      };
+      row.appendChild(btn);
+      grp.appendChild(row);
+    });
+    host.appendChild(grp);
+  });
+}
+function fallback(text){
+  var ta=document.createElement("textarea");
+  ta.value=text; ta.style.position="fixed"; ta.style.opacity="0";
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand("copy"); }catch(e){}
+  document.body.removeChild(ta);
+}
+
+render();
+renderCmds();
+</script>
+</body>
+</html>

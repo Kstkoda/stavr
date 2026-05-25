@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stavᚱ — Galaxy Identity &amp; Trust · architecture</title>
+<style>
+  :root{
+    --bg:#0b0c11; --panel:rgba(22,24,33,.72); --line:rgba(255,255,255,.10);
+    --ink:#e8e9ef; --dim:#9498a6; --faint:#6b6f7d;
+    --rust:#c86a3e; --ok:#54b87a; --peer:#4f93dd; --hub:#2bb3a0;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;}
+  body{
+    background:
+      radial-gradient(1000px 560px at 10% -10%, rgba(200,106,62,.12), transparent 60%),
+      radial-gradient(900px 560px at 100% 0%, rgba(43,179,160,.07), transparent 55%),
+      var(--bg);
+    color:var(--ink);
+    font:14px/1.6 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    padding:28px 20px 60px;
+  }
+  .wrap{max-width:880px;margin:0 auto;}
+  .wordmark{font-size:19px;font-weight:700;letter-spacing:.3px;}
+  .wordmark .rune{color:var(--rust);}
+  .lede{color:var(--dim);font-size:13px;margin:6px 0 26px;}
+  .card{
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    backdrop-filter:blur(14px);padding:20px 22px 18px;margin-bottom:20px;
+  }
+  .card h2{font-size:14px;font-weight:700;margin:0 0 2px;letter-spacing:.2px;}
+  .card .step{color:var(--rust);font-weight:700;}
+  .card .cap{color:var(--dim);font-size:12.5px;margin:12px 2px 0;}
+  .card .cap b{color:var(--ink);font-weight:600;}
+  svg{width:100%;height:auto;display:block;margin-top:8px;
+      font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .hubrow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:6px;}
+  @media(max-width:680px){.hubrow{grid-template-columns:repeat(2,1fr);}}
+  .hubcard{
+    border:1px solid var(--line);border-radius:9px;padding:10px 11px;
+    background:rgba(255,255,255,.02);
+  }
+  .hubcard .n{color:var(--rust);font-weight:700;font-size:11px;}
+  .hubcard .h{font-weight:600;font-size:12px;margin:2px 0 3px;}
+  .hubcard .d{color:var(--dim);font-size:10.5px;line-height:1.45;}
+  footer{color:var(--faint);font-size:11.5px;margin-top:6px;}
+  footer code{color:var(--rust);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="wordmark">stav<span class="rune">ᚱ</span> &nbsp;Galaxy Identity &amp; Trust</div>
+  <div class="lede">Architecture drawing for <code style="color:var(--rust)">proposed/galaxy-identity-trust-design.md</code>
+    &mdash; identity, trust, the hub mesh, and communication, across the five modes.</div>
+
+  <!-- ===== 1 — THE SPINE ===== -->
+  <div class="card">
+    <h2><span class="step">1 ·</span> The spine &mdash; identity is a key you hold</h2>
+    <svg viewBox="0 0 780 262" role="img" aria-labelledby="t1 d1">
+      <title id="t1">The Seal certifies subordinate keys</title>
+      <desc id="d1">One root keypair, the Seal, signs a certificate for each device and node key.</desc>
+      <defs>
+        <marker id="ar1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#9498a6"/>
+        </marker>
+      </defs>
+      <g stroke="#9498a6" stroke-width="1.4" fill="none" marker-end="url(#ar1)" opacity="0.75">
+        <path d="M193,132 C320,132 380,46 506,46"/>
+        <path d="M193,132 C320,132 380,89 506,89"/>
+        <path d="M193,132 L506,132"/>
+        <path d="M193,132 C320,132 380,175 506,175"/>
+        <path d="M193,132 C320,132 380,218 506,218"/>
+      </g>
+      <rect x="318" y="120" width="74" height="22" rx="11" fill="#0b0c11" stroke="rgba(255,255,255,.10)"/>
+      <text x="355" y="135" text-anchor="middle" font-size="10.5" fill="#9498a6">certifies</text>
+      <circle cx="135" cy="132" r="80" fill="none" stroke="#c86a3e" stroke-width="1" opacity="0.35"/>
+      <polygon points="106,82 164,82 193,132 164,182 106,182 77,132"
+               fill="rgba(200,106,62,.16)" stroke="#c86a3e" stroke-width="1.7"/>
+      <text x="135" y="150" text-anchor="middle" font-size="50" fill="#c86a3e" font-weight="700">&#5809;</text>
+      <text x="135" y="228" text-anchor="middle" font-size="14" font-weight="700" fill="#e8e9ef">THE SEAL</text>
+      <text x="135" y="247" text-anchor="middle" font-size="10.5" fill="#9498a6">your keypair &middot; held offline &middot; never moves</text>
+      <g>
+        <rect x="506" y="29" width="240" height="34" rx="8" fill="rgba(79,147,221,.12)" stroke="rgba(79,147,221,.45)"/>
+        <text x="626" y="50" text-anchor="middle" font-size="12" fill="#e8e9ef">Laptop &nbsp;<tspan fill="#9498a6">&middot; device key</tspan></text>
+        <rect x="506" y="72" width="240" height="34" rx="8" fill="rgba(79,147,221,.12)" stroke="rgba(79,147,221,.45)"/>
+        <text x="626" y="93" text-anchor="middle" font-size="12" fill="#e8e9ef">Phone &nbsp;<tspan fill="#9498a6">&middot; device key</tspan></text>
+        <rect x="506" y="115" width="240" height="34" rx="8" fill="rgba(84,184,122,.12)" stroke="rgba(84,184,122,.45)"/>
+        <text x="626" y="136" text-anchor="middle" font-size="12" fill="#e8e9ef">Node A &nbsp;<tspan fill="#9498a6">&middot; node key</tspan></text>
+        <rect x="506" y="158" width="240" height="34" rx="8" fill="rgba(84,184,122,.12)" stroke="rgba(84,184,122,.45)"/>
+        <text x="626" y="179" text-anchor="middle" font-size="12" fill="#e8e9ef">Node B &nbsp;<tspan fill="#9498a6">&middot; node key</tspan></text>
+        <rect x="506" y="201" width="240" height="34" rx="8" fill="rgba(43,179,160,.12)" stroke="rgba(43,179,160,.5)"/>
+        <text x="626" y="222" text-anchor="middle" font-size="12" fill="#e8e9ef">Hub &nbsp;<tspan fill="#9498a6">&middot; relay key</tspan></text>
+      </g>
+    </svg>
+    <div class="cap">Every device and node has its <b>own</b> keypair. The Seal &mdash; your one
+      irreplaceable secret &mdash; only signs a certificate for each. Lose a laptop and you revoke
+      <b>one certificate</b>; the Seal is untouched. No identity provider, nothing outside the galaxy.</div>
+  </div>
+
+  <!-- ===== 2 — IDENTITY != TRUST ===== -->
+  <div class="card">
+    <h2><span class="step">2 ·</span> Identity is not trust &mdash; two separate planes</h2>
+    <svg viewBox="0 0 780 360" role="img" aria-labelledby="t2 d2">
+      <title id="t2">Identity plane versus trust plane</title>
+      <desc id="d2">A verified key only proves authenticity. Trust is a separate computed layer feeding an authority gate.</desc>
+      <defs>
+        <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#9498a6"/>
+        </marker>
+      </defs>
+      <rect x="50" y="22" width="680" height="72" rx="11" fill="rgba(200,106,62,.10)" stroke="rgba(200,106,62,.5)"/>
+      <text x="78" y="56" font-size="16" font-weight="700" fill="#e8e9ef">IDENTITY</text>
+      <text x="78" y="78" font-size="11.5" fill="#9498a6">a verified key &mdash; proves the message is authentic and unforged</text>
+      <text x="702" y="62" text-anchor="end" font-size="11.5" font-style="italic" fill="#6b6f7d">&hellip;and nothing more</text>
+      <line x1="50" y1="124" x2="730" y2="124" stroke="rgba(255,255,255,.12)" stroke-width="1" stroke-dasharray="4 4"/>
+      <rect x="322" y="113" width="136" height="22" rx="11" fill="#0b0c11" stroke="rgba(255,255,255,.12)"/>
+      <text x="390" y="128" text-anchor="middle" font-size="10.5" fill="#c86a3e" font-weight="600">verified &#8800; trusted</text>
+      <text x="50" y="162" font-size="13" font-weight="700" fill="#e8e9ef">TRUST &mdash; separate &middot; computed &middot; earned</text>
+      <g>
+        <rect x="50"  y="176" width="158" height="72" rx="9" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.13)"/>
+        <text x="129" y="210" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e8e9ef">Capabilities</text>
+        <text x="129" y="229" text-anchor="middle" font-size="10" fill="#9498a6">authority granted</text>
+        <rect x="224" y="176" width="158" height="72" rx="9" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.13)"/>
+        <text x="303" y="210" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e8e9ef">Web-of-trust</text>
+        <text x="303" y="229" text-anchor="middle" font-size="10" fill="#9498a6">who vouched</text>
+        <rect x="398" y="176" width="158" height="72" rx="9" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.13)"/>
+        <text x="477" y="210" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e8e9ef">Credentials</text>
+        <text x="477" y="229" text-anchor="middle" font-size="10" fill="#9498a6">what's attested</text>
+        <rect x="572" y="176" width="158" height="72" rx="9" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.13)"/>
+        <text x="651" y="210" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e8e9ef">TOFU + history</text>
+        <text x="651" y="229" text-anchor="middle" font-size="10" fill="#9498a6">contact + record</text>
+      </g>
+      <g stroke="#9498a6" stroke-width="1.4" marker-end="url(#ar2)" opacity="0.8">
+        <line x1="129" y1="250" x2="129" y2="290"/>
+        <line x1="303" y1="250" x2="303" y2="290"/>
+        <line x1="477" y1="250" x2="477" y2="290"/>
+        <line x1="651" y1="250" x2="651" y2="290"/>
+      </g>
+      <rect x="50" y="294" width="680" height="50" rx="11" fill="rgba(79,147,221,.12)" stroke="rgba(79,147,221,.5)"/>
+      <text x="390" y="324" text-anchor="middle" font-size="13.5" font-weight="700" fill="#e8e9ef">AUTHORITY &mdash; what this key may do</text>
+    </svg>
+    <div class="cap">A cryptographically verified key proves only that a message is real. Whether to
+      <b>trust</b> the holder is a different question, answered by a separate, graded layer.
+      The hub confers nothing &mdash; <b>being seen on a hub is not trust.</b></div>
+  </div>
+
+  <!-- ===== 3 — JOINING A HUB ===== -->
+  <div class="card">
+    <h2><span class="step">3 ·</span> Joining a hub &mdash; four ways to earn trust</h2>
+    <div class="hubrow">
+      <div class="hubcard">
+        <div class="n">&#9312; STRONGEST</div>
+        <div class="h">Invite capability</div>
+        <div class="d">A one-time, scoped, expiring invite signed by someone with authority. Carries a bootstrap hub address too.</div>
+      </div>
+      <div class="hubcard">
+        <div class="n">&#9313;</div>
+        <div class="h">Vouch &mdash; or K-of-N</div>
+        <div class="d">Trusted members sign introductions. A hub can require K independent vouches; vouchers are accountable.</div>
+      </div>
+      <div class="hubcard">
+        <div class="n">&#9314;</div>
+        <div class="h">Verifiable credential</div>
+        <div class="d">A credential from an issuer the hub's members already trust. Checked offline.</div>
+      </div>
+      <div class="hubcard">
+        <div class="n">&#9315; FALLBACK</div>
+        <div class="h">TOFU + confirm</div>
+        <div class="d">Accept on first contact, then confirm a short safety-number out of band. The SSH model.</div>
+      </div>
+    </div>
+    <div class="cap">In every case <b>the hub itself decides nothing</b> &mdash; it only carried the
+      introduction. <b>Threshold vouching</b> (K-of-N) is the strong option: independent vouchers,
+      each named in the transparency log, each with their own trust score at stake.</div>
+  </div>
+
+  <!-- ===== 4 — THE HUB MESH ===== -->
+  <div class="card">
+    <h2><span class="step">4 ·</span> The hub mesh &mdash; one node type, hubs that emerge</h2>
+    <svg viewBox="0 0 780 344" role="img" aria-labelledby="t4 d4">
+      <title id="t4">The self-organising hub mesh</title>
+      <desc id="d4">Every node is identical; load-bearing hubs emerge by fitness score; routing is dynamic.</desc>
+      <!-- triangle edges -->
+      <g stroke="#c86a3e" stroke-width="2.2" opacity="0.8">
+        <line x1="190" y1="100" x2="190" y2="252"/>
+        <line x1="190" y1="100" x2="445" y2="176"/>
+        <line x1="190" y1="252" x2="445" y2="176"/>
+      </g>
+      <!-- peer edges -->
+      <g stroke="#9498a6" stroke-width="1.1" opacity="0.4">
+        <line x1="92" y1="58"  x2="190" y2="100"/>
+        <line x1="92" y1="300" x2="190" y2="252"/>
+        <line x1="320" y1="66" x2="190" y2="100"/>
+        <line x1="320" y1="66" x2="445" y2="176"/>
+        <line x1="322" y1="300" x2="190" y2="252"/>
+        <line x1="322" y1="300" x2="445" y2="176"/>
+        <line x1="598" y1="72" x2="445" y2="176"/>
+        <line x1="662" y1="176" x2="445" y2="176"/>
+        <line x1="598" y1="288" x2="445" y2="176"/>
+      </g>
+      <!-- leaf nodes -->
+      <g fill="rgba(148,154,166,.45)" stroke="rgba(255,255,255,.16)">
+        <circle cx="92" cy="58" r="9"/>
+        <circle cx="92" cy="300" r="9"/>
+        <circle cx="320" cy="66" r="9"/>
+        <circle cx="322" cy="300" r="9"/>
+        <circle cx="598" cy="72" r="9"/>
+        <circle cx="662" cy="176" r="9"/>
+        <circle cx="598" cy="288" r="9"/>
+      </g>
+      <!-- anchors -->
+      <circle cx="190" cy="100" r="34" fill="none" stroke="#c86a3e" stroke-width="1" opacity="0.3"/>
+      <circle cx="190" cy="100" r="22" fill="rgba(200,106,62,.22)" stroke="#c86a3e" stroke-width="2"/>
+      <circle cx="190" cy="252" r="34" fill="none" stroke="#c86a3e" stroke-width="1" opacity="0.3"/>
+      <circle cx="190" cy="252" r="22" fill="rgba(200,106,62,.22)" stroke="#c86a3e" stroke-width="2"/>
+      <!-- emergent hub -->
+      <circle cx="445" cy="176" r="31" fill="none" stroke="#2bb3a0" stroke-width="1" opacity="0.3"/>
+      <circle cx="445" cy="176" r="20" fill="rgba(43,179,160,.2)" stroke="#2bb3a0" stroke-width="2"/>
+      <!-- hub labels -->
+      <text x="156" y="96"  text-anchor="end" font-size="11.5" font-weight="600" fill="#e8e9ef">Anchor</text>
+      <text x="156" y="110" text-anchor="end" font-size="9.5" fill="#9498a6">always-on</text>
+      <text x="156" y="248" text-anchor="end" font-size="11.5" font-weight="600" fill="#e8e9ef">Anchor</text>
+      <text x="156" y="262" text-anchor="end" font-size="9.5" fill="#9498a6">always-on</text>
+      <text x="445" y="222" text-anchor="middle" font-size="11.5" font-weight="600" fill="#e8e9ef">Emergent hub</text>
+      <text x="445" y="236" text-anchor="middle" font-size="9.5" fill="#9498a6">chosen by fitness</text>
+      <!-- gossip pill -->
+      <rect x="210" y="166" width="150" height="22" rx="11" fill="#0b0c11" stroke="rgba(255,255,255,.12)"/>
+      <text x="285" y="181" text-anchor="middle" font-size="10" fill="#9498a6">gossip &middot; dynamic routing</text>
+      <!-- legend -->
+      <circle cx="66" cy="323" r="8" fill="rgba(200,106,62,.22)" stroke="#c86a3e" stroke-width="1.5"/>
+      <text x="80" y="327" font-size="10" fill="#9498a6">Anchor &mdash; always-on, you run it</text>
+      <circle cx="332" cy="323" r="7" fill="rgba(43,179,160,.2)" stroke="#2bb3a0" stroke-width="1.5"/>
+      <text x="345" y="327" font-size="10" fill="#9498a6">Emergent hub &mdash; by fitness score</text>
+      <circle cx="582" cy="323" r="5" fill="rgba(148,154,166,.45)" stroke="rgba(255,255,255,.16)"/>
+      <text x="593" y="327" font-size="10" fill="#9498a6">Leaf &mdash; behind NAT, routes via hubs</text>
+    </svg>
+    <div class="cap">Every node ships identical &mdash; daemon <b>and</b> hub-candidate. A node becomes a
+      load-bearing hub by being <b>chosen</b>, not elected: peers gossip a fitness score (uptime,
+      capacity, reachability) and route through whoever is best. More nodes &rarr; more resilient.
+      You keep <b>one or two always-on anchors</b> as the floor; the rest emerges on top.</div>
+  </div>
+
+  <!-- ===== 5 — COMMUNICATION ===== -->
+  <div class="card">
+    <h2><span class="step">5 ·</span> Communication &mdash; async, blind hub, signed receipts</h2>
+    <svg viewBox="0 0 780 248" role="img" aria-labelledby="t5 d5">
+      <title id="t5">Async messaging with Seal-signed receipts</title>
+      <desc id="d5">A message and files travel through a blind hub to a friend; signed delivery and read receipts return.</desc>
+      <defs>
+        <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#54b87a"/>
+        </marker>
+        <marker id="ar5b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#9498a6"/>
+        </marker>
+      </defs>
+      <!-- forward flow labels -->
+      <text x="220" y="62" text-anchor="middle" font-size="10" fill="#9498a6">&#9312; encrypted message + file blobs</text>
+      <text x="560" y="62" text-anchor="middle" font-size="10" fill="#9498a6">&#9313; collected when online</text>
+      <!-- forward arrows -->
+      <g stroke="#54b87a" stroke-width="1.7" marker-end="url(#ar5)">
+        <line x1="138" y1="90" x2="296" y2="90"/>
+        <line x1="484" y1="90" x2="640" y2="90"/>
+      </g>
+      <!-- You -->
+      <circle cx="110" cy="90" r="22" fill="rgba(79,147,221,.16)" stroke="#4f93dd" stroke-width="2"/>
+      <text x="110" y="95" text-anchor="middle" font-size="11" font-weight="600" fill="#e8e9ef">You</text>
+      <!-- Hub -->
+      <rect x="300" y="56" width="184" height="70" rx="10" fill="rgba(43,179,160,.12)" stroke="#2bb3a0" stroke-width="1.6"/>
+      <text x="392" y="82" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8e9ef">HUB</text>
+      <text x="392" y="99" text-anchor="middle" font-size="10" fill="#9498a6">encrypted mailbox</text>
+      <text x="392" y="114" text-anchor="middle" font-size="9.5" fill="#6b6f7d">blind &mdash; cannot read it</text>
+      <!-- Friend -->
+      <circle cx="662" cy="90" r="22" fill="rgba(79,147,221,.16)" stroke="#4f93dd" stroke-width="2"/>
+      <text x="662" y="95" text-anchor="middle" font-size="11" font-weight="600" fill="#e8e9ef">Friend</text>
+      <text x="662" y="132" text-anchor="middle" font-size="9.5" fill="#9498a6">offline &rarr; syncs on connect</text>
+      <!-- receipt return path -->
+      <path d="M662,160 L662,196 L110,196 L110,118" fill="none"
+            stroke="#9498a6" stroke-width="1.4" stroke-dasharray="5 4" opacity="0.7" marker-end="url(#ar5b)"/>
+      <!-- receipt badges -->
+      <rect x="470" y="185" width="178" height="22" rx="11" fill="rgba(84,184,122,.10)" stroke="rgba(84,184,122,.5)"/>
+      <text x="559" y="200" text-anchor="middle" font-size="10" fill="#54b87a">&#10003; delivered &middot; Seal-signed</text>
+      <rect x="214" y="185" width="210" height="22" rx="11" fill="rgba(84,184,122,.10)" stroke="rgba(84,184,122,.5)"/>
+      <text x="319" y="200" text-anchor="middle" font-size="10" fill="#54b87a">&#10003; opened 14:32 &middot; Seal-signed</text>
+      <text x="110" y="225" text-anchor="middle" font-size="9.5" fill="#6b6f7d">receipts return</text>
+    </svg>
+    <div class="cap">Store-and-forward, like email &mdash; but end-to-end encrypted and the hub is
+      <b>blind</b>. Large files travel as content-addressed encrypted blobs. Delivery and read
+      receipts come back <b>signed by the recipient's Seal</b> &mdash; non-repudiable, and the
+      recipient's choice to send. Live voice/chat runs peer-to-peer over WebRTC, hub only signals.</div>
+  </div>
+
+  <!-- ===== 6 — THE FIVE-MODE DIAL ===== -->
+  <div class="card">
+    <h2><span class="step">6 ·</span> One spine, a widening dial &mdash; the five modes</h2>
+    <svg viewBox="0 0 780 246" role="img" aria-labelledby="t6 d6">
+      <title id="t6">The five modes as a widening dial</title>
+      <desc id="d6">Single, multi, family, friends and global modes share one spine; the galaxy widens left to right.</desc>
+      <polygon points="44,138 748,50 748,238 44,160" fill="rgba(200,106,62,.07)" stroke="rgba(200,106,62,.18)" stroke-width="1"/>
+      <g>
+        <rect x="50"  y="44" width="130" height="158" rx="9" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.13)"/>
+        <rect x="50"  y="44" width="130" height="4" rx="2" fill="#c86a3e"/>
+        <text x="115" y="74"  text-anchor="middle" font-size="13.5" font-weight="700" fill="#e8e9ef">Single</text>
+        <text x="115" y="104" text-anchor="middle" font-size="10.5" fill="#9498a6">you</text>
+        <text x="115" y="119" text-anchor="middle" font-size="10.5" fill="#9498a6">one node</text>
+        <line x1="68" y1="140" x2="162" y2="140" stroke="rgba(255,255,255,.10)"/>
+        <text x="115" y="160" text-anchor="middle" font-size="8.5" fill="#6b6f7d">ANONYMITY</text>
+        <text x="115" y="178" text-anchor="middle" font-size="12" font-weight="700" fill="#9498a6">&mdash;</text>
+        <rect x="194" y="44" width="130" height="158" rx="9" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.13)"/>
+        <rect x="194" y="44" width="130" height="4" rx="2" fill="#c86a3e"/>
+        <text x="259" y="74"  text-anchor="middle" font-size="13.5" font-weight="700" fill="#e8e9ef">Multi</text>
+        <text x="259" y="104" text-anchor="middle" font-size="10.5" fill="#9498a6">you</text>
+        <text x="259" y="119" text-anchor="middle" font-size="10.5" fill="#9498a6">4&ndash;5 nodes</text>
+        <line x1="212" y1="140" x2="306" y2="140" stroke="rgba(255,255,255,.10)"/>
+        <text x="259" y="160" text-anchor="middle" font-size="8.5" fill="#6b6f7d">ANONYMITY</text>
+        <text x="259" y="178" text-anchor="middle" font-size="12" font-weight="700" fill="#9498a6">&mdash;</text>
+        <rect x="338" y="44" width="130" height="158" rx="9" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.13)"/>
+        <rect x="338" y="44" width="130" height="4" rx="2" fill="#4f93dd"/>
+        <text x="403" y="74"  text-anchor="middle" font-size="13.5" font-weight="700" fill="#e8e9ef">Family</text>
+        <text x="403" y="104" text-anchor="middle" font-size="10.5" fill="#9498a6">+ family</text>
+        <text x="403" y="119" text-anchor="middle" font-size="10.5" fill="#9498a6">each own Seal</text>
+        <line x1="356" y1="140" x2="450" y2="140" stroke="rgba(255,255,255,.10)"/>
+        <text x="403" y="160" text-anchor="middle" font-size="8.5" fill="#6b6f7d">ANONYMITY</text>
+        <text x="403" y="178" text-anchor="middle" font-size="12" font-weight="700" fill="#4f93dd">low</text>
+        <rect x="482" y="44" width="130" height="158" rx="9" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.13)"/>
+        <rect x="482" y="44" width="130" height="4" rx="2" fill="#4f93dd"/>
+        <text x="547" y="74"  text-anchor="middle" font-size="13.5" font-weight="700" fill="#e8e9ef">Friends</text>
+        <text x="547" y="104" text-anchor="middle" font-size="10.5" fill="#9498a6">+ friends</text>
+        <text x="547" y="119" text-anchor="middle" font-size="10.5" fill="#9498a6">join by vouch</text>
+        <line x1="500" y1="140" x2="594" y2="140" stroke="rgba(255,255,255,.10)"/>
+        <text x="547" y="160" text-anchor="middle" font-size="8.5" fill="#6b6f7d">ANONYMITY</text>
+        <text x="547" y="178" text-anchor="middle" font-size="12" font-weight="700" fill="#54b87a">optional</text>
+        <rect x="626" y="44" width="130" height="158" rx="9" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.13)"/>
+        <rect x="626" y="44" width="130" height="4" rx="2" fill="#2bb3a0"/>
+        <text x="691" y="74"  text-anchor="middle" font-size="13.5" font-weight="700" fill="#e8e9ef">Global</text>
+        <text x="691" y="104" text-anchor="middle" font-size="10.5" fill="#9498a6">+ anyone</text>
+        <text x="691" y="119" text-anchor="middle" font-size="10.5" fill="#9498a6">zero ambient trust</text>
+        <line x1="644" y1="140" x2="738" y2="140" stroke="rgba(255,255,255,.10)"/>
+        <text x="691" y="160" text-anchor="middle" font-size="8.5" fill="#6b6f7d">ANONYMITY</text>
+        <text x="691" y="178" text-anchor="middle" font-size="12" font-weight="700" fill="#2bb3a0">maximal</text>
+      </g>
+      <text x="50"  y="228" font-size="10.5" fill="#9498a6">&#9664; leans on <tspan fill="#c86a3e" font-weight="700">IDENTITY</tspan></text>
+      <text x="756" y="228" text-anchor="end" font-size="10.5" fill="#9498a6">leans on <tspan fill="#2bb3a0" font-weight="700">CAPABILITIES + WEB-OF-TRUST</tspan> &#9654;</text>
+    </svg>
+    <div class="cap">The same spine, hub mesh and fabric run in every mode. As the galaxy widens you
+      rely <b>less on identity</b>, <b>more on earned trust</b>. Family, friends and global are
+      <b>policy on a finished spine</b> &mdash; nothing is rebuilt to move along the dial.</div>
+  </div>
+
+  <footer>
+    Companion to <code>proposed/galaxy-identity-trust-design.md</code>. Working name &ldquo;the Seal&rdquo;.
+    Proposal, not a decision &mdash; naming, and whether Global mode is ever in scope, remain open.
+  </footer>
+
+</div>
+</body>
+</html>
