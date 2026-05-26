@@ -201,7 +201,7 @@ export function checkBindAuthGate(args: {
   if (args.authConfigured) return null;
   return (
     'stavr daemon refusing to bind non-local without auth configured. ' +
-    'Run `stavr pair --bootstrap` first or set `network.require_auth_when_non_local: false` ' +
+    'Run `stavr pair bootstrap` first or set `network.require_auth_when_non_local: false` ' +
     "if you know what you're doing."
   );
 }

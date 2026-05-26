@@ -109,7 +109,7 @@ export interface TransportOpts {
    */
   authConfigured?: boolean;
   /**
-   * In-memory pending-pairing registry shared between `pair --bootstrap` and the
+   * In-memory pending-pairing registry shared between `pair bootstrap` and the
    * remote `/pair/complete` endpoint. Spec 52 A2. Caller may pass their own (tests
    * do); otherwise mountTransports creates a fresh registry per daemon process.
    */
@@ -134,7 +134,7 @@ export interface MountedTransports {
   sseSessionCount: () => number;
   /**
    * The pending-pairing registry the HTTP transport is using. Exposed so the
-   * `stavr pair --bootstrap` CLI (which runs in the same daemon process) can
+   * `stavr pair bootstrap` CLI (which runs in the same daemon process) can
    * call `.open()` directly without an HTTP round-trip.
    */
   pairingRegistry: PendingPairingRegistry;
@@ -231,7 +231,7 @@ export async function mountTransports(
       },
     };
   })();
-  // Always create the registry — `pair --bootstrap` may run in this same
+  // Always create the registry — `pair bootstrap` may run in this same
   // process even when HTTP isn't mounted (rare, but the shape is uniform).
   const pairingRegistry = opts.pairingRegistry ?? new PendingPairingRegistry();
 
@@ -245,7 +245,7 @@ export async function mountTransports(
     if (!isLoopback && requireAuth && !opts.authConfigured) {
       throw new Error(
         'stavr daemon refusing to bind non-local without auth configured. ' +
-          'Run `stavr pair --bootstrap` first or set `network.require_auth_when_non_local: false` ' +
+          'Run `stavr pair bootstrap` first or set `network.require_auth_when_non_local: false` ' +
           "if you know what you're doing.",
       );
     }
@@ -424,7 +424,7 @@ export async function mountTransports(
     // ---- Spec 52 A2 — pairing endpoints (public for /pair/complete) ----
 
     // Loopback-only: opens a pairing window and returns the 6-digit code. The
-    // bootstrap operator runs `stavr pair --bootstrap` on the daemon machine,
+    // bootstrap operator runs `stavr pair bootstrap` on the daemon machine,
     // which calls this. Non-loopback callers get 403 — the code goes back to
     // the operator who is standing in front of the daemon, never to the wire.
     app.post('/pair/initiate', (req: Request, res: Response) => {

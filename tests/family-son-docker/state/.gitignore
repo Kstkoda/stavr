@@ -1,0 +1,5 @@
+# Runtime state from the test rig — tokens, device ids, smoke results.
+# Per-run, never committed. The .gitignore itself IS committed so the
+# directory exists in the tree.
+*
+!.gitignore

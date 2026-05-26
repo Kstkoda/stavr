@@ -1,0 +1,98 @@
+# family-son-mcp — Docker-substrate test rig.
+#
+# Two containers on a Docker bridge network. The Docker network IS the
+# non-loopback hop the BOM cares about — different IP, different netns,
+# no shortcut to 127.0.0.1.
+#
+# Phase 1 boots the operator with bind=localhost (the runbook §2.5
+# default), so the daemon is reachable only inside its own container.
+# Phase 2 walks the runbook bootstrap dance: pair a device on loopback
+# inside stavr-operator → flip stavr.yaml's bind to '0.0.0.0' →
+# `docker compose restart stavr-operator` → son-client can then reach
+# the daemon over the Docker network with full bearer-auth enforcement
+# (the bearer middleware mounts only when authConfigured=true; see
+# src/transports.ts:492 and the recon doc addendum).
+#
+# NO `ports:` published to the host. Container-to-container only —
+# the auth-on daemon must not be reachable at localhost:7777 on the
+# Windows host. (BOM Phase 1 invariant.)
+#
+# Image precondition: `docker build -t stavr:ci -f Dockerfile .` from
+# the repo root. The same image the bombardment rig uses; we override
+# its entrypoint with operator/init.sh so the yaml drives the bind
+# (the stock entrypoint forces --bind-host from STAVR_BIND_HOST, which
+# would override the yaml during the Phase 2 flip).
+
+services:
+  stavr-operator:
+    image: stavr:ci
+    hostname: stavr-operator
+    container_name: family-son-mcp-stavr-operator
+    # Custom entrypoint — see operator/init.sh. Does NOT pass --bind-host,
+    # so /home/stavr/.stavr/stavr.yaml is the single source of truth for
+    # network.bind across the Phase 1 / Phase 2 reconfigure.
+    entrypoint: ['/usr/bin/tini', '--', '/test-config/init.sh']
+    environment:
+      # No STAVR_ALLOW_NON_LOCAL_WITHOUT_AUTH — that's the rig flag the
+      # BOM bans (and it has the same material effect as setting
+      # require_auth_when_non_local: false in yaml: it would skip the
+      # bearer-middleware install when authConfigured=false).
+      # No STAVR_BIND_HOST — bind is driven by stavr.yaml, not env.
+      STAVR_PEER_ID: helm-01
+      STAVR_PORT: '7777'
+      STAVR_WEBAUTHN_RP_ID: stavr-operator
+      STAVR_WEBAUTHN_ORIGINS: http://stavr-operator:7777,http://localhost:7777
+      STAVR_LOG_FORMAT: json
+    volumes:
+      # Named volume for ~/.stavr/ — persists stavr.db (devices,
+      # actor_permissions, decisions) across the Phase 2 bind-flip
+      # restart so the bootstrap device's row survives.
+      - stavr-operator-home:/home/stavr/.stavr
+      # Inject stavr.yaml as a single-file bind on top of the named
+      # volume. Read-only inside the container. The operator edits the
+      # HOST file (./operator/stavr.yaml) between Phase 1 and Phase 2,
+      # then `docker compose restart stavr-operator` picks up the new
+      # bind.
+      - type: bind
+        source: ./operator/stavr.yaml
+        target: /home/stavr/.stavr/stavr.yaml
+        read_only: true
+      # init.sh + future drive scripts.
+      - type: bind
+        source: ./operator
+        target: /test-config
+        read_only: true
+    healthcheck:
+      # Healthz on 127.0.0.1 works in both Phase 1 (bind=localhost) and
+      # Phase 2 (bind=0.0.0.0, which also accepts loopback callers).
+      test: ['CMD', 'curl', '--fail', '--silent', '--show-error', 'http://127.0.0.1:7777/healthz']
+      interval: 5s
+      timeout: 3s
+      start_period: 15s
+      retries: 5
+    networks:
+      - family-son-mcp
+
+  son-client:
+    # Thin client — no daemon, no stavR install. Just curl + jq for the
+    # Phase 2 pair-complete call, Phase 3 bearer-auth smoke, and Phase 4
+    # tool-call exercises. `sleep infinity` keeps it alive for
+    # `docker compose exec` to drive it.
+    image: alpine:3.20
+    hostname: son-client
+    container_name: family-son-mcp-son-client
+    command: ['sh', '-c', 'apk add --no-cache curl jq >/dev/null && exec sleep infinity']
+    depends_on:
+      stavr-operator:
+        condition: service_healthy
+    networks:
+      - family-son-mcp
+
+networks:
+  family-son-mcp:
+    name: family-son-mcp
+    driver: bridge
+
+volumes:
+  stavr-operator-home:
+    name: family-son-mcp-stavr-operator-home
