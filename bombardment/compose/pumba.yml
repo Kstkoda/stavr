@@ -16,7 +16,7 @@
 #
 #   pumba-delay-a   — 50ms ± 10ms RTT added at peer-a's veth
 #   pumba-loss-b    — 1% packet loss at peer-b's veth
-#   pumba-jitter-hub — 20ms jitter at the hub's veth
+#   pumba-jitter-hub — 20ms ± 5ms RTT at the hub's veth (jitter <= delay)
 #
 # Phase 3c keeps the impairment budget modest — the oracle layer
 # must still pass under it. Phase 4 will extend the same pattern to
@@ -82,8 +82,12 @@ services:
       - "--duration=90s"
       - "--tc-image=gaiadocker/iproute2"
       - "delay"
-      - "--time=10"
-      - "--jitter=20"
+      # jitter MUST be <= delay or netem rejects the qdisc: "Illegal
+      # value(s): TIME is required if JITTER is specified". The intent
+      # of this sidecar (per the file docstring) is ~20ms hub jitter,
+      # so swap to time=20 jitter=5 — base 20ms delay ±5ms.
+      - "--time=20"
+      - "--jitter=5"
       - "--distribution=normal"
       - "stavr-hub"
     depends_on:
