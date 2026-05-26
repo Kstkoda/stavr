@@ -109,6 +109,23 @@ These follow directly from the answers above; calling them out so Phase 1 doesn'
 - **Operator-side authoring (Phase 4)** is via the dashboard or direct loopback `curl` to `/dashboard/permissions/*` from inside the operator container. CC does NOT author rows. The test scripts must surface the request shape so the operator can act, then poll for the daemon's response.
 - **Matrix store path inside the container:** `~/.stavr/stavr.db` for the daemon's runtime user. A named volume on `~/.stavr/` (per BOM Phase 1) preserves both the matrix and the devices table across restarts — necessary because the bind-dance restarts the daemon mid-test.
 
+## Addendum 2026-05-26 — Q1 correction (the authConfigured ↔ bearer-middleware coupling)
+
+The original Q1 answer was incomplete on one critical point, surfaced empirically during the Phase 1 substrate build: the request-time bearer-auth middleware mounts **only when `authConfigured=true`** (i.e. ≥1 paired device exists). At `src/transports.ts:492`:
+
+```ts
+const requireBearer = !!opts.authConfigured && !isLoopback;
+if (requireBearer) {
+  app.use(/* checkBearerAuth */);
+}
+```
+
+So when the startup bind-auth gate is opened (whether via the rig's `STAVR_ALLOW_NON_LOCAL_WITHOUT_AUTH=1` flag, the equivalent CLI `--allow-non-local-without-auth`, or the yaml `network.require_auth_when_non_local: false`) AND zero devices are paired, the daemon binds non-loopback AND the bearer middleware is never installed. Result: `/mcp` is open to any caller on the Docker network. Empirically confirmed during the Phase 1 build — an unauthenticated `POST /mcp initialize` returned HTTP 200 with the full server capabilities payload.
+
+This is why first-boot for a brand-new daemon MUST follow the runbook §2.5 bootstrap-from-loopback dance: pair a bootstrap device on loopback, then reconfigure to non-loopback bind and restart. The bearer middleware mounts on that restart because `authConfigured=true` is now reflected at boot time. The BOM Phase 1 → Phase 2 restructure (2026-05-26) is the consequence.
+
+`checkBearerAuth()` itself (the pure helper at `src/transports.ts:1386-1407`) doesn't reference `requireAuthWhenNonLocal` — that part of the original Q1 was correct. The middleware-install conditional is what makes the flag dangerous, not the helper.
+
 ## Things to verify when the operator next acts
 
 - The exact request body shape for `/dashboard/permissions/actor` (field names: `actor_id` vs `actor`, `tool_id` vs `tool`, etc.) — easiest path is for the operator to click the dashboard once and have the browser DevTools show the network request, or for me to read `src/dashboard/pages/permissions.ts` in detail at Phase 4 time.

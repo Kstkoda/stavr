@@ -40,28 +40,73 @@ Identify the substrate before building it. Answer all five:
 
 **Deliverable:** `proposed/family-son-mcp-docker-test-recon.md` with all five answers + exact commands/paths. Halt for operator review before Phase 1.
 
-## Phase 1 — compose substrate
+## Phase 1 — compose substrate (loopback-only healthcheck)
+
+> **Restructured 2026-05-26** after the Phase 0 recon addendum: the
+> bearer-auth middleware mounts only when `authConfigured=true`
+> (`src/transports.ts:492`), so a brand-new daemon cannot safely
+> listen on a non-loopback interface. Phase 1 brings up the substrate
+> on loopback only; the son-client → operator Docker-network hop check
+> moves to Phase 2c, after the bootstrap pair flips `authConfigured`.
 
 New directory: `tests/family-son-docker/` (do NOT put anything under `bombardment/`).
 
 1. `tests/family-son-docker/docker-compose.yml` with two services:
-   - `stavr-operator`: image `stavr:ci`. Auth ON (per Phase 0 findings). Binds to its container hostname. Named volume for `~/.stavr/`. Healthcheck on `/healthz`.
-   - `son-client`: minimal image (alpine + curl + jq + python3, or a node base — your call) with no daemon. Reaches the operator only at `http://stavr-operator:7777`.
-2. `tests/family-son-docker/README.md`: how to `compose up`, tear down, run the test scripts.
-3. `compose up -d`. Verify `stavr-operator` reaches healthy via `son-client` (`docker compose exec son-client curl -fsS http://stavr-operator:7777/healthz`).
+   - `stavr-operator`: image `stavr:ci`. Auth ON (per Phase 0 findings) — `operator/stavr.yaml` ships with `network.bind: 'localhost'` and `require_auth_when_non_local: true` (the runbook §2.5 default). Named volume for `~/.stavr/`. Healthcheck on `127.0.0.1:7777/healthz`. Custom entrypoint (`operator/init.sh`) so the yaml is the single source of truth for `network.bind` across the Phase 2 reconfigure (the stock bombardment entrypoint forces `--bind-host` from `STAVR_BIND_HOST` which would override the yaml).
+   - `son-client`: minimal image (alpine + curl + jq) with no daemon. Reaches the operator only at `http://stavr-operator:7777`.
+2. `tests/family-son-docker/README.md`: how to `compose up`, tear down, what each file in the rig does, and an explainer for why Phase 1 is loopback-only.
+3. `compose up -d`. Verify `stavr-operator` is healthy via the daemon's loopback inside its own container:
+   ```sh
+   docker compose -f tests/family-son-docker/docker-compose.yml \
+     exec stavr-operator curl -fsS http://127.0.0.1:7777/healthz
+   ```
+   Do NOT attempt son-client → stavr-operator over the Docker network at this phase — the daemon doesn't listen on that interface yet.
 
-**Deliverable:** the compose + README committed; daemon healthy. Halt for operator review.
+**Deliverable:** the compose + README committed; daemon healthy via its own loopback. Halt for operator review.
 
-## Phase 2 — pairing E2E
+## Phase 2 — bootstrap dance + son pairing
 
-Walk the runbook §3 verbatim, end-to-end, container-to-container.
+Walks the runbook §2.5 bootstrap-from-loopback dance plus the §3 son
+pairing flow as one continuous sequence. The four sub-steps map to the
+four runbook moments.
 
-1. Operator side (in `stavr-operator`): `stavr pair bootstrap`. Capture the 6-digit code + the device handle template.
+**2a — Bootstrap pair on operator loopback.** Inside `stavr-operator`:
+
+```sh
+docker compose ... exec stavr-operator node /app/dist/cli.js pair bootstrap
+# captures the 6-digit code
+
+docker compose ... exec stavr-operator curl -sS -X POST \
+  http://127.0.0.1:7777/pair/complete \
+  -H 'Content-Type: application/json' \
+  -d '{"code":"<6-digit>","device_name":"bootstrap"}'
+```
+
+The bootstrap device's bearer token is discarded — its only purpose is to flip `authConfigured=true` so the daemon can be reconfigured for non-loopback bind.
+
+**2b — Reconfigure to bind=0.0.0.0 and restart.** Operator edits `tests/family-son-docker/operator/stavr.yaml` on the host (`bind: 'localhost'` → `bind: '0.0.0.0'`), then:
+
+```sh
+docker compose -f tests/family-son-docker/docker-compose.yml restart stavr-operator
+```
+
+After restart: the startup bind-auth gate is satisfied (`authConfigured=true`), the bearer-auth middleware is mounted (`src/transports.ts:492` predicate is true: authConfigured && !isLoopback), and the daemon binds non-loopback.
+
+**2c — Son-client → operator Docker-network reachability (the deferred Phase 1 check):**
+
+```sh
+docker compose ... exec son-client curl -fsS http://stavr-operator:7777/healthz
+# expect: 200
+```
+
+**2d — Real pairing over the wire.** Walk the runbook §3 verbatim, container-to-container:
+
+1. Operator side (in `stavr-operator`): `stavr pair bootstrap`. Capture the 6-digit code + the device handle template (`son-test`).
 2. Son side (in `son-client`): the runbook's §3.3 curl form against `http://stavr-operator:7777/pair/complete` with the code and `device_name=son-test`. Capture the returned bearer token.
-3. Verify on the operator side: `stavr devices list` shows `son-test` active.
+3. Verify on the operator side: `stavr devices list` shows BOTH `bootstrap` and `son-test` active. The bootstrap device is intentional bycatch from 2a.
 4. If any runbook command fails or returns a different shape than the runbook claims, NOTE it for the post-Phase-4 fold-in.
 
-**Deliverable:** `tests/family-son-docker/scripts/pair.sh` capturing the son-side steps (token captured to a file the next phase reads). Halt for operator review.
+**Deliverable:** `tests/family-son-docker/scripts/pair.sh` capturing the son-side network steps (token captured to a file the next phase reads). A short transcript note in the script's header records the bootstrap dance (2a + 2b) so it's reproducible without re-reading the BOM. Halt for operator review.
 
 ## Phase 3 — bearer auth smoke
 

@@ -1,0 +1,9 @@
+network:
+  # Phase 1 binds loopback so the auth-on daemon can boot with zero paired
+  # devices (the bind-auth gate is satisfied because is_loopback=true).
+  # Phase 2 pairs a bootstrap device on loopback, then flips this value
+  # to '0.0.0.0' and restarts the daemon. At that point authConfigured=true
+  # so (a) the bind-auth gate accepts the non-loopback bind and (b) the
+  # bearer-auth middleware mounts (src/transports.ts:492). See README §3.
+  bind: 'localhost'
+  require_auth_when_non_local: true
