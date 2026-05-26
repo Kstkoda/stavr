@@ -26,20 +26,17 @@
 //     `recordPingResult` flowed into the registry — which is the actual
 //     liveness signal this oracle is looking for.
 //
-//     The freshness gate is load-bearing: peer-client picks the first
-//     IPv4 in the mDNS-discovered list without checking reachability
-//     (peer-client.ts:84-89, fix in flight as of 2026-05-25 chaos-debug
-//     BOM Phase 4). Multi-homed peers in the rig (the hub joins both
-//     site_a and site_b networks) expose two IPs in mDNS, and the order
-//     in which they arrive is non-deterministic. On runs where the
-//     cross-subnet IP lands first, every PeerClient probe times out
-//     (3000ms), the peer flips online→degraded on the first probe, and
-//     STAYS degraded forever with `last_seen_at` frozen — silent
-//     non-convergence. Without the freshness gate, the chaos tolerance
-//     ACCEPTS this stuck state (observed locally: peer-a/hub stuck for
-//     154+ minutes). The gate rejects any `degraded` whose last
-//     successful ping is older than the freshness window, surfacing the
-//     bug instead of masking it.
+//     The freshness gate is load-bearing: multi-homed peers (the hub
+//     joins both site_a and site_b networks) expose multiple IPs in
+//     mDNS and the order is non-deterministic. If the peer-client's
+//     walk-candidates path regresses, or a real network change makes a
+//     previously-routable address unreachable, every PeerClient probe
+//     times out (3000ms), the peer flips online→degraded on the first
+//     probe, and STAYS degraded forever with `last_seen_at` frozen —
+//     silent non-convergence. Without the gate, the chaos tolerance
+//     ACCEPTS this stuck state. The gate rejects any `degraded` whose
+//     last successful ping is older than the freshness window, surfacing
+//     the regression instead of masking it.
 //
 //     The original tolerance was added in 8949c5b, dropped by the
 //     polling rewrite (c45b536) on the theory that the window would
@@ -150,16 +147,23 @@ export async function peerStateConvergence() {
           // stuck-degraded — see header for the peer-client multi-
           // homed-address bug this gate exists to surface.
           const ageMs = pair.lastSeenAt > 0 ? now - pair.lastSeenAt : Infinity;
-          if (ageMs <= LAST_SEEN_FRESHNESS_MS) pair.everConverged = true;
+          if (ageMs >= 0 && ageMs <= LAST_SEEN_FRESHNESS_MS) pair.everConverged = true;
         }
       }
     }
 
     // Converged: every reachable pair has been seen in a converged
-    // state at least once. The cross-subnet safety check keeps running
-    // until then — a cross-subnet `online` is a deterministic config
-    // break, so the convergence window is ample to surface it.
-    const converged = pairs.every((p) => !p.expectReachable || p.everConverged);
+    // state at least once AND is not currently stuck-degraded. The
+    // second condition prevents the loop from exiting early under chaos
+    // when a pair earned everConverged via a fresh-degraded reading but
+    // then became stale — the oracle must keep polling until the pair
+    // reaches `online` or the deadline expires so F1b can fire.
+    const converged = pairs.every((p) => {
+      if (!p.expectReachable) return true;
+      if (!p.everConverged) return false;
+      if (UNDER_CHAOS && p.lastState === 'degraded') return false;
+      return true;
+    });
     if (converged) break;
 
     // Bail fast if nothing is listening at all — no amount of waiting
@@ -196,6 +200,26 @@ export async function peerStateConvergence() {
       if (ageMs !== null) violation.age_ms = ageMs;
       if (isStuckDegraded) violation.freshness_threshold_ms = LAST_SEEN_FRESHNESS_MS;
       violations.push(violation);
+    }
+    // Under chaos: a pair that earned everConverged via a fresh-degraded
+    // reading may later get stuck-degraded with a stale last_seen_at if
+    // the peer-client walks back onto an unreachable candidate. The loop
+    // (F1a fix) doesn't exit early for a degraded pair, but the deadline
+    // may expire before recovery. Surface it separately from the
+    // never-converged case so triage can distinguish a regression from
+    // a peer that never responded at all.
+    if (p.expectReachable && p.everConverged && UNDER_CHAOS && p.lastState === 'degraded') {
+      const ageMs = p.lastSeenAt > 0 ? finalNow - p.lastSeenAt : Infinity;
+      if (ageMs >= 0 && ageMs > LAST_SEEN_FRESHNESS_MS) {
+        violations.push({
+          viewer: p.viewer,
+          candidate: p.candidate,
+          kind: 'expected_converged_but_stale_last_seen',
+          last_state: p.lastState,
+          age_ms: ageMs,
+          freshness_threshold_ms: LAST_SEEN_FRESHNESS_MS,
+        });
+      }
     }
     if (p.everUnexpectedOnline) {
       violations.push({

@@ -36,9 +36,12 @@ services:
       # oracle pass (which includes the 65s convergence wait) with
       # comfortable margin. If the runner stalls before this expires,
       # the sidecar still exits cleanly on its own.
+      #
+      # NB: `--tc-image=gaiadocker/iproute2` was dropped — stavr:ci
+      # now ships iproute2 inside the daemon image, so Pumba runs `tc`
+      # in the target's own netns and there is no tc-container to race.
       - "netem"
       - "--duration=120s"
-      - "--tc-image=gaiadocker/iproute2"
       - "delay"
       - "--time=500"
       - "--jitter=100"
@@ -63,7 +66,6 @@ services:
       - "--log-level=info"
       - "netem"
       - "--duration=120s"
-      - "--tc-image=gaiadocker/iproute2"
       - "loss"
       - "--percent=10"
       - "stavr-peer-b"

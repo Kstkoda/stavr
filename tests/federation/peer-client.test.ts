@@ -38,7 +38,7 @@ describe('PeerClient.candidates', () => {
     );
     expect(candidates).toEqual([
       'http://192.168.1.50:7777',
-      'http://fe80::1:7777',
+      'http://[fe80::1]:7777',
       'http://p1.local:7777',
     ]);
   });
@@ -130,8 +130,10 @@ describe('PeerClient.health — walk-candidates', () => {
 
   it('invalidates the cache when the previously-working URL starts failing and re-walks', async () => {
     let goodHost = '172.30.10.3';
+    const calls: string[] = [];
     const c = new PeerClient({
       fetcher: async (url) => {
+        calls.push(url);
         if (url.startsWith(`http://${goodHost}:`)) {
           return { status: 200, text: async () => HEALTH_BODY };
         }
@@ -152,11 +154,17 @@ describe('PeerClient.health — walk-candidates', () => {
     const second = await c.health(peer);
     expect(second.ok).toBe(false);
     // Restore the original good host. Next probe should re-walk from
-    // the canonical IPv4-first order and recover.
+    // the canonical IPv4-first order (not a cache-hit), proving
+    // lastWorkingByPeer.delete() fired on total failure.
     goodHost = '172.30.10.3';
+    calls.length = 0;
     const third = await c.health(peer);
     expect(third.ok).toBe(true);
     expect(third.base_url).toBe('http://172.30.10.3:7777');
+    expect(calls).toEqual([
+      'http://172.30.20.3:7777/api/federation/health',
+      'http://172.30.10.3:7777/api/federation/health',
+    ]);
   });
 
   it('returns ok=false with combined per-attempt errors when every candidate fails', async () => {
