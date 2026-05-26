@@ -577,6 +577,44 @@ export async function mountTransports(
       });
     });
 
+    // family-son-mcp Phase 5 Phase 1 — Anthropic-API-compatible gateway stub.
+    //
+    // BOM proposed/family-son-mcp-phase-5-llm-gateway-bom.md. Phase 1 mounts
+    // the route behind the global bearer-auth middleware (line ~494) and the
+    // actor-stamping middleware (line ~526) and returns a deterministic 501.
+    // No credential forwarding, no chokepoint integration, no metering —
+    // those land in Phases 2 / 3 / 4 respectively.
+    //
+    // The route is intentionally NOT on the /dashboard/* loopback fence
+    // (line ~554): the son is by definition non-loopback. The loopback
+    // bypass on bearer-auth (checkBearerAuth line ~1397) is accepted per
+    // the Phase 0 recon F1 decision; Phase 4 will still emit audit events
+    // for loopback gateway traffic so the audit trail isn't blind.
+    app.all('/anthropic/v1/messages', (req: Request, res: Response) => {
+      if (req.method !== 'POST') {
+        res
+          .status(405)
+          .set('Allow', 'POST')
+          .json({
+            ok: false,
+            error: 'method_not_allowed',
+            allowed_methods: ['POST'],
+          });
+        return;
+      }
+      const actor = logContext.getStore()?.actor_id ?? 'unknown';
+      res.status(501).json({
+        ok: false,
+        error: 'not_implemented',
+        phase: 'phase-1-stub',
+        reason:
+          'family-son-mcp Phase 5 — endpoint shell only. Credential ' +
+          'forwarding lands in Phase 3 after the chokepoint integration ' +
+          '(Phase 2) and the operator key-seeding decision (F5).',
+        actor,
+      });
+    });
+
     // v0.6.x memory-leak fix Phase 3 — live diagnostics surface. Returns
     // process memory + DB page count + broker counters in one JSON shot
     // so the operator (and the dashboard) can spot growth without grep'ing

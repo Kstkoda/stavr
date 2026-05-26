@@ -104,4 +104,42 @@ describe('checkBearerAuth', () => {
     });
     expect(v).toEqual({ ok: false, status: 401, error: 'invalid_token' });
   });
+
+  // family-son-mcp Phase 5 P1 — the new gateway route MUST NOT be on the
+  // public allow-list. A non-loopback caller without a Bearer token must
+  // get 401 missing_or_invalid_authorization; with a revoked/unknown
+  // token, 401 invalid_token. (Same shape as /mcp.)
+  describe('/anthropic/v1/messages route coverage (Phase 5 P1)', () => {
+    it('is NOT on the public allow-list — 401 missing_or_invalid_authorization without a Bearer', () => {
+      const v = checkBearerAuth({
+        path: '/anthropic/v1/messages',
+        isLoopbackReq: false,
+        authHeader: undefined,
+        findActiveDevice: lookup,
+      });
+      expect(v).toEqual({ ok: false, status: 401, error: 'missing_or_invalid_authorization' });
+    });
+
+    it('refuses a revoked-then-stale token — 401 invalid_token', () => {
+      const findActiveSkipsRevoked = (_hash: string) => undefined;
+      const v = checkBearerAuth({
+        path: '/anthropic/v1/messages',
+        isLoopbackReq: false,
+        authHeader: `Bearer ${RAW_TOKEN}`,
+        findActiveDevice: findActiveSkipsRevoked,
+      });
+      expect(v).toEqual({ ok: false, status: 401, error: 'invalid_token' });
+    });
+
+    it('allows a paired actor with a valid Bearer (gate passes to the route handler)', () => {
+      const v = checkBearerAuth({
+        path: '/anthropic/v1/messages',
+        isLoopbackReq: false,
+        authHeader: `Bearer ${RAW_TOKEN}`,
+        findActiveDevice: lookup,
+      });
+      expect(v.ok).toBe(true);
+      expect(v.ok && v.device).toEqual(DEVICE);
+    });
+  });
 });
