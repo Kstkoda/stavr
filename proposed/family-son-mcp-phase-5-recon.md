@@ -356,3 +356,23 @@ The BOM's "what this BOM does NOT cover" list is consistent with the code state 
 Phase 0 deliverable complete. Per CLAUDE.md §9 (HIGH sensitivity) and the BOM, halting for operator review before Phase 1 begins.
 
 Next phase if approved: Phase 1 — endpoint shell + bearer auth (no forward yet; 501 stub behind bearer-auth, smoke for 401 / revoked / valid-bearer-501).
+
+---
+
+## Operator decisions (2026-05-27)
+
+Recorded after Phase 0 review. These bind subsequent phases.
+
+**F1 — Loopback bypass on `/anthropic/*`: ACCEPTED.** Consistent with `/mcp`'s loopback bypass; the operator IS the credential owner and a loopback call to the gateway is no different in trust from calling Anthropic directly. **Refinement folded into Phase 4 (metering):** loopback gateway calls MUST still produce `llm_gateway_call` audit events under a synthetic `actor_id='operator-loopback'`, so the audit trail isn't blind to operator-self traffic. The bypass stays; the audit stays complete. Implementation note for Phase 4: when `logContext.actor_id` resolves to `loopback:<corrId>` on the `/anthropic/*` path specifically, the event-emit path substitutes `'operator-loopback'` (or the existing `loopback:*` form is fine if it sorts well in the audit dashboard — call to be made in Phase 4's diff).
+
+**F2 — `anthropic-version` header: PASS-THROUGH the son's value.** Operator-pinning is unnecessary at family scale and adds a maintenance burden. **This is a deliberate choice.** A future federation-scale cycle (multi-operator, mixed son fleets) may revisit if version skew across the fleet becomes a problem; document and move on. Phase 1 implementation: if the son sends `anthropic-version`, forward it; if absent, inject the provider's default (`'2023-06-01'`).
+
+**F3 — REST → chokepoint adapter location: NEW FILE `src/security/gateway-gate.ts`.** Keeps gateway-specific concerns out of `server.ts`, easier to test, matches the pattern of other security adapters in `src/security/` (`actor-permissions.ts`, `capability-overrides.ts`, `decision-gate.ts`, `respond-policy.ts`, `tier3-gate.ts`). Phase 2 lands this file with a single exported function that returns the assembled `RuntimeToolGate` for the gateway route handler.
+
+**F4 — `broker.store.recordLlmGatewayCall(...)` wrapping events + budget in one txn: APPROVED IN PRINCIPLE.** Exact signature review deferred to Phase 4. The atomicity invariant (BOM hard invariant #4) is what binds; the wrapper shape is implementation detail to surface in Phase 4's diff.
+
+**F5 — Anthropic-key seeding path: DEFERRED.** Phase 3 must open with a 10-3-1 decision (three options — dashboard form / CLI / boot-env via WinSW XML — with explicit tradeoffs and a recommendation), surfaced to the operator before any forward wiring goes in. The internal operator-approval gate at Phase 3 will gate on this decision being made.
+
+**F6 — Error-rewrap discipline: APPROVED AS PHASE 3 ACCEPTANCE CRITERION, with tightening.** Phase 3 must include a deliberate fault-injection smoke matrix — a mock upstream returns each of `401`, `429`, `500`, and a malformed JSON body in turn. For each scenario, capture (a) exactly what the gateway returns to the son, (b) what hits `logs/*.log`, and (c) what hits the error log specifically. Then grep all four captures for the credential bytes. **Zero matches across all four scenarios** is the acceptance criterion. Phase 3's SMOKE-RESULTS section must document all four scenarios with the actual captured outputs.
+
+**Push policy:** push per-phase; no batching. Recon commit `5c24f61` pushed to `origin/feat/family-son-mcp-phase-5` 2026-05-27.
