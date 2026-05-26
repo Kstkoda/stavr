@@ -256,12 +256,25 @@ Response (JSON):
 
 ```json
 {
+  "ok": true,
   "device_id": "9c1f...",
   "device_name": "<son-handle>",
   "paired_at": "2026-05-25T12:35:10.123Z",
   "token": "8e2a1f...long-opaque-string"
 }
 ```
+
+> **Windows / PowerShell quoting note.** The bash example above uses inline `-d '{"...":"..."}'`. On Windows that form bites in two distinct ways: (a) PowerShell's `curl` is an alias for `Invoke-WebRequest`, which doesn't accept `-d` the way `curl.exe` does, and (b) when the curl call is run via `docker compose exec` against a containerized daemon, PowerShell's argv handling can mangle the JSON before `docker.exe` sees it (the daemon then returns 400 with an HTML "Bad Request" page). The robust pattern is to write the body to a file and pass it with `--data-binary @file`:
+>
+> ```powershell
+> '{"code":"123456","device_name":"<son-handle>"}' `
+>   | Set-Content -Path body.json -NoNewline -Encoding ascii
+> curl.exe -sS -X POST http://helm.stavr.mesh:7777/pair/complete `
+>   -H "Content-Type: application/json" `
+>   --data-binary "@body.json"
+> ```
+>
+> The same three-step pattern applies anywhere you POST JSON to a stavR endpoint from a Windows shell — including `/dashboard/permissions/*` and `/dashboard/decisions/.../respond` if you script the operator side instead of using the dashboard UI (§4.3). When the target is inside a container, insert `docker compose ... cp body.json <container>:/tmp/body.json` between the `Set-Content` and the `curl.exe`, and have `curl` read from `@/tmp/body.json`.
 
 **The `token` is the bearer the son's Claude Code will use in Phase 4.** Save it somewhere durable — a password manager entry is the right place. The daemon stores only the SHA-256 hash; the raw value is shown exactly once and cannot be recovered.
 
@@ -335,18 +348,32 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
   --data '{}' http://helm.stavr.mesh:7777/mcp
 # expect: 401
 
-# With token + correct Accept header — NOT 401 (bearer-auth passed; MCP SDK
-# rejects the empty body as malformed JSON-RPC → 400). 400 is the success
-# signal here: auth gate was satisfied, SDK is processing.
+# With token + correct Accept header — NOT 401 (bearer-auth passed; the MCP
+# SDK takes over once auth is satisfied). The exact code depends on the body:
+#   * empty `{}` body  → 400 (MCP rejects as malformed JSON-RPC)
+#   * real `initialize` body → 200 with an `mcp-session-id` response header
+# Either is fine — the robust assertion is "not 401". 401 is the only
+# failure signal.
 curl -s -o /dev/null -w '%{http_code}\n' -X POST \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'Authorization: Bearer <paste-token-here>' \
   --data '{}' http://helm.stavr.mesh:7777/mcp
 # expect: 400 (NOT 401, NOT 406)
+
+# Alternative form — send a real initialize body and observe the session id.
+# Same assertion target ("not 401"), but you see the MCP capability handshake
+# land instead of a body-error.
+curl -is -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'Authorization: Bearer <paste-token-here>' \
+  --data '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"son-client","version":"0"}}}' \
+  http://helm.stavr.mesh:7777/mcp
+# expect: HTTP/1.1 200 OK + an `mcp-session-id: <uuid>` response header
 ```
 
-> **F9 note:** Always include `Accept: application/json, text/event-stream` in the with-token request. Without it the MCP SDK returns 406 before the auth gate is ever evaluated, making 401 and 406 indistinguishable from the client's perspective. The unambiguous check is: no-token → 401, token + correct Accept → 400 (MCP body error, auth satisfied). A 406 on the token request means the `Accept` header is missing or wrong, not that the token was rejected.
+> **F9 note:** Always include `Accept: application/json, text/event-stream` in the with-token request. Without it the MCP SDK returns 406 before the auth gate is ever evaluated, making 401 and 406 indistinguishable from the client's perspective. The robust check is: no-token → 401; token + correct Accept → anything but 401 (400 with `{}`, or 200 + `mcp-session-id` with a real initialize body). 406 on the token request means the `Accept` header is missing or wrong, not that the token was rejected.
 
 PowerShell variant uses `Invoke-WebRequest -SkipHttpErrorCheck` to capture non-2xx codes without exception machinery.
 
@@ -431,6 +458,8 @@ In the operator's browser, open `http://localhost:7777/dashboard/permissions`. T
 
 > **Critical — tool IDs in the matrix must exactly match the registered dotted form.** `actor_permissions.resolve()` does a verbatim key lookup. The adapters register tools as `github.read_file`, `github.list_prs`, etc. A row entered with underscores (`github_read_file`) silently never matches and the son stays default-deny NO_GO on every call.
 
+> **Windows / PowerShell note:** if you script matrix writes via curl against `/dashboard/permissions/actor` instead of using the dashboard UI, use the file-body pattern shown in §3.3 — inline `-d '{"...":"..."}'` is unreliable from PowerShell (argv handling and the `curl`-as-`Invoke-WebRequest` alias both bite). Same applies to the CONFIRM-tier decision approval at `/dashboard/decisions/<correlation_id>/respond` (§4.4 step 2).
+
 **Recommended seed — Option A baseline from the recon doc.** Tool granularity, default-deny everything else:
 
 | Tool (registered id) | Tier | Why |
@@ -475,7 +504,13 @@ End-to-end proof that the channel works. Each item is one observable behaviour.
 
 4. **No-go floor — operator can't override.** Son's CC (or any actor): attempt one of the no-go-list entries (e.g., a no-go-list rooted hard-deny tool). Expected: chokepoint denies with `no-go floor: ...`. The operator-side audit event `no_go_match` lands.
 
-5. **Token revocation kills access immediately.** Operator: `stavr devices revoke <device_id>`. Son's CC retries any tool. Expected: 401 at the transport, before the chokepoint runs. No new decisions open.
+5. **Token revocation kills access immediately.** Operator: `stavr devices revoke <device_id>`. Returns:
+
+   ```json
+   {"ok":true,"device_id":"<uuid>","revoked_at":"<ISO-timestamp>"}
+   ```
+
+   Son's CC retries any tool. Expected: 401 at the transport, before the chokepoint runs. No new decisions open. The 401 body is `{"ok":false,"error":"invalid_token"}` — note `invalid_token` is the post-revoke error string; a never-paired client gets `missing_or_invalid_authorization` instead. Both 401, useful audit distinction.
 
 6. **Tier-3 EXPLICIT path (only if the son's matrix ever includes an EXPLICIT tool).** Currently the seed leaves nothing at EXPLICIT, so this is informational: an EXPLICIT call would first require a recent operator passkey assertion at `/dashboard/settings#identity` (60-second TTL) and THEN open a confirmation decision.
 
