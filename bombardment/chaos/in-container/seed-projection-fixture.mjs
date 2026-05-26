@@ -29,6 +29,19 @@
 // negative. Events use INSERT OR IGNORE on a deterministic id so they
 // stay write-once.
 //
+// Temporal consistency across re-seeds (F9): events are write-once on
+// a stable id, but the matching decision row is UPSERTed. A naive
+// `requested_at = now` UPSERT bumps the decision's timestamp on every
+// re-seed while the event's `at` stays frozen at first-seed time,
+// leaving event.at < decision.requested_at — a temporal inconsistency
+// that breaks the "the event log is the source of truth for the
+// projection" invariant the corruption-replay oracle is checking. Fix:
+// per fixture, look up the existing event's `at` (if any) and reuse
+// it as the decision's `requested_at`; derive `expires_at` from the
+// same anchor (+600s) so the "10 minutes in the future from initial
+// seed" semantics are preserved. On a true first seed there's no
+// existing event, so we use `now`.
+//
 // Exit: 0 ok / 1 db err / 2 bad invocation.
 
 import Database from 'better-sqlite3';
@@ -87,8 +100,16 @@ try {
      VALUES (?, 'decision_request', ?, 'bombardment-fixture', NULL, ?, ?, ?, ?, ?)`,
   );
 
+  // F9: look up the existing event's `at` for each fixture so the
+  // decision UPSERT can anchor `requested_at`/`expires_at` to the same
+  // timestamp the (write-once) event already carries. Without this,
+  // re-seeds leave decision.requested_at > event.at — a temporal
+  // inconsistency that breaks the "event log is source of truth" check.
+  const selectExistingEventAt = db.prepare(
+    `SELECT at FROM events WHERE id = ?`,
+  );
+
   const correlationIds = [];
-  const future = new Date(Date.now() + 600_000).toISOString();
   const now = new Date().toISOString();
 
   const tx = db.transaction(() => {
@@ -98,7 +119,16 @@ try {
 
     for (let i = 0; i < count; i++) {
       const correlationId = `bombardment-fixture-${i}`;
+      const eventId = `bombardment-fixture-evt-${i}`;
       correlationIds.push(correlationId);
+
+      // Anchor: reuse the existing event's `at` on a re-seed so the
+      // decision's requested_at/expires_at stay in lockstep with the
+      // write-once event; on a true first seed, anchor to `now`.
+      const existing = selectExistingEventAt.get(eventId);
+      const at = existing?.at ?? now;
+      const expiresAt = new Date(new Date(at).getTime() + 600_000).toISOString();
+
       insertDecision.run(
         correlationId,
         `bombardment fixture question ${i}`,
@@ -108,15 +138,15 @@ try {
         ]),
         'a',
         600,
-        now,
-        future,
+        at,
+        expiresAt,
       );
       // Deterministic event id keyed on correlation_id — second run
       // of seed against the same named volume sees an existing event
       // and skips (INSERT OR IGNORE), so the events table doesn't
       // accumulate one duplicate decision_request per fixture per run.
       insertEvent.run(
-        `bombardment-fixture-evt-${i}`,
+        eventId,
         correlationId,
         JSON.stringify({
           question: `bombardment fixture question ${i}`,
@@ -127,10 +157,10 @@ try {
           default_option_id: 'a',
           deadline_seconds: 600,
         }),
-        now,
-        now,
+        at,
+        at,
         nextSeq++,
-        now,
+        at,
       );
     }
   });
