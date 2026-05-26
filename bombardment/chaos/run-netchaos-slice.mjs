@@ -77,6 +77,16 @@ async function main() {
   // hard — the rest of the slice still validates oracle reliability —
   // but loudly flag the substrate issue so a CI green doesn't claim
   // chaos coverage it didn't actually exercise.
+  // F10: also count which sidecars successfully installed netem so we
+  // can gate STAVR_BOMBARDMENT_UNDER_CHAOS=1 on actually-applied
+  // impairment. Pumba runs as a `--duration=120s` one-shot — during
+  // the settle window the sidecar should still be `running`; an
+  // `exited` status means the netem call failed (the tc-container
+  // race) and no tc qdisc was ever installed. Without this gate,
+  // oracles would run in chaos-mode (with widened tolerances) against
+  // UN-impaired traffic — a free pass that hides regressions on
+  // clean runs.
+  let sidecarSuccessCount = 0;
   for (const sidecar of ['stavr-pumba-spike-peer-a', 'stavr-pumba-loss-peer-b']) {
     const inspect = spawnSync(
       'docker',
@@ -95,13 +105,33 @@ async function main() {
       );
       const logs = spawnSync('docker', ['logs', '--tail', '3', sidecar], { encoding: 'utf8' });
       console.warn((logs.stdout || logs.stderr || '').trim());
+    } else {
+      // Still running (--duration not yet elapsed) — netem is installed.
+      sidecarSuccessCount++;
     }
   }
 
-  console.log('[netchaos-slice] running federation oracles under heavier impairment');
+  const underChaos = sidecarSuccessCount > 0;
+  if (!underChaos) {
+    console.warn(
+      '[netchaos-slice] NO sidecars applied impairment — running oracles in STRICT (non-chaos) mode',
+    );
+  } else {
+    console.log(
+      `[netchaos-slice] ${sidecarSuccessCount} sidecar(s) applied impairment — running oracles UNDER_CHAOS`,
+    );
+  }
+
+  console.log('[netchaos-slice] running federation oracles');
+  // Build a clean env without UNDER_CHAOS, then add it back only when
+  // at least one sidecar succeeded. Stripping first guards against an
+  // upstream env that already set the flag.
+  const oracleEnv = { ...process.env };
+  delete oracleEnv.STAVR_BOMBARDMENT_UNDER_CHAOS;
+  if (underChaos) oracleEnv.STAVR_BOMBARDMENT_UNDER_CHAOS = '1';
   const oracles = spawnSync(process.execPath, [RUN_ORACLES], {
     stdio: 'inherit',
-    env: { ...process.env, STAVR_BOMBARDMENT_UNDER_CHAOS: '1' },
+    env: oracleEnv,
   });
 
   if (oracles.status !== 0) {
