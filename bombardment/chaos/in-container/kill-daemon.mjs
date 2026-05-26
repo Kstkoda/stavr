@@ -15,11 +15,19 @@
 //   docker exec stavr-peer-a node /app/bombardment-chaos/kill-daemon.mjs
 //
 // The script finds the daemon process (not itself) by scanning /proc
-// for processes whose cmdline contains "dist/cli.js" (the daemon's
-// entrypoint script — set by bombardment/docker/entrypoint.sh), then
-// sends SIGKILL. The script then exits; once the daemon is gone, tini
-// exits too, the container dies, and Docker's restart policy brings
-// it back.
+// for processes whose argv includes BOTH "/app/dist/cli.js" (the CLI
+// entry — set by bombardment/docker/entrypoint.sh) AND the "daemon"
+// subcommand token. The script then SIGKILLs it and exits; once the
+// daemon is gone, tini exits too, the container dies, and Docker's
+// restart policy brings it back.
+//
+// Why the full-argv match (entry + subcommand) instead of a positional
+// substring on '/app/dist/cli.js': a future helper or sidecar that
+// happens to re-invoke the same CLI entry for a different subcommand
+// (e.g. `node /app/dist/cli.js status`, `... events tail`) would match
+// the bare substring and be SIGKILLed by mistake. Requiring the
+// "daemon" subcommand token narrows the match to the long-lived
+// daemon process this oracle is targeting.
 //
 // We match on cmdline rather than comm because Node.js sets the
 // process comm to "node-MainThread" by default (the main thread's
@@ -40,19 +48,23 @@ function findDaemonPid() {
     const pid = Number(dir);
     // Skip tini (PID 1) and ourselves.
     if (pid === 1 || pid === ownPid) continue;
-    let cmdline;
+    let argv;
     try {
-      // /proc/<pid>/cmdline is NUL-separated argv; join to plain string.
-      cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+      // /proc/<pid>/cmdline is NUL-separated argv; split into tokens
+      // (drop the trailing empty after the final NUL).
+      argv = readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+        .split('\0')
+        .filter((tok) => tok.length > 0);
     } catch {
       continue;
     }
     // The daemon is the node process invoked by entrypoint.sh as
     //   node /app/dist/cli.js daemon start ...
-    // bombardment-chaos helpers (this script, seed-decision, etc.)
-    // run from /app/bombardment-chaos/<helper>.mjs, so the cli.js
-    // substring is unique to the daemon.
-    if (cmdline.includes('/app/dist/cli.js')) return pid;
+    // Require BOTH the CLI entry argv token AND the 'daemon' subcommand
+    // token — a positional substring on '/app/dist/cli.js' alone would
+    // match any future helper that re-uses the CLI entry for a different
+    // subcommand (e.g. `node /app/dist/cli.js status`).
+    if (argv.includes('/app/dist/cli.js') && argv.includes('daemon')) return pid;
   }
   return null;
 }
