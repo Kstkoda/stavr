@@ -25,15 +25,29 @@ if [ "${STAVR_ALLOW_NON_LOCAL_WITHOUT_AUTH:-0}" = "1" ]; then
     EXTRA_FLAGS="--allow-non-local-without-auth"
 fi
 
-# Always pass --force in the container: Docker's restart policy is the
-# supervisor here, so any stavr.pid file the new process finds is by
-# definition stale (the previous PID belonged to a now-dead process in
-# a now-destroyed namespace). Without --force, the daemon's "already
-# running" guard rejects every restart after a SIGKILL — observed by
-# the kill-recovery chaos slice. The guard is correct for host-level
-# invocations where two daemons could genuinely race; in a container
-# it can only ever be wrong.
-EXTRA_FLAGS="${EXTRA_FLAGS} --force"
+# F7: clear a stale pidfile carried over from a prior daemon in a
+# now-defunct container, instead of blanket-passing --force on every
+# boot.
+#
+# Container PID namespaces reset on restart: any PID written by the
+# previous daemon refers to a process in the prior container's
+# namespace and isn't reliably checkable from this one (procfs would
+# look at THIS namespace's PID space, and a coincidental PID collision
+# could falsely match an unrelated process). So a pidfile present at
+# container start is, by construction, always stale — there is no
+# "previous daemon in this container" to race against, because the
+# container has just started. The correct mechanism is therefore to
+# remove the file unconditionally on entrypoint, not to ignore the
+# already-running guard at runtime.
+#
+# This restores the daemon's own pidfile guard for the genuine case
+# (operator shells in and double-starts inside one running container)
+# instead of permanently neutralising it.
+PID_FILE="${STAVR_HOME}/daemon.pid"
+if [ -f "$PID_FILE" ]; then
+    echo "[stavr-entrypoint] clearing stale pidfile from prior container: $PID_FILE" >&2
+    rm -f "$PID_FILE"
+fi
 
 # `--log-format json` keeps container logs grep-able by structured
 # tooling (the bombardment harness reads them on failure). The flag
