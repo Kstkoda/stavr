@@ -34,11 +34,16 @@ services:
     # `netem` is the qdisc; `--duration` bounds the impairment so the
     # CI run can't get stuck if the runner script dies before cleanup.
     # 90s comfortably covers a full oracle pass at one-shot cadence.
+    #
+    # NB: `--tc-image=gaiadocker/iproute2` was dropped — the stavr:ci
+    # image now ships iproute2 (see Dockerfile), so Pumba runs `tc` in
+    # the target container's own netns and there is no tc-container to
+    # race. This eliminates the silent-no-op failure mode that made
+    # this slice non-blocking.
     command:
       - "--log-level=info"
       - "netem"
       - "--duration=90s"
-      - "--tc-image=gaiadocker/iproute2"
       - "delay"
       - "--time=50"
       - "--jitter=10"
@@ -60,7 +65,6 @@ services:
       - "--log-level=info"
       - "netem"
       - "--duration=90s"
-      - "--tc-image=gaiadocker/iproute2"
       - "loss"
       - "--percent=1"
       - "stavr-peer-b"
@@ -80,7 +84,6 @@ services:
       - "--log-level=info"
       - "netem"
       - "--duration=90s"
-      - "--tc-image=gaiadocker/iproute2"
       - "delay"
       # jitter MUST be <= delay or netem rejects the qdisc: "Illegal
       # value(s): TIME is required if JITTER is specified". The intent
