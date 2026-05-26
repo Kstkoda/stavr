@@ -39,8 +39,17 @@ const TARGET_ID = 'peer-a';
 const RESTART_BUDGET_MS = Number(
   process.env.STAVR_BOMBARDMENT_RESTART_BUDGET_MS ?? 90_000,
 );
+// F8: widened from 30s → 90s with explicit margin. The sweep is invoked
+// inside mountTransports() in src/transports.ts before the HTTP listen,
+// so on a fast box /healthz answering implies the sweep already
+// completed. On a loaded CI runner, however, broker.publish() fanout
+// and the in-container docker-exec probe loop both queue against host
+// I/O — the 30s default landed false-negative ~ once per ~30 runs on
+// CI. 90s mirrors RESTART_BUDGET_MS: if the daemon has the runway to
+// come back up, the sweep gets the same runway to be observable
+// downstream.
 const SWEEP_BUDGET_MS = Number(
-  process.env.STAVR_BOMBARDMENT_SWEEP_BUDGET_MS ?? 30_000,
+  process.env.STAVR_BOMBARDMENT_SWEEP_BUDGET_MS ?? 90_000,
 );
 const POLL_INTERVAL_MS = 1_000;
 
