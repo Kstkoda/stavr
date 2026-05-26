@@ -39,9 +39,10 @@
 #   curl http://localhost:7777/status    # version == package.json#version
 
 # ---------- stage 1: builder ----------
-# Pinned to node 25.7 to match package.json#engines.node (>=25.7).
+# Pinned to node 26 (current LTS) — engines.node is >=25.7, so 26 is in
+# range and matches ci.yml / soak.yml which both use '26.x'.
 # Bookworm gives a recent enough glibc + python3 for better-sqlite3.
-FROM node:25-bookworm-slim AS builder
+FROM node:26-bookworm-slim AS builder
 
 # better-sqlite3 builds a native addon — needs python + make + g++.
 # Kept in the builder stage only; not present in the runtime image.
@@ -75,15 +76,25 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # ---------- stage 2: runtime ----------
-FROM node:25-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 
 # curl is the cheapest healthcheck — Node images don't ship it.
 # tini gives us PID-1 signal forwarding so docker stop terminates cleanly.
+# iproute2 ships `tc`, which Pumba (bombardment Phase 3c/4b chaos
+# sidecars) shells into. Without it Pumba spins up a separate
+# `--tc-image=gaiadocker/iproute2` container that races: the
+# tc-container exits before Pumba's `docker exec` lands, so the netem
+# rule never installs and chaos slices become silent no-ops. Putting
+# tc inside the daemon image lets Pumba run `tc qdisc` in the
+# target's own netns (`docker exec stavr-peer-a tc qdisc ...`) with
+# nothing to race. ~3MB on disk and only the netem chaos slices ever
+# exercise it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         tini \
         ca-certificates \
+        iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root runtime user. node:bookworm-slim already ships a `node` user

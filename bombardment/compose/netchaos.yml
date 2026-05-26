@@ -1,0 +1,77 @@
+# Bombardment Phase 4b — heavier network chaos overlay.
+#
+# Layered on top of the base compose file. Where the Phase 3c
+# pumba.yml budget is modest (50ms delay, 1% loss, 20ms jitter) and is
+# intended to assert "oracles pass under realistic LAN noise", this
+# overlay turns the volume up: a 500ms latency spike with ±100ms
+# jitter on peer-a, plus 10% packet loss on peer-b. The Phase 3d
+# federation oracles must still pass — within-site reachability +
+# registry-shape invariants are robust to this budget.
+#
+# A separate (and harsher) partition slice lives in the recovery
+# oracle (bombardment/federation/oracles/peer-unreachable-recovery.mjs,
+# driven by run-recovery-slice.mjs). Partition semantics are binary,
+# require their own assertion ("did the peer transition state and then
+# recover?"), and don't compose with "oracles still pass" — so the
+# two are kept separate by design.
+#
+# Apply:
+#   docker compose -f docker-compose.yml -f netchaos.yml up -d
+#
+# All sidecars are one-shot (restart: "no") with --duration bounds, so
+# `docker compose down -v` after the slice clears the topology cleanly.
+
+services:
+  # 500ms RTT, 100ms jitter, normal distribution — "WAN-going-bad"
+  # territory. Anything that relies on a snappy in-rack ping will
+  # start to feel it.
+  pumba-spike-peer-a:
+    image: gaiaadm/pumba:0.11.7
+    container_name: stavr-pumba-spike-peer-a
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      - "--log-level=info"
+      # 120s covers wait-for-impairment-settle + a full Phase 3d
+      # oracle pass (which includes the 65s convergence wait) with
+      # comfortable margin. If the runner stalls before this expires,
+      # the sidecar still exits cleanly on its own.
+      #
+      # NB: `--tc-image=gaiadocker/iproute2` was dropped — stavr:ci
+      # now ships iproute2 inside the daemon image, so Pumba runs `tc`
+      # in the target's own netns and there is no tc-container to race.
+      - "netem"
+      - "--duration=120s"
+      - "delay"
+      - "--time=500"
+      - "--jitter=100"
+      - "--distribution=normal"
+      - "stavr-peer-a"
+    depends_on:
+      - peer-a
+    restart: "no"
+    labels:
+      com.stavr.role: "pumba"
+      com.stavr.impairment: "latency-spike"
+
+  # 10% packet loss on peer-b — forces TCP retransmits on every
+  # federation probe; the daemon's HTTP client must tolerate it
+  # without flapping registry state.
+  pumba-loss-peer-b:
+    image: gaiaadm/pumba:0.11.7
+    container_name: stavr-pumba-loss-peer-b
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      - "--log-level=info"
+      - "netem"
+      - "--duration=120s"
+      - "loss"
+      - "--percent=10"
+      - "stavr-peer-b"
+    depends_on:
+      - peer-b
+    restart: "no"
+    labels:
+      com.stavr.role: "pumba"
+      com.stavr.impairment: "loss-high"

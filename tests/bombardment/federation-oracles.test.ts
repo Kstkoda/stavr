@@ -22,7 +22,7 @@
  * of sync with the compose-file network shape.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TOPOLOGY, reachableFrom } from '../../bombardment/federation/topology.mjs';
 import {
   defaultFederationOracles,
@@ -109,6 +109,12 @@ describe('bombardment/federation/oracles registry', () => {
 // we cannot rewrite it here; instead we just run the oracles and
 // expect graceful failures pointing at the configured 127.0.0.1
 // host ports (which are not listening in a vitest run).
+//
+// Chaos-mode behaviors (F1a: loop doesn't exit while degraded,
+// F1b: stale-degraded+everConverged violation) require multi-poll
+// sequences that can't be exercised without mocking the 3s sleep —
+// they are covered by the bombardment-docker CI workflow against the
+// live compose topology.
 describe('bombardment/federation/oracles graceful failure', () => {
   it('mutualVisibility returns ok=false (not throws) when peers are unreachable', async () => {
     const r = await mutualVisibility();
@@ -128,4 +134,53 @@ describe('bombardment/federation/oracles graceful failure', () => {
     expectResultShape(r);
     expect(r.ok).toBe(false);
   }, 30_000);
+});
+
+// F3 regression guard: negative ageMs (container clock ahead of oracle
+// runner) must not be accepted as a fresh degraded-converged state.
+// Without the `ageMs >= 0` gate, `now - futureTs < 0` satisfies
+// `<= LAST_SEEN_FRESHNESS_MS` and the oracle silently passes for a
+// peer that was never actually probed successfully from this host.
+describe('peerStateConvergence — F3: negative ageMs rejection (chaos mode)', () => {
+  afterEach(() => {
+    vi.doUnmock('../../bombardment/federation/http-probe.mjs');
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('rejects degraded with future last_seen_at (negative ageMs) and returns ok=false', async () => {
+    vi.stubEnv('STAVR_BOMBARDMENT_UNDER_CHAOS', '1');
+    // Deadline of 0 → loop exits after one poll (Date.now() >= start+0).
+    vi.stubEnv('STAVR_BOMBARDMENT_CONVERGENCE_POLL_MS', '0');
+
+    vi.doMock('../../bombardment/federation/http-probe.mjs', () => ({
+      getJson: vi.fn().mockResolvedValue({
+        body: {
+          peers: [
+            // last_seen_at 60s in the future (container clock skew)
+            { id: 'peer-a', state: 'degraded', last_seen_at: Date.now() + 60_000 },
+            { id: 'peer-b', state: 'degraded', last_seen_at: Date.now() + 60_000 },
+            { id: 'hub', state: 'degraded', last_seen_at: Date.now() + 60_000 },
+          ],
+        },
+      }),
+    }));
+
+    vi.resetModules();
+    // Dynamic import so the module re-evaluates UNDER_CHAOS from the
+    // stubbed env (module-level constant, set at evaluation time).
+    const { peerStateConvergence: conv } = await import(
+      '../../bombardment/federation/oracles/peer-state-convergence.mjs'
+    );
+
+    const r = await conv();
+
+    // Future last_seen_at → ageMs = now - futureTs < 0 → F3 gate
+    // (ageMs >= 0) rejects it → everConverged stays false → ok=false.
+    // Without the fix this would silently pass (ageMs < 0 satisfies
+    // the old `<= LAST_SEEN_FRESHNESS_MS` check).
+    expect(r.ok).toBe(false);
+    const violations = (r.evidence as { violations: unknown[] })?.violations ?? [];
+    expect(violations.length).toBeGreaterThan(0);
+  }, 5_000);
 });
