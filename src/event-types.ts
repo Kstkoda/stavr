@@ -175,6 +175,17 @@ export const EventKind = z.enum([
   'host_ceiling_refused',
   'host_ceiling_shed',
   'host_ceiling_os_cap',
+  // worker-dispatch Phase 1 — invoke + job substrate. Additive; the
+  // worker_* events stay alive through the Phase 3 dual-emit window. See
+  // proposed/worker-dispatch-bom.md + proposed/worker-dispatch-recon.md §4.
+  'job_dispatched',
+  'job_started',
+  'job_progress',
+  'job_metadata_changed',
+  'job_heartbeat',
+  'job_log',
+  'job_error',
+  'job_terminated',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -326,6 +337,79 @@ export const WorkerErrorPayload = z.object({
   id: z.string(),
   message: z.string(),
   recoverable: z.boolean(),
+});
+
+// worker-dispatch Phase 1 — job_* payloads (additive; live alongside
+// worker_* through the Phase 3 dual-emit window). See
+// proposed/worker-dispatch-recon.md §4 for the migration map.
+
+export const JobDispatchedPayload = z.object({
+  id: z.string(),
+  name: z.string(),
+  binding_kind: z.enum(['mcp-call', 'http', 'process-spawn', 'cc-session-attach']),
+  binding_target: z.string(),
+  params_hash: z.string(),
+  budget: z
+    .object({
+      max_runtime_ms: z.number().int().positive().optional(),
+      max_steps: z.number().int().positive().optional(),
+      credit_pool: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const JobStartedPayload = z.object({
+  id: z.string(),
+  name: z.string(),
+  binding_kind: z.string(),
+  binding_target: z.string(),
+  pid: z.number().int().optional(),
+  metadata: z.record(z.unknown()).default({}),
+});
+
+export const JobProgressPayload = z.object({
+  id: z.string(),
+  message: z.string(),
+  payload: z.unknown().optional(),
+});
+
+export const JobMetadataChangedPayload = z.object({
+  id: z.string(),
+  patch: z.record(z.unknown()),
+});
+
+export const JobHeartbeatPayload = z.object({
+  id: z.string(),
+  detail: z.string().optional(),
+});
+
+export const JobLogPayload = z.object({
+  job_id: z.string(),
+  job_name: z.string(),
+  stream: z.enum(['stdout', 'stderr']),
+  format: z.enum(['stream-json', 'raw']).optional(),
+  event: z.unknown().optional(),
+  line: z.string().optional(),
+  truncated: z.boolean().optional(),
+});
+
+export const JobErrorPayload = z.object({
+  id: z.string(),
+  message: z.string(),
+  recoverable: z.boolean(),
+});
+
+export const JobTerminatedPayload = z.object({
+  id: z.string(),
+  reason: z.enum([
+    'completed',
+    'crashed',
+    'terminated_by_user',
+    'budget_exceeded',
+    'shed_by_host',
+  ]),
+  exit_code: z.number().int().optional(),
+  result: z.unknown().optional(),
 });
 
 // Trust-scope payloads (spec 46)
@@ -1096,6 +1180,15 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     federation_handoff_started: FederationHandoffStartedPayload,
     federation_handoff_completed: FederationHandoffCompletedPayload,
     tier3_assertion_recorded: Tier3AssertionRecordedPayload,
+    // worker-dispatch Phase 1 — invoke + job substrate.
+    job_dispatched: JobDispatchedPayload,
+    job_started: JobStartedPayload,
+    job_progress: JobProgressPayload,
+    job_metadata_changed: JobMetadataChangedPayload,
+    job_heartbeat: JobHeartbeatPayload,
+    job_log: JobLogPayload,
+    job_error: JobErrorPayload,
+    job_terminated: JobTerminatedPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);
