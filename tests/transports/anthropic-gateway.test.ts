@@ -1,25 +1,26 @@
 /**
- * family-son-mcp Phase 5 Phase 1 — Anthropic-API-compatible gateway stub.
+ * family-son-mcp Phase 5 — HTTP integration for the Anthropic gateway.
  *
- * BOM: proposed/family-son-mcp-phase-5-llm-gateway-bom.md, Phase 1
- * deliverable. Tests cover:
+ * Phase 1: route shell + 501 stub behind auth (committed 022a02b).
+ * Phase 2: chokepoint integration — NO_GO → HTTP 403; post-gate stub
+ *          stays 501 because forwarding lands in Phase 3.
  *
- *   - POST /anthropic/v1/messages → 501 stub with the documented JSON body
- *     shape, and the actor stamp set by the upstream middleware.
- *   - GET / PUT / DELETE on the same path → 405 with `Allow: POST`.
- *   - Mismatched subpath under /anthropic/* → 404 (Express default).
+ * BOM: proposed/family-son-mcp-phase-5-llm-gateway-bom.md, Phases 1+2.
  *
- * The 401-unauthed / 401-revoked branches are covered by the pure
- * checkBearerAuth tests in `tests/auth-middleware.test.ts` (the global
- * middleware applies to every non-public path, so /anthropic/v1/messages
- * inherits the same gate). This file exercises the route handler itself
- * under the loopback-bypass path so the 501 shape is captured directly.
+ * In-process tests run over loopback. The actor-stamping middleware
+ * sets `actor_id='loopback:<corr>'`, which is operator-shape — so the
+ * default-deny path for peer actors is exercised by the unit tests in
+ * `tests/security/gateway-gate.test.ts`. The HTTP 403 mapping is
+ * verified here via a Layer 0 capability override deny, which fires
+ * before any per-actor resolution.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { EventStore } from '../../src/persistence.js';
 import { Broker } from '../../src/broker.js';
 import { mountTransports, type MountedTransports } from '../../src/transports.js';
+import { getOrCreateCapabilityOverrideStore } from '../../src/server.js';
+import { GATEWAY_TOOL_ID } from '../../src/security/gateway-gate.js';
 
 interface Harness {
   store: EventStore;
@@ -37,7 +38,7 @@ async function boot(): Promise<Harness> {
   return { store, broker, transports, base: `http://127.0.0.1:${addr.port}` };
 }
 
-describe('family-son-mcp Phase 5 P1 · /anthropic/v1/messages stub', () => {
+describe('family-son-mcp Phase 5 · /anthropic/v1/messages stub', () => {
   let h: Harness;
   beforeEach(async () => {
     h = await boot();
@@ -46,24 +47,44 @@ describe('family-son-mcp Phase 5 P1 · /anthropic/v1/messages stub', () => {
     await h.transports.shutdown();
   });
 
-  it('POST returns 501 with the documented stub body', async () => {
+  it('POST returns 501 phase-2-stub body when chokepoint allows the call', async () => {
     const r = await fetch(`${h.base}/anthropic/v1/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-opus-4-7', max_tokens: 16, messages: [] }),
+      body: JSON.stringify({ model: 'claude-opus-4-7', max_tokens: 16, messages: [{ role: 'user', content: 'hi' }] }),
     });
     expect(r.status).toBe(501);
     const body = await r.json();
     expect(body.ok).toBe(false);
     expect(body.error).toBe('not_implemented');
-    expect(body.phase).toBe('phase-1-stub');
+    expect(body.phase).toBe('phase-2-stub');
     expect(typeof body.reason).toBe('string');
     expect(body.reason.length).toBeGreaterThan(0);
-    // actor is stamped by the upstream middleware; loopback gets a
-    // loopback:<corr-id> shape (corr-id is set by the correlation-id
-    // middleware earlier in the stack), production peers get `peer:<name>`.
+    expect(body.tool_id).toBe(GATEWAY_TOOL_ID);
     expect(typeof body.actor).toBe('string');
     expect(body.actor.startsWith('loopback:') || body.actor === 'unknown').toBe(true);
+  });
+
+  it('Layer 0 capability disable → POST returns 403 no_go', async () => {
+    const caps = getOrCreateCapabilityOverrideStore(h.broker);
+    caps.disablePermanent(GATEWAY_TOOL_ID, {
+      reason: 'operator killswitch — Anthropic gateway paused',
+      setBy: 'operator',
+    });
+
+    const r = await fetch(`${h.base}/anthropic/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-opus-4-7', max_tokens: 16, messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    expect(r.status).toBe(403);
+    const body = await r.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe('no_go');
+    expect(body.tool_id).toBe(GATEWAY_TOOL_ID);
+    expect(typeof body.actor).toBe('string');
+    expect(typeof body.reason).toBe('string');
+    expect(body.reason).toMatch(/killswitch|paused|disabled permanently/);
   });
 
   it('GET returns 405 with Allow: POST', async () => {

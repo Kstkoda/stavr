@@ -64,6 +64,7 @@ import { logContext } from './observability/logger.js';
 import { mountDebugEndpoints } from './observability/debug-endpoints.js';
 import { mountWebAuthnRoutes } from './security/webauthn-routes.js';
 import { mayRespond } from './security/respond-policy.js';
+import { gateAnthropicGatewayCall } from './security/gateway-gate.js';
 import { mountFederationRoutes } from './federation/index.js';
 import { getOrCreateIdentityStore, getOrCreateWebAuthnCoordinator, getOrCreateFederation } from './server.js';
 import { attachMcpAttributes } from './observability/spans.js';
@@ -577,20 +578,23 @@ export async function mountTransports(
       });
     });
 
-    // family-son-mcp Phase 5 Phase 1 — Anthropic-API-compatible gateway stub.
+    // family-son-mcp Phase 5 — Anthropic-API-compatible gateway.
     //
-    // BOM proposed/family-son-mcp-phase-5-llm-gateway-bom.md. Phase 1 mounts
-    // the route behind the global bearer-auth middleware (line ~494) and the
-    // actor-stamping middleware (line ~526) and returns a deterministic 501.
-    // No credential forwarding, no chokepoint integration, no metering —
-    // those land in Phases 2 / 3 / 4 respectively.
+    // BOM proposed/family-son-mcp-phase-5-llm-gateway-bom.md.
+    //
+    // Phase 1 mounted the route shell behind the global bearer-auth
+    // middleware (line ~494) and the actor-stamping middleware
+    // (line ~526). Phase 2 (here) runs the same chokepoint the MCP
+    // transport applies to tool calls, mapping a per-actor NO_GO to
+    // HTTP 403 (operator F3 decision 2026-05-27). Phase 3 will replace
+    // the trailing 501 with a real forward to api.anthropic.com.
     //
     // The route is intentionally NOT on the /dashboard/* loopback fence
     // (line ~554): the son is by definition non-loopback. The loopback
     // bypass on bearer-auth (checkBearerAuth line ~1397) is accepted per
     // the Phase 0 recon F1 decision; Phase 4 will still emit audit events
     // for loopback gateway traffic so the audit trail isn't blind.
-    app.all('/anthropic/v1/messages', (req: Request, res: Response) => {
+    app.all('/anthropic/v1/messages', async (req: Request, res: Response) => {
       if (req.method !== 'POST') {
         res
           .status(405)
@@ -602,16 +606,63 @@ export async function mountTransports(
           });
         return;
       }
-      const actor = logContext.getStore()?.actor_id ?? 'unknown';
+
+      // Build audit-safe request metadata for the chokepoint (BOM hard
+      // invariant #5: no request body — prompts may contain PII).
+      const body = (req.body ?? {}) as { model?: unknown; max_tokens?: unknown; messages?: unknown };
+      const requestMetadata = {
+        model: body.model,
+        message_count: Array.isArray(body.messages) ? body.messages.length : undefined,
+        max_tokens: body.max_tokens,
+      };
+
+      // Phase 2 — chokepoint BEFORE anything else. A NO_GO actor must
+      // never reach Phase 3's forward path, so the gate runs ahead of
+      // any further request shaping. AUTO returns immediately; CONFIRM
+      // blocks until operator approval (or 1800s timeout); EXPLICIT
+      // requires a fresh WebAuthn assertion (effectively operator-only
+      // for the gateway). See src/security/gateway-gate.ts.
+      let verdict;
+      try {
+        verdict = await gateAnthropicGatewayCall(broker, {
+          request_metadata: requestMetadata,
+        });
+      } catch (err) {
+        // The gate's only error surface is decision-route plumbing
+        // (decision store insert, broker.publish). Surface as 500 so
+        // the son retries rather than treating a gate failure as a
+        // structural NO_GO.
+        log(`/anthropic/v1/messages gate error: ${(err as Error).message}`);
+        res.status(500).json({
+          ok: false,
+          error: 'gate_error',
+          reason: 'chokepoint gate failed to resolve; see operator logs',
+        });
+        return;
+      }
+      if (!verdict.allowed) {
+        res.status(403).json({
+          ok: false,
+          error: 'no_go',
+          reason: verdict.reason ?? 'chokepoint denied',
+          actor: verdict.actor,
+          tool_id: verdict.tool_id,
+        });
+        return;
+      }
+
+      // Phase 2 stub — chokepoint passed, forward still not wired.
+      // Phase 3 replaces this with the actual fetch to api.anthropic.com.
       res.status(501).json({
         ok: false,
         error: 'not_implemented',
-        phase: 'phase-1-stub',
+        phase: 'phase-2-stub',
         reason:
-          'family-son-mcp Phase 5 — endpoint shell only. Credential ' +
-          'forwarding lands in Phase 3 after the chokepoint integration ' +
-          '(Phase 2) and the operator key-seeding decision (F5).',
-        actor,
+          'family-son-mcp Phase 5 — chokepoint passed but forward not ' +
+          'yet wired. Credential forwarding lands in Phase 3 after the ' +
+          'operator key-seeding decision (F5).',
+        actor: verdict.actor,
+        tool_id: verdict.tool_id,
       });
     });
 
