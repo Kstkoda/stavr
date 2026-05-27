@@ -64,7 +64,7 @@ import { logContext } from './observability/logger.js';
 import { mountDebugEndpoints } from './observability/debug-endpoints.js';
 import { mountWebAuthnRoutes } from './security/webauthn-routes.js';
 import { mayRespond } from './security/respond-policy.js';
-import { gateAnthropicGatewayCall } from './security/gateway-gate.js';
+import { gateAnthropicGatewayCall, GATEWAY_TOOL_ID } from './security/gateway-gate.js';
 import { mountFederationRoutes } from './federation/index.js';
 import { getOrCreateIdentityStore, getOrCreateWebAuthnCoordinator, getOrCreateFederation, getCredentialStore } from './server.js';
 import { requireRecentTier3Assertion } from './security/tier3-gate.js';
@@ -253,7 +253,42 @@ export async function mountTransports(
     }
 
     const app = express();
+    // family-son-mcp Phase 5 review fix C21 — route-specific high-limit
+    // parser mounts BEFORE the global 4MB parser so /anthropic/* bodies
+    // (multi-message conversations, base64 image inputs) survive the
+    // body-parser stage before the chokepoint runs. express's body-parser
+    // short-circuits when req.body is already set, so order matters.
+    app.use('/anthropic', express.json({ limit: '32mb' }));
     app.use(express.json({ limit: '4mb' }));
+
+    // family-son-mcp Phase 5 review fix C12 — Express's default error
+    // handler answers JSON-parse failures and 413-payload-too-large with
+    // an HTML page. The son's HTTP client expects {ok,error,...} JSON;
+    // this middleware catches body-parser errors and shapes them to the
+    // daemon's wire convention. Only fires on body-parse failures (err
+    // has a `type` field per body-parser docs).
+    app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+      if (err && typeof err === 'object' && 'type' in err && typeof (err as { type: unknown }).type === 'string') {
+        const bpErr = err as { type: string; message?: string; status?: number };
+        const status = typeof bpErr.status === 'number' ? bpErr.status : 400;
+        const code =
+          bpErr.type === 'entity.parse.failed' ? 'bad_json'
+          : bpErr.type === 'entity.too.large' ? 'payload_too_large'
+          : bpErr.type === 'charset.unsupported' ? 'unsupported_charset'
+          : bpErr.type === 'encoding.unsupported' ? 'unsupported_encoding'
+          : 'bad_request';
+        res.status(status).json({
+          ok: false,
+          error: code,
+          // Body-parser error messages don't echo the body contents — the
+          // SyntaxError message is "Unexpected token } in JSON at position 9"
+          // style. Safe to forward.
+          reason: bpErr.message ?? 'request body could not be parsed',
+        });
+        return;
+      }
+      next(err);
+    });
 
     // BOM diagnostics 2026 C1.6 — every HTTP request runs inside an
     // AsyncLocalStorage scope stamped with a correlation_id. Clients may pass
@@ -595,7 +630,49 @@ export async function mountTransports(
     // bypass on bearer-auth (checkBearerAuth line ~1397) is accepted per
     // the Phase 0 recon F1 decision; Phase 4 will still emit audit events
     // for loopback gateway traffic so the audit trail isn't blind.
+    //
+    // Review-fix integration (2026-05-27): the handler now (a) runs the
+    // Layer 0 capability killswitch BEFORE the method check so HEAD/OPTIONS
+    // probes also fail closed (S2); (b) shape-validates body.model /
+    // max_tokens before threading into the chokepoint matcher to neutralize
+    // toString-throw DoS vectors (C7); (c) sanitizes verdict.reason for
+    // peer actors in the 403/501 response while keeping the full reason in
+    // the audit log (C1/C2/S7); (d) emits llm_gateway_allowed /
+    // llm_gateway_denied for every chokepoint outcome (C8/C11).
     app.all('/anthropic/v1/messages', async (req: Request, res: Response) => {
+      const actor = logContext.getStore()?.actor_id ?? 'unstamped-loopback';
+      const isPeerActor = actor.startsWith('peer:');
+
+      // S2 — Layer 0 capability killswitch fires BEFORE the method check
+      // so HEAD/GET/OPTIONS probes can't confirm the route is mounted when
+      // the operator has paused the gateway. Audit-emits identically to
+      // the post-method-check capability deny.
+      const capStore = getOrCreateCapabilityOverrideStore(broker);
+      const capCheck = capStore.check(GATEWAY_TOOL_ID);
+      if (!capCheck.allowed) {
+        const reason = capCheck.reason ?? `${GATEWAY_TOOL_ID} disabled by operator (Layer 0)`;
+        await broker.publish({
+          kind: 'llm_gateway_denied',
+          at: new Date().toISOString(),
+          correlation_id: logContext.getStore()?.correlation_id,
+          source_agent: actor,
+          payload: {
+            actor,
+            tool_id: GATEWAY_TOOL_ID,
+            reason,
+            source: 'capability',
+          },
+        });
+        res.status(403).json({
+          ok: false,
+          error: 'no_go',
+          reason: sanitizeGatewayReason(isPeerActor, reason, 'capability'),
+          actor,
+          tool_id: GATEWAY_TOOL_ID,
+        });
+        return;
+      }
+
       if (req.method !== 'POST') {
         res
           .status(405)
@@ -608,13 +685,20 @@ export async function mountTransports(
         return;
       }
 
-      // Build audit-safe request metadata for the chokepoint (BOM hard
-      // invariant #5: no request body — prompts may contain PII).
+      // C7 — shape-validate body before threading into the chokepoint.
+      // body.model and body.max_tokens are typed `unknown` on the wire;
+      // a malicious throwing toString on either could be evaluated by a
+      // future no-go matcher → gate.check rejects → 500 DoS surface.
+      // We project both to a known shape (string / non-negative int) and
+      // pass that — anything else becomes undefined.
       const body = (req.body ?? {}) as { model?: unknown; max_tokens?: unknown; messages?: unknown };
       const requestMetadata = {
-        model: body.model,
+        model: typeof body.model === 'string' ? body.model : undefined,
         message_count: Array.isArray(body.messages) ? body.messages.length : undefined,
-        max_tokens: body.max_tokens,
+        max_tokens:
+          typeof body.max_tokens === 'number' && Number.isFinite(body.max_tokens) && body.max_tokens >= 0
+            ? body.max_tokens
+            : undefined,
       };
 
       // Phase 2 — chokepoint BEFORE anything else. A NO_GO actor must
@@ -633,7 +717,9 @@ export async function mountTransports(
         // (decision store insert, broker.publish). Surface as 500 so
         // the son retries rather than treating a gate failure as a
         // structural NO_GO.
-        log(`/anthropic/v1/messages gate error: ${(err as Error).message}`);
+        getLogger().error(
+          `/anthropic/v1/messages gate error: ${(err as Error).message}`,
+        );
         res.status(500).json({
           ok: false,
           error: 'gate_error',
@@ -642,15 +728,48 @@ export async function mountTransports(
         return;
       }
       if (!verdict.allowed) {
+        const denySource = classifyDenyReason(verdict.reason);
+        // C8 — emit audit event for Layer 2/3 NO_GO (matrix, default-deny,
+        // tier3-miss, decision-rejected). Full unredacted reason in the
+        // audit payload; redacted for peer-bound HTTP response.
+        await broker.publish({
+          kind: 'llm_gateway_denied',
+          at: new Date().toISOString(),
+          correlation_id: logContext.getStore()?.correlation_id,
+          source_agent: verdict.actor,
+          payload: {
+            actor: verdict.actor,
+            tool_id: verdict.tool_id,
+            reason: verdict.reason ?? 'chokepoint denied',
+            source: denySource,
+            request_metadata: requestMetadata,
+          },
+        });
         res.status(403).json({
           ok: false,
           error: 'no_go',
-          reason: verdict.reason ?? 'chokepoint denied',
+          reason: sanitizeGatewayReason(isPeerActor, verdict.reason ?? 'chokepoint denied', denySource),
           actor: verdict.actor,
           tool_id: verdict.tool_id,
         });
         return;
       }
+
+      // C11 — chokepoint allowed; emit gateway_allowed so the audit trail
+      // is complete on the AUTO path too. Phase 3 will move this emit
+      // immediately before the upstream forward (so the audit captures
+      // both the gate-pass and the eventual upstream outcome).
+      await broker.publish({
+        kind: 'llm_gateway_allowed',
+        at: new Date().toISOString(),
+        correlation_id: logContext.getStore()?.correlation_id,
+        source_agent: verdict.actor,
+        payload: {
+          actor: verdict.actor,
+          tool_id: verdict.tool_id,
+          request_metadata: requestMetadata,
+        },
+      });
 
       // Phase 2 stub — chokepoint passed, forward still not wired.
       // Phase 3 replaces this with the actual fetch to api.anthropic.com.
@@ -1451,6 +1570,63 @@ export function isLoopbackOnlyPath(path: string): boolean {
 }
 
 /**
+ * family-son-mcp Phase 5 review fix C1/C2/S7 — redact a chokepoint
+ * denial reason before echoing to a remote peer. The full reason
+ * stays in the audit log (operator surface); the peer-bound 403
+ * body sees only a generic deny token so it cannot probe whether
+ * the operator has authored a matrix row, what freshness window the
+ * operator's passkey uses, or where the operator's dashboard lives.
+ *
+ * For operator-shape callers (loopback, KNOWN_ACTORS) the full
+ * reason is preserved — the operator IS the audit-log audience.
+ *
+ * Exported for unit-test access; not part of the public API.
+ */
+export function sanitizeGatewayReason(
+  isPeerActor: boolean,
+  fullReason: string,
+  source: 'capability' | 'matrix-no-go' | 'default-deny' | 'tier3-miss' | 'decision-rejected' | 'unknown',
+): string {
+  if (!isPeerActor) return fullReason;
+  switch (source) {
+    case 'capability':
+      return 'gateway is disabled by the operator';
+    case 'matrix-no-go':
+    case 'default-deny':
+      return 'gateway access denied; contact the operator';
+    case 'tier3-miss':
+      return 'gateway access requires operator re-authentication';
+    case 'decision-rejected':
+      return 'gateway access denied by the operator';
+    default:
+      return 'gateway access denied';
+  }
+}
+
+/**
+ * family-son-mcp Phase 5 review fix C8 — classify a chokepoint
+ * deny reason string into one of the audit-payload `source` enum
+ * values. The reason strings are stable per `decision-gate.ts`:
+ *   - "per-actor NO_GO: ... (source=default-deny)" → default-deny
+ *   - "per-actor NO_GO: ... (source=matrix)"      → matrix-no-go
+ *   - "EXPLICIT denied: ..."                       → tier3-miss
+ *   - "chokepoint denied: ... was reject"          → decision-rejected
+ * Capability-deny is detected by the caller (capStore.check fires
+ * before this is reached). Unknown formats fall through.
+ */
+export function classifyDenyReason(
+  reason: string | undefined,
+): 'capability' | 'matrix-no-go' | 'default-deny' | 'tier3-miss' | 'decision-rejected' | 'unknown' {
+  if (!reason) return 'unknown';
+  if (reason.includes('source=default-deny')) return 'default-deny';
+  if (reason.includes('source=matrix')) return 'matrix-no-go';
+  if (reason.startsWith('EXPLICIT denied:')) return 'tier3-miss';
+  if (reason.startsWith('chokepoint denied:')) return 'decision-rejected';
+  if (reason.includes('disabled')) return 'capability';
+  return 'unknown';
+}
+
+/**
  * Spec 52 A2 — true iff the request socket connected from a loopback address.
  * Accounts for IPv6-mapped IPv4 (`::ffff:127.0.0.1`).
  */
@@ -2244,8 +2420,33 @@ export function mountDashboardRoutes(
     }
 
     const identity = getOrCreateIdentityStore(broker);
-    const tier3 = requireRecentTier3Assertion(identity);
+    const correlationId = logContext.getStore()?.correlation_id;
+
+    // Review fix C4 — resolve the operator_id from the identity store
+    // rather than defaulting to the literal 'operator'. Single-operator
+    // stavR returns exactly one id; if zero passkeys are registered we
+    // fall back to 'operator' so the require returns the standard
+    // no_recent_assertion hint instead of a structurally surprising one.
+    const registeredIds = identity.listOperatorIds();
+    const operatorId = registeredIds[0] ?? 'operator';
+
+    const tier3 = requireRecentTier3Assertion(identity, { operatorId });
     if (!tier3.ok) {
+      // Review fix C10 — audit failed-seeding attempts. The MCP chokepoint
+      // EXPLICIT path emits tier3_assertion_required on the same miss; the
+      // seeding endpoint now matches.
+      await broker.publish({
+        kind: 'tier3_assertion_required',
+        at: new Date().toISOString(),
+        correlation_id: correlationId,
+        source_agent: 'dashboard',
+        payload: {
+          tool: 'credential.seed.anthropic',
+          reason: tier3.reason,
+          hint: tier3.hint,
+          operator_id: tier3.operator_id,
+        },
+      });
       res.status(401).json({
         ok: false,
         error: 'tier3_required',
@@ -2268,18 +2469,41 @@ export function mountDashboardRoutes(
       return;
     }
 
-    // Atomic rotation: list + revoke existing 'anthropic' rows, then
-    // insert the new one. better-sqlite3's `db.transaction(fn)` wraps
-    // `fn` in BEGIN/COMMIT (SAVEPOINT when already nested).
+    // Review fix C3 — atomic rotation INCLUDING audit emits. The previous
+    // implementation committed the vault writes in one SQLite transaction,
+    // then ran `await broker.publish(...)` for each event AFTER the commit.
+    // A SIGKILL between commit and emit would leave the vault rotated with
+    // no audit trail of the rotation. The transaction now also writes the
+    // `credential_revoked` + `credential_added` event rows via
+    // `broker.store.appendEvent` (synchronous DB write, same connection,
+    // participates in the same BEGIN/COMMIT). Subscriber fanout still
+    // happens AFTER the transaction (necessarily async); the audit log
+    // itself is atomic with the vault state.
     let newCred;
     let revokedIds: string[] = [];
+    let pendingEvents: StoredEvent[] = [];
     try {
       const rotate = broker.store.rawDb.transaction((plaintext: string) => {
         const existing = credStore.list({ service: 'anthropic' });
+        const at = new Date().toISOString();
+        const events: StoredEvent[] = [];
         const ids: string[] = [];
         for (const c of existing) {
           credStore.revoke(c.id, 'operator');
           ids.push(c.id);
+          events.push(
+            broker.store.appendEvent({
+              kind: 'credential_revoked',
+              at,
+              correlation_id: correlationId,
+              source_agent: 'operator',
+              payload: {
+                credential_id: c.id,
+                service: 'anthropic',
+                revoked_by: 'operator',
+              },
+            }),
+          );
         }
         const created = credStore.add({
           user_id: 'operator',
@@ -2288,11 +2512,26 @@ export function mountDashboardRoutes(
           plaintext,
           metadata: { purpose: 'gateway', seeded_via: 'dashboard-tier3' },
         });
-        return { created, revokedIds: ids };
+        events.push(
+          broker.store.appendEvent({
+            kind: 'credential_added',
+            at,
+            correlation_id: correlationId,
+            source_agent: 'operator',
+            payload: {
+              credential_id: created.id,
+              service: 'anthropic',
+              kind: 'api_key',
+              user_id: 'operator',
+            },
+          }),
+        );
+        return { created, revokedIds: ids, events };
       });
       const result = rotate(key);
       newCred = result.created;
       revokedIds = result.revokedIds;
+      pendingEvents = result.events;
     } catch (err) {
       // The plaintext `key` is in scope here — DELIBERATELY exclude it
       // from the log and the response. Surface only the error message
@@ -2308,30 +2547,17 @@ export function mountDashboardRoutes(
       return;
     }
 
-    const at = new Date().toISOString();
-    for (const id of revokedIds) {
-      await broker.publish({
-        kind: 'credential_revoked',
-        at,
-        source_agent: 'operator',
-        payload: {
-          credential_id: id,
-          service: 'anthropic',
-          revoked_by: 'operator',
-        },
-      });
+    // Fanout to live subscribers AFTER the transaction. Subscribers may
+    // see events the persisted log has, but persistence is already in
+    // place (the events were appended inside the transaction). Failures
+    // here are best-effort: the audit log itself is canonical.
+    for (const stored of pendingEvents) {
+      try {
+        await broker.fanout(stored);
+      } catch {
+        /* fanout failures must not break the successful seeding response */
+      }
     }
-    await broker.publish({
-      kind: 'credential_added',
-      at,
-      source_agent: 'operator',
-      payload: {
-        credential_id: newCred.id,
-        service: 'anthropic',
-        kind: 'api_key',
-        user_id: 'operator',
-      },
-    });
 
     res.json({
       ok: true,

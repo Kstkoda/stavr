@@ -117,6 +117,29 @@ export class IdentityStore {
     return this.rowToCredential(row);
   }
 
+  /**
+   * Return every operator id with at least one active passkey. Used by
+   * gates that need to authenticate "the operator" without a hard-coded
+   * id assumption — e.g., the Anthropic-key seeding endpoint (family-son-
+   * mcp Phase 5 review fix C4).
+   *
+   * stavR is single-operator by design (ADR-034: "1Password for AI tool
+   * access" — personal trust layer, not multi-tenant). In practice this
+   * returns 0 or 1 id; the array shape leaves room for the federated-
+   * stavR future (ADR-035) without re-shaping the call site.
+   */
+  listOperatorIds(): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT operator_id
+         FROM operator_credentials
+         WHERE revoked_at IS NULL
+         ORDER BY operator_id ASC`,
+      )
+      .all() as { operator_id: string }[];
+    return rows.map((r) => r.operator_id);
+  }
+
   /** Return every credential for an operator. By default omits revoked. */
   listForOperator(
     operatorId: string,

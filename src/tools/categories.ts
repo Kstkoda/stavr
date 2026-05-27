@@ -128,6 +128,10 @@ const EXPLICIT_TIER: Record<string, Tier> = {
   propose_plan: 'CONFIRM',
   await_decision: 'AUTO',
   respond_to_decision: 'AUTO',
+  // family-son-mcp Phase 5 — Anthropic LLM gateway. Default-deny via
+  // resolve() for non-operator actors; for operator-shape actors we want
+  // the conservative default since gateway calls egress to a third party.
+  'llm.anthropic': 'CONFIRM',
 };
 
 /**
@@ -187,6 +191,11 @@ const EXPLICIT_REVERSIBILITY: Record<string, 'reversible' | 'irreversible'> = {
   worker_dispatch: 'irreversible',
   worker_terminate: 'irreversible',
   host_exec: 'irreversible',
+  // family-son-mcp Phase 5 — a successful gateway call ships prompts to
+  // api.anthropic.com (third-party logs). Once egressed it cannot be
+  // unsent. Marking irreversible drives the friction-string treatment
+  // when an operator sets `llm.anthropic` to EXPLICIT in the matrix.
+  'llm.anthropic': 'irreversible',
 };
 
 export function reversibilityFor(toolId: string): 'reversible' | 'irreversible' {

@@ -144,6 +144,13 @@ export async function runChokepointDecision(
       gate_source: 'chokepoint',
       tool: opts.toolId,
       tier: opts.tier,
+      // Phase 5 review fix C5 — propagate chokepoint args into the
+      // decision_request payload so the dashboard's approval UI can
+      // render context (e.g., gateway: model + message_count). The
+      // payload was historically lossy: shaped audit-safe metadata at
+      // the call site landed nowhere. Audit-safe-by-construction is the
+      // caller's responsibility (BOM hard invariant #5).
+      args: opts.args,
     },
   });
 

@@ -175,6 +175,15 @@ export const EventKind = z.enum([
   'host_ceiling_refused',
   'host_ceiling_shed',
   'host_ceiling_os_cap',
+  // family-son-mcp Phase 5 — Anthropic LLM gateway audit (BOM:
+  // proposed/family-son-mcp-phase-5-llm-gateway-bom.md).
+  // llm_gateway_allowed: chokepoint allowed a /anthropic/v1/messages call;
+  //   Phase 3+ will see this immediately before the upstream forward.
+  // llm_gateway_denied: chokepoint denied a gateway call (Layer 0
+  //   capability disable, Layer 3 NO_GO matrix row, Layer 3 default-deny,
+  //   or Layer 3 EXPLICIT-tier3-miss).
+  'llm_gateway_allowed',
+  'llm_gateway_denied',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -240,6 +249,18 @@ export const DecisionRequestPayload = z.object({
   options: z.array(DecisionOption).min(1).max(8),
   default_option_id: z.string().optional(),
   deadline_seconds: z.number().int().positive().max(1800),
+  // family-mode-phase-1 Phase 4 — chokepoint provenance. Operator-facing
+  // dashboard renders these next to the question so the approval prompt
+  // shows tool/tier without re-deriving from the event source.
+  gate_source: z.string().optional(),
+  tool: z.string().optional(),
+  tier: z.string().optional(),
+  // family-son-mcp Phase 5 — chokepoint args. For gateway calls this is
+  // the request metadata { model, message_count, max_tokens }; for MCP
+  // tool calls this is the original tool args. Stripped of secret values
+  // upstream (BOM hard invariant #5). z.unknown() to keep the payload
+  // permissive; consumers shape-check at render time.
+  args: z.unknown().optional(),
 });
 
 export const DecisionResponderEnum = z.enum([
@@ -484,6 +505,41 @@ export const CredentialGrantRevokedPayload = z.object({
 export const CredentialUnsafeStoragePayload = z.object({
   reason: z.string(),
   fallback_path: z.string(),
+});
+
+// family-son-mcp Phase 5 — LLM gateway audit payloads.
+
+export const LlmGatewayAllowedPayload = z.object({
+  actor: z.string(),
+  tool_id: z.string(),
+  decision_correlation_id: z.string().optional(),
+  request_metadata: z
+    .object({
+      model: z.string().optional(),
+      message_count: z.number().int().nonnegative().optional(),
+      max_tokens: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
+});
+
+export const LlmGatewayDeniedPayload = z.object({
+  actor: z.string(),
+  tool_id: z.string(),
+  // Full unredacted operator-facing reason. The HTTP layer redacts this
+  // for peer-bound 403 responses; the audit log keeps the full string.
+  reason: z.string(),
+  // Layer 0 capability deny, Layer 3 NO_GO matrix, Layer 3 default-deny,
+  // Layer 3 EXPLICIT tier3-miss, or chokepoint decision rejected.
+  source: z
+    .enum(['capability', 'matrix-no-go', 'default-deny', 'tier3-miss', 'decision-rejected', 'unknown'])
+    .optional(),
+  request_metadata: z
+    .object({
+      model: z.string().optional(),
+      message_count: z.number().int().nonnegative().optional(),
+      max_tokens: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
 });
 
 // Spec 48 Layer 3 — no-go payloads.
