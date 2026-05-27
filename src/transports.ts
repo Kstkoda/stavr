@@ -66,7 +66,8 @@ import { mountWebAuthnRoutes } from './security/webauthn-routes.js';
 import { mayRespond } from './security/respond-policy.js';
 import { gateAnthropicGatewayCall } from './security/gateway-gate.js';
 import { mountFederationRoutes } from './federation/index.js';
-import { getOrCreateIdentityStore, getOrCreateWebAuthnCoordinator, getOrCreateFederation } from './server.js';
+import { getOrCreateIdentityStore, getOrCreateWebAuthnCoordinator, getOrCreateFederation, getCredentialStore } from './server.js';
+import { requireRecentTier3Assertion } from './security/tier3-gate.js';
 import { attachMcpAttributes } from './observability/spans.js';
 import { recordPerf, perfSnapshot } from './observability/perf-metrics.js';
 import { getV02Subsystem } from './steward/v02-wiring.js';
@@ -2204,6 +2205,140 @@ export function mountDashboardRoutes(
       });
     }
     res.json({ ok: true, actor_id: req.params.actorId, tool_id: req.params.toolId });
+  });
+
+  // family-son-mcp Phase 5 P3a — operator's Anthropic API-key seeding.
+  //
+  // F5 decision (operator-locked 2026-05-27): dashboard POST + Tier-3
+  // assertion gate. Loopback-only (inherited from the /dashboard/* fence
+  // at transports.ts:554-567), Tier-3 freshness fence applied inline so
+  // every set/rotate requires the operator to physically touch the
+  // passkey (DEFAULT_TIER3_ASSERTION_TTL_MS = 60s).
+  //
+  // The handler:
+  //   1. Validates body shape.
+  //   2. Demands a fresh Tier-3 assertion (401 + structured hint on miss).
+  //   3. In a single SQLite transaction, revokes any active
+  //      service='anthropic' vault rows, then inserts the new one.
+  //   4. Emits audit events: credential_revoked per rotated row + one
+  //      credential_added for the new seed.
+  //   5. Returns { ok, credential_id, seeded_at, rotated } — never the
+  //      plaintext key. The key bytes exist only inside the request body,
+  //      the handler's `key` variable (closure), and the vault's encrypted
+  //      blob. No log line, no response body, no error message echoes it.
+  //
+  // Phase 3b will read the active anthropic credential via
+  // CredentialStore.decryptForUse() on first forward, hold the plaintext
+  // in a closure variable used only by the forward fetch, and discard
+  // when the closure ends.
+  app.post('/dashboard/credentials/anthropic', async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const key = typeof body.key === 'string' ? body.key.trim() : '';
+    if (!key) {
+      res.status(400).json({
+        ok: false,
+        error: 'bad_request',
+        reason: 'body.key (non-empty string) required',
+      });
+      return;
+    }
+
+    const identity = getOrCreateIdentityStore(broker);
+    const tier3 = requireRecentTier3Assertion(identity);
+    if (!tier3.ok) {
+      res.status(401).json({
+        ok: false,
+        error: 'tier3_required',
+        reason: tier3.reason,
+        hint: tier3.hint,
+        operator_id: tier3.operator_id,
+      });
+      return;
+    }
+
+    const credStore = getCredentialStore(broker);
+    if (!credStore) {
+      res.status(500).json({
+        ok: false,
+        error: 'vault_unavailable',
+        reason:
+          'credential store not initialised; daemon master key may not ' +
+          'be loaded — check logs for master-key load errors',
+      });
+      return;
+    }
+
+    // Atomic rotation: list + revoke existing 'anthropic' rows, then
+    // insert the new one. better-sqlite3's `db.transaction(fn)` wraps
+    // `fn` in BEGIN/COMMIT (SAVEPOINT when already nested).
+    let newCred;
+    let revokedIds: string[] = [];
+    try {
+      const rotate = broker.store.rawDb.transaction((plaintext: string) => {
+        const existing = credStore.list({ service: 'anthropic' });
+        const ids: string[] = [];
+        for (const c of existing) {
+          credStore.revoke(c.id, 'operator');
+          ids.push(c.id);
+        }
+        const created = credStore.add({
+          user_id: 'operator',
+          service: 'anthropic',
+          kind: 'api_key',
+          plaintext,
+          metadata: { purpose: 'gateway', seeded_via: 'dashboard-tier3' },
+        });
+        return { created, revokedIds: ids };
+      });
+      const result = rotate(key);
+      newCred = result.created;
+      revokedIds = result.revokedIds;
+    } catch (err) {
+      // The plaintext `key` is in scope here — DELIBERATELY exclude it
+      // from the log and the response. Surface only the error message
+      // (no key) and a stable error code.
+      getLogger().error(
+        `/dashboard/credentials/anthropic vault write failed: ${(err as Error).message}`,
+      );
+      res.status(500).json({
+        ok: false,
+        error: 'vault_write_failed',
+        reason: 'see operator logs',
+      });
+      return;
+    }
+
+    const at = new Date().toISOString();
+    for (const id of revokedIds) {
+      await broker.publish({
+        kind: 'credential_revoked',
+        at,
+        source_agent: 'operator',
+        payload: {
+          credential_id: id,
+          service: 'anthropic',
+          revoked_by: 'operator',
+        },
+      });
+    }
+    await broker.publish({
+      kind: 'credential_added',
+      at,
+      source_agent: 'operator',
+      payload: {
+        credential_id: newCred.id,
+        service: 'anthropic',
+        kind: 'api_key',
+        user_id: 'operator',
+      },
+    });
+
+    res.json({
+      ok: true,
+      credential_id: newCred.id,
+      seeded_at: newCred.created_at,
+      rotated: revokedIds.length > 0,
+    });
   });
 
   // v0.6.9 P6 — Apply a built-in named policy preset to one actor in
