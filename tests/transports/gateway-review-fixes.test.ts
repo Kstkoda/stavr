@@ -44,7 +44,12 @@ interface Harness {
   events: StoredEvent[];
 }
 
-async function boot(): Promise<Harness> {
+async function boot(opts: {
+  /** Pre-seed an Anthropic credential so the forward path can run. */
+  seedGatewayCredential?: boolean;
+  /** Mock upstream response — defaults to 200 + empty body when seeded. */
+  upstreamResponse?: () => Response | Promise<Response>;
+} = {}): Promise<Harness> {
   const store = new EventStore();
   store.init(':memory:');
   const broker = new Broker(store);
@@ -53,12 +58,43 @@ async function boot(): Promise<Harness> {
   const credStore = new CredentialStore(store, masterKey);
   setCredentialStore(broker, credStore);
 
+  if (opts.seedGatewayCredential) {
+    credStore.add({
+      user_id: 'operator',
+      service: 'anthropic',
+      kind: 'api_key',
+      plaintext: 'sk-ant-test-review-fixes-synthetic-key',
+      metadata: { purpose: 'gateway', seeded_via: 'test-fixture' },
+    });
+  }
+
   const events: StoredEvent[] = [];
   broker.onRawEvent((ev) => {
     events.push(ev);
   });
 
-  const transports = await mountTransports(broker, { mode: 'daemon', port: 0, silent: true });
+  const upstreamFetch: typeof fetch = async () => {
+    if (opts.upstreamResponse) return opts.upstreamResponse();
+    return new Response(
+      JSON.stringify({
+        id: 'msg_test',
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'ok' }],
+        model: 'claude-opus-4-7',
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  };
+
+  const transports = await mountTransports(broker, {
+    mode: 'daemon',
+    port: 0,
+    silent: true,
+    anthropicUpstreamFetch: upstreamFetch,
+  });
   const addr = transports.httpServer!.address() as AddressInfo;
   return { store, broker, credStore, transports, base: `http://127.0.0.1:${addr.port}`, events };
 }
@@ -173,9 +209,11 @@ describe('Phase 5 review fixes', () => {
 
   // C7 — body.model with hostile typeof gets coerced to undefined safely
   describe('C7 — body.model shape-validated; non-string is dropped before the gate', () => {
-    it('POST with body.model as a hostile object still produces a structured response (501 stub)', async () => {
-      // No matrix row, loopback actor (operator-shape) → defaults to CONFIRM → test-bypass auto-approve → 501.
+    it('POST with body.model as a hostile object still produces a structured response (success path)', async () => {
+      // chokepoint passes via test-bypass; forward proceeds with a seeded vault credential.
       // The critical claim is that we don't 500 because of body.model's toString.
+      await h.transports.shutdown();
+      h = await boot({ seedGatewayCredential: true });
       const hostile = {
         model: { weird: 'shape' },
         max_tokens: 'definitely not a number',
@@ -186,7 +224,7 @@ describe('Phase 5 review fixes', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(hostile),
       });
-      expect(r.status).toBe(501); // chokepoint passes via test-bypass
+      expect(r.status).toBe(200); // forward succeeds with mock upstream
       // llm_gateway_allowed event captures only the projected metadata
       const allowed = h.events.find((e) => e.kind === 'llm_gateway_allowed');
       expect(allowed).toBeDefined();
@@ -215,6 +253,8 @@ describe('Phase 5 review fixes', () => {
       expect(typeof payload.reason).toBe('string');
     });
     it('AUTO/CONFIRM pass emits llm_gateway_allowed with request_metadata', async () => {
+      await h.transports.shutdown();
+      h = await boot({ seedGatewayCredential: true });
       await fetch(`${h.base}/anthropic/v1/messages`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -251,6 +291,8 @@ describe('Phase 5 review fixes', () => {
   // C21 — /anthropic/* accepts >4MB bodies
   describe('C21 — /anthropic/* body limit raised to 32MB', () => {
     it('5MB body is accepted (and chokepoint runs)', async () => {
+      await h.transports.shutdown();
+      h = await boot({ seedGatewayCredential: true });
       const content = 'x'.repeat(5 * 1024 * 1024); // 5MB string
       const body = JSON.stringify({
         model: 'claude-opus-4-7',
@@ -262,8 +304,8 @@ describe('Phase 5 review fixes', () => {
         headers: { 'content-type': 'application/json' },
         body,
       });
-      // chokepoint passes (loopback + test-bypass) → 501 stub
-      expect(r.status).toBe(501);
+      // chokepoint passes (loopback + test-bypass) → forward succeeds via mock upstream
+      expect(r.status).toBe(200);
     });
   });
 

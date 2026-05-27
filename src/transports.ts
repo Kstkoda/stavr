@@ -65,6 +65,7 @@ import { mountDebugEndpoints } from './observability/debug-endpoints.js';
 import { mountWebAuthnRoutes } from './security/webauthn-routes.js';
 import { mayRespond } from './security/respond-policy.js';
 import { gateAnthropicGatewayCall, GATEWAY_TOOL_ID } from './security/gateway-gate.js';
+import { forwardAnthropicMessages } from './steward/providers/anthropic.js';
 import { mountFederationRoutes } from './federation/index.js';
 import { getOrCreateIdentityStore, getOrCreateWebAuthnCoordinator, getOrCreateFederation, getCredentialStore } from './server.js';
 import { requireRecentTier3Assertion } from './security/tier3-gate.js';
@@ -120,6 +121,16 @@ export interface TransportOpts {
    * Override `Date.now()` for the pairing TTL. Test seam.
    */
   now?: () => number;
+  /**
+   * family-son-mcp Phase 5 Phase 3b — override fetch for the
+   * /anthropic/v1/messages upstream forward. Tests inject a stub here
+   * to exercise the four F6 fault-injection scenarios (401, 429, 500,
+   * malformed JSON) without hitting the real api.anthropic.com. In
+   * production this is undefined and the route handler uses the
+   * global `fetch`. Test seam ONLY — production callers MUST NOT set
+   * this.
+   */
+  anthropicUpstreamFetch?: typeof fetch;
   /**
    * Interval (ms) for the standalone-GET stream keepalive. Defaults to
    * 20_000. Tests use a short value (e.g. 200) to assert the heartbeat
@@ -755,10 +766,113 @@ export async function mountTransports(
         return;
       }
 
-      // C11 — chokepoint allowed; emit gateway_allowed so the audit trail
-      // is complete on the AUTO path too. Phase 3 will move this emit
-      // immediately before the upstream forward (so the audit captures
-      // both the gate-pass and the eventual upstream outcome).
+      // Phase 3b — vault read + upstream forward.
+      //
+      // The operator's Anthropic key is loaded from the vault into the
+      // local `apiKey` variable. The variable's lifecycle is bounded by
+      // this request: it is passed only to `forwardAnthropicMessages`
+      // (which puts it into the outbound `x-api-key` header and never
+      // assigns it elsewhere) and goes out of scope when the handler
+      // returns. Every line below that touches `apiKey` is explicitly
+      // annotated.
+      const credStore = getCredentialStore(broker);
+      if (!credStore) {
+        await broker.publish({
+          kind: 'llm_gateway_error',
+          at: new Date().toISOString(),
+          correlation_id: logContext.getStore()?.correlation_id,
+          source_agent: verdict.actor,
+          payload: {
+            actor: verdict.actor,
+            tool_id: verdict.tool_id,
+            error_class: 'vault_unavailable',
+            duration_ms: 0,
+            model: requestMetadata.model,
+          },
+        });
+        res.status(500).json({
+          ok: false,
+          error: 'vault_unavailable',
+          reason: 'credential store not initialised; operator must seed via /dashboard/credentials/anthropic',
+        });
+        return;
+      }
+      const activeCreds = credStore.list({ service: 'anthropic' });
+      const activeCred = activeCreds[0];  // list() orders by created_at DESC, omits revoked.
+      if (!activeCred) {
+        await broker.publish({
+          kind: 'llm_gateway_error',
+          at: new Date().toISOString(),
+          correlation_id: logContext.getStore()?.correlation_id,
+          source_agent: verdict.actor,
+          payload: {
+            actor: verdict.actor,
+            tool_id: verdict.tool_id,
+            error_class: 'no_active_credential',
+            duration_ms: 0,
+            model: requestMetadata.model,
+          },
+        });
+        res.status(500).json({
+          ok: false,
+          error: 'no_active_credential',
+          reason: 'no active Anthropic credential in the vault — operator must seed via /dashboard/credentials/anthropic',
+        });
+        return;
+      }
+
+      // *** apiKey LIFECYCLE START ***
+      // decryptForUse returns the plaintext. The variable is closure-scoped
+      // to this request handler; we never log it, never put it in a
+      // response body, never put it in an error message, never await
+      // anything that could persist it beyond the request.
+      let apiKey: string;
+      try {
+        const decrypted = credStore.decryptForUse(activeCred.id);
+        apiKey = decrypted.plaintext;
+      } catch (err) {
+        // Decryption failed — vault row corruption or master-key mismatch.
+        // Error message intentionally omits any reference to the key bytes
+        // (decryptForUse doesn't echo them; we keep the boundary tight).
+        getLogger().error(
+          `/anthropic/v1/messages credential decrypt failed: credential_id=${activeCred.id}`,
+        );
+        await broker.publish({
+          kind: 'llm_gateway_error',
+          at: new Date().toISOString(),
+          correlation_id: logContext.getStore()?.correlation_id,
+          source_agent: verdict.actor,
+          payload: {
+            actor: verdict.actor,
+            tool_id: verdict.tool_id,
+            credential_id: activeCred.id,
+            error_class: 'credential_decrypt_failed',
+            duration_ms: 0,
+            model: requestMetadata.model,
+          },
+        });
+        res.status(500).json({
+          ok: false,
+          error: 'credential_decrypt_failed',
+          reason: 'vault could not decrypt the active credential; see operator logs',
+        });
+        return;
+      }
+
+      // F2 — pass-through son's anthropic-version header. If absent, the
+      // forward helper falls back to its bundled default ('2023-06-01').
+      // No other son headers are forwarded — anthropic-beta and friends
+      // can leak operator-tier feature flags and are deliberately dropped.
+      const sonAnthropicVersion = req.header('anthropic-version');
+      const forwardHeaders: { 'anthropic-version'?: string } = {};
+      if (sonAnthropicVersion) {
+        forwardHeaders['anthropic-version'] = sonAnthropicVersion;
+      }
+
+      // llm_gateway_allowed emitted IMMEDIATELY BEFORE the upstream POST.
+      // SIGKILL between this emit and the forward leaves an audit anchor;
+      // the eventual completed/error emit (or its absence) gives the
+      // operator a clear recovery signal.
       await broker.publish({
         kind: 'llm_gateway_allowed',
         at: new Date().toISOString(),
@@ -771,19 +885,106 @@ export async function mountTransports(
         },
       });
 
-      // Phase 2 stub — chokepoint passed, forward still not wired.
-      // Phase 3 replaces this with the actual fetch to api.anthropic.com.
-      res.status(501).json({
-        ok: false,
-        error: 'not_implemented',
-        phase: 'phase-2-stub',
-        reason:
-          'family-son-mcp Phase 5 — chokepoint passed but forward not ' +
-          'yet wired. Credential forwarding lands in Phase 3 after the ' +
-          'operator key-seeding decision (F5).',
-        actor: verdict.actor,
-        tool_id: verdict.tool_id,
+      // *** apiKey USED HERE — and only here ***
+      // forwardAnthropicMessages takes apiKey for the x-api-key header.
+      // It NEVER assigns apiKey to any returned field, never interpolates
+      // it into errorMessage, never logs it. See
+      // src/steward/providers/anthropic.ts forwardAnthropicMessages.
+      const forwardResult = await forwardAnthropicMessages({
+        apiKey,
+        body: req.body,
+        forwardHeaders,
+        fetchImpl: opts.anthropicUpstreamFetch,
       });
+      // *** apiKey LIFECYCLE END ***
+      // apiKey is no longer needed. The variable remains in the closure
+      // until the handler returns, at which point it is GC-eligible.
+      // We do NOT reference apiKey below this line; every audit emit
+      // and response build uses verdict.* and forwardResult.* only.
+
+      if (forwardResult.errorMessage) {
+        // Local failure (timeout / unreachable / body-read / body-not-json).
+        // forwardResult.errorMessage is one of the bounded tokens defined
+        // by forwardAnthropicMessages — never interpolated from upstream.
+        await broker.publish({
+          kind: 'llm_gateway_error',
+          at: new Date().toISOString(),
+          correlation_id: logContext.getStore()?.correlation_id,
+          source_agent: verdict.actor,
+          payload: {
+            actor: verdict.actor,
+            tool_id: verdict.tool_id,
+            credential_id: activeCred.id,
+            upstream_status: forwardResult.status,
+            error_class: forwardResult.errorMessage,
+            duration_ms: forwardResult.durationMs,
+            model: requestMetadata.model,
+          },
+        });
+        res.status(forwardResult.status).json({
+          ok: false,
+          error: forwardResult.errorMessage,
+          reason: 'gateway could not complete the upstream request; see operator logs',
+        });
+        return;
+      }
+
+      if (forwardResult.status >= 400) {
+        // Upstream returned a non-2xx with a parseable body (Anthropic's
+        // standard {type:'error', error:{type,message}} shape, typically).
+        // We forward the upstream body verbatim — Anthropic's error
+        // messages don't include the operator's key — and emit an
+        // llm_gateway_error event with the upstream status as the
+        // error_class suffix for audit fidelity.
+        await broker.publish({
+          kind: 'llm_gateway_error',
+          at: new Date().toISOString(),
+          correlation_id: logContext.getStore()?.correlation_id,
+          source_agent: verdict.actor,
+          payload: {
+            actor: verdict.actor,
+            tool_id: verdict.tool_id,
+            credential_id: activeCred.id,
+            upstream_status: forwardResult.status,
+            error_class: `upstream_status_${forwardResult.status}`,
+            duration_ms: forwardResult.durationMs,
+            model: requestMetadata.model,
+          },
+        });
+        // Forward the upstream body so the son's CC sees what Anthropic
+        // said (rate-limit retry-after, auth error, etc.). The upstream
+        // status is preserved.
+        res.status(forwardResult.status).json(forwardResult.body ?? {
+          ok: false,
+          error: `upstream_status_${forwardResult.status}`,
+        });
+        return;
+      }
+
+      // Success — Anthropic Messages 200. Emit llm_gateway_completed
+      // with the token usage (Phase 4 metering hook) and forward the
+      // upstream body verbatim to the son.
+      await broker.publish({
+        kind: 'llm_gateway_completed',
+        at: new Date().toISOString(),
+        correlation_id: logContext.getStore()?.correlation_id,
+        source_agent: verdict.actor,
+        payload: {
+          actor: verdict.actor,
+          tool_id: verdict.tool_id,
+          credential_id: activeCred.id,
+          upstream_status: forwardResult.status,
+          duration_ms: forwardResult.durationMs,
+          tokens_in: forwardResult.usage?.input_tokens ?? 0,
+          tokens_out: forwardResult.usage?.output_tokens ?? 0,
+          cache_read_tokens: forwardResult.usage?.cache_read_tokens,
+          cache_creation_tokens: forwardResult.usage?.cache_creation_tokens,
+          model: requestMetadata.model,
+        },
+      });
+      // Echo upstream body verbatim. Phase 5b will add SSE streaming;
+      // Phase 5 non-streaming returns the JSON body as-is.
+      res.status(forwardResult.status).json(forwardResult.body);
     });
 
     // v0.6.x memory-leak fix Phase 3 — live diagnostics surface. Returns

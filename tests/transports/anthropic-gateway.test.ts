@@ -47,22 +47,23 @@ describe('family-son-mcp Phase 5 · /anthropic/v1/messages stub', () => {
     await h.transports.shutdown();
   });
 
-  it('POST returns 501 phase-2-stub body when chokepoint allows the call', async () => {
+  it('POST without a wired credential vault → 500 vault_unavailable (Phase 3b)', async () => {
+    // Phase 3b — the 501 phase-2-stub is gone; the route reaches the
+    // forward path immediately after the chokepoint. This harness does
+    // not wire a credential store at all (production: daemon.ts does it
+    // after master-key load), so the handler trips the vault-availability
+    // check first. The companion test in tests/transports/gateway-forward
+    // .test.ts wires a store and exercises the no_active_credential path
+    // separately.
     const r = await fetch(`${h.base}/anthropic/v1/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model: 'claude-opus-4-7', max_tokens: 16, messages: [{ role: 'user', content: 'hi' }] }),
     });
-    expect(r.status).toBe(501);
+    expect(r.status).toBe(500);
     const body = await r.json();
     expect(body.ok).toBe(false);
-    expect(body.error).toBe('not_implemented');
-    expect(body.phase).toBe('phase-2-stub');
-    expect(typeof body.reason).toBe('string');
-    expect(body.reason.length).toBeGreaterThan(0);
-    expect(body.tool_id).toBe(GATEWAY_TOOL_ID);
-    expect(typeof body.actor).toBe('string');
-    expect(body.actor.startsWith('loopback:') || body.actor === 'unknown').toBe(true);
+    expect(body.error).toBe('vault_unavailable');
   });
 
   it('Layer 0 capability disable → POST returns 403 no_go', async () => {

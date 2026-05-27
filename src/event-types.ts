@@ -178,12 +178,20 @@ export const EventKind = z.enum([
   // family-son-mcp Phase 5 — Anthropic LLM gateway audit (BOM:
   // proposed/family-son-mcp-phase-5-llm-gateway-bom.md).
   // llm_gateway_allowed: chokepoint allowed a /anthropic/v1/messages call;
-  //   Phase 3+ will see this immediately before the upstream forward.
+  //   emitted immediately BEFORE the upstream POST so a SIGKILL mid-forward
+  //   still leaves an audit anchor.
   // llm_gateway_denied: chokepoint denied a gateway call (Layer 0
   //   capability disable, Layer 3 NO_GO matrix row, Layer 3 default-deny,
   //   or Layer 3 EXPLICIT-tier3-miss).
+  // llm_gateway_completed: upstream POST returned a Messages success
+  //   shape (status 200 + usage). Drives Phase 4 metering.
+  // llm_gateway_error: upstream POST returned non-2xx, or a local
+  //   failure occurred (timeout, unreachable, malformed JSON). Always
+  //   sanitized — never contains operator key bytes.
   'llm_gateway_allowed',
   'llm_gateway_denied',
+  'llm_gateway_completed',
+  'llm_gateway_error',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -540,6 +548,39 @@ export const LlmGatewayDeniedPayload = z.object({
       max_tokens: z.number().int().nonnegative().optional(),
     })
     .optional(),
+});
+
+export const LlmGatewayCompletedPayload = z.object({
+  actor: z.string(),
+  tool_id: z.string(),
+  credential_id: z.string(),
+  upstream_status: z.number().int(),
+  duration_ms: z.number().nonnegative(),
+  // Phase 4 metering hook — every completed call records its token
+  // counts so the budget decrement is a pure read-and-sum over the
+  // audit tail. cache_* fields capture Anthropic's prompt-cache deltas
+  // when present.
+  tokens_in: z.number().int().nonnegative(),
+  tokens_out: z.number().int().nonnegative(),
+  cache_read_tokens: z.number().int().nonnegative().optional(),
+  cache_creation_tokens: z.number().int().nonnegative().optional(),
+  model: z.string().optional(),
+});
+
+export const LlmGatewayErrorPayload = z.object({
+  actor: z.string(),
+  tool_id: z.string(),
+  credential_id: z.string().optional(),
+  upstream_status: z.number().int().optional(),
+  duration_ms: z.number().nonnegative(),
+  // Sanitized error class — never the upstream response body, never
+  // the operator key. One of forwardAnthropicMessages' bounded tokens
+  // (upstream_timeout / upstream_unreachable / upstream_body_read_failed
+  // / upstream_body_not_json) OR 'upstream_status_<NNN>' for a non-2xx
+  // response whose body we did parse. Free-form string to leave room
+  // for future error classes without a taxonomy migration.
+  error_class: z.string(),
+  model: z.string().optional(),
 });
 
 // Spec 48 Layer 3 — no-go payloads.
