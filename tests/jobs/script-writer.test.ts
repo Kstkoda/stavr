@@ -11,7 +11,7 @@ import {
   retentionDays,
   writeWorkerScript,
   type WorkerShell,
-} from '../../src/workers/script-writer.js';
+} from '../../src/jobs/script-writer.js';
 
 const FIXED_NOW = new Date('2026-05-18T20:00:00.000Z');
 

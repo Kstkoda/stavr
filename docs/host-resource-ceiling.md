@@ -63,7 +63,7 @@ Invalid combinations refuse-to-load with an explicit message.
 
 ## What you'll see when the ceiling trips
 
-- A `worker_spawn` refused with `OrchestratorError` code `headroom_exceeded` — the message names the breached knob.
+- A `job_dispatch` refused with `OrchestratorError` code `headroom_exceeded` — the message names the breached knob. (Pre-worker-dispatch 3c.2 the same refusal surfaced via the now-deleted `worker_spawn` tool; only the job_* surface remains.)
 - An event `host_ceiling_refused` on the broker; the dashboard shows it on Diagnostics.
-- Under shed: a `host_ceiling_shed` event naming the terminated worker, plus the standard `worker_terminated` event.
+- Under shed: a `host_ceiling_shed` event naming the terminated job (payload slots `job_id` / `job_name` / `binding_kind` / `binding_target`), plus the standard `job_terminated` event (with `worker_terminated` shadow via dual-emit for legacy subscribers).
 - The Diagnostics page surfaces `current_headroom` vs the ceiling at a glance.

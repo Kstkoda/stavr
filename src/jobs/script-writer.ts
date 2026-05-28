@@ -1,4 +1,7 @@
-// v0.6.7 P1 — worker script writer.
+// v0.6.7 P1 — signed shell-script writer (worker-dispatch Phase 3c.2 —
+// moved from src/workers/ to src/jobs/ when the bespoke worker subsystem
+// deleted; binding-agnostic helper for shell-flavored process-spawn
+// binding callers).
 //
 // Replaces the prior inline `-Command "..."` invocation pattern with a
 // write-script-to-disk + `-File <path>` pattern. The motivation is
@@ -8,11 +11,15 @@
 // file and invoking `-File` instead bypasses that signature without
 // changing what's actually executed.
 //
-// Files land in `${STAVR_HOME}/worker-scripts/<worker-id>.<ext>` with
+// Files land in `${STAVR_HOME}/worker-scripts/<job-id>.<ext>` with
 // owner-only permissions (0o700 on Unix; NTFS ACLs default to user-only
-// on Windows). Each script carries an audit header (worker id, creation
+// on Windows). Each script carries an audit header (job id, creation
 // timestamp, shell) so the operator can later grep `~/.stavr/worker-scripts/`
 // and see exactly what was executed in their name.
+//
+// Operator-set env vars STAVR_WORKER_SCRIPT_DIR + STAVR_WORKER_SCRIPT_RETENTION_DAYS
+// are UNCHANGED (deliberate — operator surface; rename would silently
+// break existing .env files. Future rename is its own cycle).
 
 import {
   chmodSync,
@@ -27,8 +34,8 @@ import { join } from 'node:path';
 import { stavrHome } from '../config.js';
 import { signWorkerScript, sidecarPathFor } from '../security/script-signing.js';
 
-/** Shells the worker subsystem can spawn. Must stay in sync with the
- *  ShellSpawnParams enum in `src/workers/shell.ts`. */
+/** Shells the script-writer can target. Used by shell-flavored
+ *  process-spawn binding callers. */
 export type WorkerShell = 'cmd' | 'powershell' | 'bash';
 
 export interface ScriptWriteInput {

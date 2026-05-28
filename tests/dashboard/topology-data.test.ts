@@ -27,8 +27,8 @@ function makeRegistry(ids: string[]): ToolRegistry {
 describe('fetchMcpCategoryNodes', () => {
   it('emits one node per category present in the registry, with counts', () => {
     const registry = makeRegistry([
-      'worker_spawn',
-      'worker_terminate',
+      'job_dispatch',
+      'job_terminate',
       'github_create_pr',
       'host_exec',
     ]);
@@ -48,7 +48,7 @@ describe('fetchMcpCategoryNodes', () => {
   it('uses stable alphabetical order by category id', () => {
     const registry = makeRegistry([
       'github_create_pr',
-      'worker_spawn',
+      'job_dispatch',
       'host_exec',
     ]);
     const order = fetchMcpCategoryNodes(registry).map((n) => n.category);
@@ -56,7 +56,7 @@ describe('fetchMcpCategoryNodes', () => {
   });
 
   it('node ids are prefixed mcp-cat- for unambiguous routing', () => {
-    const registry = makeRegistry(['worker_spawn']);
+    const registry = makeRegistry(['job_dispatch']);
     expect(fetchMcpCategoryNodes(registry)[0].id).toBe('mcp-cat-worker');
   });
 });
@@ -184,7 +184,7 @@ describe('fetchTopologyExtras', () => {
   it('bundles MCP nodes + peers + density into a single snapshot', () => {
     const store = new EventStore();
     store.init(':memory:');
-    const registry = makeRegistry(['worker_spawn', 'github_create_pr']);
+    const registry = makeRegistry(['job_dispatch', 'github_create_pr']);
     const extras = fetchTopologyExtras({
       registry,
       store,

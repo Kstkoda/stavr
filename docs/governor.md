@@ -164,13 +164,13 @@ Operator-awareness kinds that toast:
 - `decision_request` / `decision_required` (Warn) — pending operator decision
 - `host_exec_denied` (Crit) — shell action blocked by policy
 - `trust_scope_proposed` / `_granted` / `_revoked` / `_completed`
-- `worker_terminated` (filtered — routine `completed` is silent), `worker_failed`, `worker_blocked_by_av` (Crit)
+- `worker_terminated` (filtered — routine `completed` is silent), `worker_failed`, `worker_blocked_by_av` (Crit) — legacy event names that still fire via dual-emit alongside the canonical `job_terminated` etc; see [event-taxonomy.md](./event-taxonomy.md) for the rename table
 - `daemon_health_changed`, `scope_expired`, `cc_quota_warning`,
   `worker_dispatch_failed`, `notification_requested`
 
-Routine kinds (progress, worker_progress, file_written, phase_started,
-command_run, tool_called) are silently dropped — they belong on the
-dashboard, not in your OS notification center.
+Routine kinds (progress, worker_progress / job_progress, file_written,
+phase_started, command_run, tool_called) are silently dropped — they
+belong on the dashboard, not in your OS notification center.
 
 ### Muting
 

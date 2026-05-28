@@ -741,7 +741,7 @@
       "card_path": "docs/tool-cards/github_create_pr.md",
       "example": {
         "args": {
-          "repo": "Kstkoda/stavr",
+          "repo": "stenlund/stavr",
           "head": "feat/foo",
           "base": "main",
           "title": "feat: add foo",
@@ -750,7 +750,7 @@
         "result": {
           "ok": true,
           "correlation_id": "cor_...",
-          "pr_url": "https://github.com/Kstkoda/stavr/pull/42",
+          "pr_url": "https://github.com/stenlund/stavr/pull/42",
           "pr_number": 42
         }
       }
@@ -1560,7 +1560,7 @@
       "card_path": "docs/tool-cards/github_read_pr.md",
       "example": {
         "args": {
-          "repo": "Kstkoda/stavr",
+          "repo": "stenlund/stavr",
           "number": 9
         },
         "result": {
@@ -1988,6 +1988,443 @@
       "card_path": "docs/tool-cards/github_request_pr_review.md"
     },
     {
+      "name": "job_dispatch",
+      "tier": "confirm",
+      "category": "worker",
+      "since": "0.7.0",
+      "stability": "beta",
+      "description": "Dispatch a new job under the given binding + target. Confirm-tier. Admission control runs first (per-actor concurrency + host ceiling).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "binding_kind": {
+            "type": "string",
+            "enum": [
+              "mcp-call",
+              "http",
+              "process-spawn",
+              "cc-session-attach"
+            ]
+          },
+          "binding_target": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "params": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "max_runtime_ms": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "max_steps": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "credit_pool": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "audit_correlation_id": {
+            "type": "string"
+          },
+          "federation_role": {
+            "type": "string",
+            "enum": [
+              "originator",
+              "participant",
+              "convener"
+            ]
+          },
+          "originator_peer": {
+            "type": "string"
+          },
+          "grant_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_kind",
+          "binding_target",
+          "name",
+          "params"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "job"
+        ],
+        "additionalProperties": false
+      },
+      "side_effects": [
+        "admission control runs first (budget + per-actor + host ceiling)",
+        "inserts a JobRecord in `dispatched` state, transitions to `running`",
+        "emits `job_dispatched` then `job_started` (each shadowed by legacy worker_* via dual-emit)"
+      ],
+      "error_modes": [
+        "unknown binding → OrchestratorError(code=`unknown_binding`)",
+        "duplicate name → OrchestratorError(code=`name_in_use`)",
+        "admission refusal → OrchestratorError(code=`headroom_exceeded`|`concurrent_jobs_per_actor_exceeded`|`invalid_budget`|`budget_exceeds_ceiling`)"
+      ],
+      "see_also": [
+        "job_list_bindings",
+        "job_status",
+        "job_terminate"
+      ],
+      "card_path": "docs/tool-cards/job_dispatch.md",
+      "example": {
+        "args": {
+          "binding_kind": "process-spawn",
+          "binding_target": "cc",
+          "name": "my-cc",
+          "params": {
+            "repo_path": "C:/dev/stavr",
+            "branch": "feat/spec-X",
+            "base": "main",
+            "prompt": "Implement spec X"
+          }
+        },
+        "result": {
+          "job": {
+            "id": "j_...",
+            "name": "my-cc",
+            "binding_kind": "process-spawn",
+            "binding_target": "cc",
+            "lifecycle_state": "running"
+          }
+        }
+      }
+    },
+    {
+      "name": "job_inject",
+      "tier": "confirm",
+      "category": "worker",
+      "since": "0.7.0",
+      "stability": "beta",
+      "description": "Inject a mid-flight message into a running job. Confirm-tier. The binding must advertise the `inject` capability (see job_list_bindings).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id_or_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              {
+                "type": "string"
+              },
+              {}
+            ]
+          }
+        },
+        "required": [
+          "id_or_name"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id"
+        ],
+        "additionalProperties": false
+      },
+      "side_effects": [
+        "routes the message via the binding handle",
+        "effect on the job is binding-specific"
+      ],
+      "error_modes": [
+        "unknown job → `not_found`",
+        "job not active → `job_inactive`",
+        "binding does not advertise inject → `inject_not_supported`"
+      ],
+      "see_also": [
+        "job_dispatch",
+        "job_terminate"
+      ],
+      "card_path": "docs/tool-cards/job_inject.md"
+    },
+    {
+      "name": "job_list",
+      "tier": "auto",
+      "category": "worker",
+      "since": "0.7.0",
+      "stability": "beta",
+      "description": "List jobs, optionally filtered by binding_kind or lifecycle_state. Auto-tier.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "binding_kind": {
+            "type": "string",
+            "enum": [
+              "mcp-call",
+              "http",
+              "process-spawn",
+              "cc-session-attach"
+            ]
+          },
+          "lifecycle_state": {
+            "type": "string",
+            "enum": [
+              "dispatched",
+              "running",
+              "completed-clean",
+              "completed-error",
+              "killed-by-operator",
+              "killed-by-system",
+              "crashed",
+              "stale"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": [
+          "jobs"
+        ],
+        "additionalProperties": false
+      },
+      "side_effects": [
+        "read-only orchestrator query"
+      ],
+      "error_modes": [
+        "none"
+      ],
+      "see_also": [
+        "job_status"
+      ],
+      "card_path": "docs/tool-cards/job_list.md"
+    },
+    {
+      "name": "job_list_bindings",
+      "tier": "auto",
+      "category": "worker",
+      "since": "0.7.0",
+      "stability": "beta",
+      "description": "List registered executor bindings (kind + target) and their dispatch parameter schemas. Auto-tier.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "bindings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "mcp-call",
+                    "http",
+                    "process-spawn",
+                    "cc-session-attach"
+                  ]
+                },
+                "target": {
+                  "type": "string"
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "capabilities": {
+                  "type": "object",
+                  "properties": {
+                    "inject": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "inject"
+                  ],
+                  "additionalProperties": false
+                },
+                "paramsSchema": {}
+              },
+              "required": [
+                "kind",
+                "target",
+                "displayName",
+                "description",
+                "capabilities"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "bindings"
+        ],
+        "additionalProperties": false
+      },
+      "side_effects": [
+        "read-only catalogue lookup"
+      ],
+      "error_modes": [
+        "none"
+      ],
+      "see_also": [
+        "job_dispatch"
+      ],
+      "card_path": "docs/tool-cards/job_list_bindings.md"
+    },
+    {
+      "name": "job_status",
+      "tier": "auto",
+      "category": "worker",
+      "since": "0.7.0",
+      "stability": "beta",
+      "description": "Full state of a single job by id or name. Auto-tier.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id_or_name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id_or_name"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "job"
+        ],
+        "additionalProperties": false
+      },
+      "side_effects": [
+        "read-only"
+      ],
+      "error_modes": [
+        "none — unknown id_or_name returns `{ job: null }`"
+      ],
+      "see_also": [
+        "job_list"
+      ],
+      "card_path": "docs/tool-cards/job_status.md"
+    },
+    {
+      "name": "job_terminate",
+      "tier": "confirm",
+      "category": "worker",
+      "since": "0.7.0",
+      "stability": "beta",
+      "description": "Terminate a job. Always confirm-tier.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id_or_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "force": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "id_or_name"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "exit_code": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": false
+      },
+      "side_effects": [
+        "sends terminate(force) through the binding handle",
+        "emits `job_terminated` (shadowed by legacy `worker_terminated` via dual-emit)"
+      ],
+      "error_modes": [
+        "unknown job → `not_found`"
+      ],
+      "see_also": [
+        "job_status"
+      ],
+      "card_path": "docs/tool-cards/job_terminate.md"
+    },
+    {
       "name": "respond_to_decision",
       "tier": "auto",
       "category": "decision",
@@ -2135,14 +2572,14 @@
         "args": {
           "kinds": [
             "decision_request",
-            "worker_progress"
+            "job_progress"
           ]
         },
         "result": {
           "subscription_id": "sub_...",
           "kinds": [
             "decision_request",
-            "worker_progress"
+            "job_progress"
           ],
           "replayed_events": 0
         }
@@ -3106,7 +3543,7 @@
             {
               "tool": "github_merge_pr",
               "param_constraints": {
-                "repo": "Kstkoda/stavr"
+                "repo": "stenlund/stavr"
               }
             }
           ],
@@ -3562,541 +3999,6 @@
         "subscribe_to_events"
       ],
       "card_path": "docs/tool-cards/unsubscribe.md"
-    },
-    {
-      "name": "worker_dispatch",
-      "tier": "per-spawner",
-      "category": "worker",
-      "since": "0.1.0",
-      "stability": "stable",
-      "description": "Deliver an instruction to a running worker. Per-spawner tier — some spawners refuse dispatch entirely.",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "id_or_name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "body": {
-            "anyOf": [
-              {
-                "type": "object",
-                "additionalProperties": {}
-              },
-              {
-                "type": "string"
-              },
-              {}
-            ]
-          }
-        },
-        "required": [
-          "id_or_name"
-        ],
-        "additionalProperties": false
-      },
-      "output_schema": {
-        "type": "object",
-        "additionalProperties": {}
-      },
-      "side_effects": [
-        "emits `worker_dispatch_request`",
-        "effect on the worker is spawner-specific"
-      ],
-      "error_modes": [
-        "unknown worker → `unknown_worker`",
-        "spawner does not support dispatch → `dispatch_not_supported`"
-      ],
-      "see_also": [
-        "worker_spawn",
-        "worker_terminate"
-      ],
-      "card_path": "docs/tool-cards/worker_dispatch.md"
-    },
-    {
-      "name": "worker_list",
-      "tier": "auto",
-      "category": "worker",
-      "since": "0.1.0",
-      "stability": "stable",
-      "description": "List workers, optionally filtered by type or status. Auto-tier.",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "starting",
-              "running",
-              "idle",
-              "terminated",
-              "crashed"
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "workers": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "type": {
-                  "type": "string"
-                },
-                "cwd": {
-                  "type": "string"
-                },
-                "pid": {
-                  "type": "integer"
-                },
-                "status": {
-                  "type": "string",
-                  "enum": [
-                    "starting",
-                    "running",
-                    "idle",
-                    "terminated",
-                    "crashed"
-                  ]
-                },
-                "started_at": {
-                  "type": "string"
-                },
-                "ended_at": {
-                  "type": "string"
-                },
-                "last_activity_at": {
-                  "type": "string"
-                },
-                "metadata": {
-                  "type": "object",
-                  "additionalProperties": {}
-                },
-                "termination_reason": {
-                  "type": "string"
-                },
-                "exit_code": {
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "id",
-                "name",
-                "type",
-                "cwd",
-                "status",
-                "started_at",
-                "metadata"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": [
-          "workers"
-        ],
-        "additionalProperties": false
-      },
-      "side_effects": [
-        "read-only orchestrator query"
-      ],
-      "error_modes": [
-        "none"
-      ],
-      "see_also": [
-        "worker_status"
-      ],
-      "card_path": "docs/tool-cards/worker_list.md"
-    },
-    {
-      "name": "worker_list_types",
-      "tier": "auto",
-      "category": "worker",
-      "since": "0.1.0",
-      "stability": "stable",
-      "description": "List registered worker types and their spawn parameter schemas. Auto-tier.",
-      "input_schema": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "types": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "type": {
-                  "type": "string"
-                },
-                "displayName": {
-                  "type": "string"
-                },
-                "description": {
-                  "type": "string"
-                },
-                "tier": {
-                  "type": "string",
-                  "enum": [
-                    "auto",
-                    "confirm",
-                    "never"
-                  ]
-                },
-                "paramsSchema": {
-                  "type": "object",
-                  "additionalProperties": {}
-                }
-              },
-              "required": [
-                "type",
-                "displayName",
-                "description",
-                "tier",
-                "paramsSchema"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": [
-          "types"
-        ],
-        "additionalProperties": false
-      },
-      "side_effects": [
-        "read-only registry lookup"
-      ],
-      "error_modes": [
-        "none"
-      ],
-      "see_also": [
-        "worker_spawn"
-      ],
-      "card_path": "docs/tool-cards/worker_list_types.md"
-    },
-    {
-      "name": "worker_spawn",
-      "tier": "per-spawner",
-      "category": "worker",
-      "since": "0.1.0",
-      "stability": "stable",
-      "description": "Spawn a worker of the given type. Tier comes from the spawner; confirm-tier spawners gate on await_decision. Built-in spawners (`cc`, `shell`) are CONFIRM tier.",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "minLength": 1
-          },
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "params": {
-            "anyOf": [
-              {
-                "type": "object",
-                "additionalProperties": {}
-              },
-              {
-                "type": "string"
-              }
-            ],
-            "description": "Spawner-specific params. Either an object matching the spawner schema, or a JSON-encoded string (some MCP clients serialize unknowns to strings)."
-          }
-        },
-        "required": [
-          "type",
-          "name",
-          "params"
-        ],
-        "additionalProperties": false
-      },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "worker": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              },
-              "type": {
-                "type": "string"
-              },
-              "cwd": {
-                "type": "string"
-              },
-              "pid": {
-                "type": "integer"
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "starting",
-                  "running",
-                  "idle",
-                  "terminated",
-                  "crashed"
-                ]
-              },
-              "started_at": {
-                "type": "string"
-              },
-              "ended_at": {
-                "type": "string"
-              },
-              "last_activity_at": {
-                "type": "string"
-              },
-              "metadata": {
-                "type": "object",
-                "additionalProperties": {}
-              },
-              "termination_reason": {
-                "type": "string"
-              },
-              "exit_code": {
-                "type": "integer"
-              }
-            },
-            "required": [
-              "id",
-              "name",
-              "type",
-              "cwd",
-              "status",
-              "started_at",
-              "metadata"
-            ],
-            "additionalProperties": false
-          },
-          "gated": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "worker",
-          "gated"
-        ],
-        "additionalProperties": false
-      },
-      "side_effects": [
-        "CONFIRM-tier spawners open an await_decision first",
-        "on approve: creates a worker record + spawns the child process",
-        "emits `worker_spawned` and (for cc) a follow-up `worker_progress`/`worker_activity` stream"
-      ],
-      "error_modes": [
-        "unknown worker type → OrchestratorError(code=`unknown_type`)",
-        "duplicate name → OrchestratorError(code=`duplicate_name`)",
-        "spawner-specific failures (e.g. cc: git fetch/worktree errors)"
-      ],
-      "see_also": [
-        "worker_list_types",
-        "worker_status",
-        "worker_terminate"
-      ],
-      "card_path": "docs/tool-cards/worker_spawn.md",
-      "example": {
-        "args": {
-          "type": "cc",
-          "name": "my-cc",
-          "params": {
-            "repo_path": "C:/dev/stavr",
-            "branch": "feat/spec-X",
-            "base": "main",
-            "prompt": "Implement spec X"
-          }
-        },
-        "result": {
-          "worker": {
-            "id": "w_...",
-            "name": "my-cc",
-            "type": "cc",
-            "status": "running"
-          },
-          "gated": true
-        }
-      }
-    },
-    {
-      "name": "worker_status",
-      "tier": "auto",
-      "category": "worker",
-      "since": "0.1.0",
-      "stability": "stable",
-      "description": "Full state of a single worker by id or name. Auto-tier.",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "id_or_name": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "required": [
-          "id_or_name"
-        ],
-        "additionalProperties": false
-      },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "worker": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string"
-                  },
-                  "name": {
-                    "type": "string"
-                  },
-                  "type": {
-                    "type": "string"
-                  },
-                  "cwd": {
-                    "type": "string"
-                  },
-                  "pid": {
-                    "type": "integer"
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "starting",
-                      "running",
-                      "idle",
-                      "terminated",
-                      "crashed"
-                    ]
-                  },
-                  "started_at": {
-                    "type": "string"
-                  },
-                  "ended_at": {
-                    "type": "string"
-                  },
-                  "last_activity_at": {
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                  },
-                  "termination_reason": {
-                    "type": "string"
-                  },
-                  "exit_code": {
-                    "type": "integer"
-                  }
-                },
-                "required": [
-                  "id",
-                  "name",
-                  "type",
-                  "cwd",
-                  "status",
-                  "started_at",
-                  "metadata"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "worker"
-        ],
-        "additionalProperties": false
-      },
-      "side_effects": [
-        "read-only"
-      ],
-      "error_modes": [
-        "none — unknown id_or_name returns `{ worker: null }`"
-      ],
-      "see_also": [
-        "worker_list"
-      ],
-      "card_path": "docs/tool-cards/worker_status.md"
-    },
-    {
-      "name": "worker_terminate",
-      "tier": "confirm",
-      "category": "worker",
-      "since": "0.1.0",
-      "stability": "stable",
-      "description": "Terminate a worker. Always confirm-tier.",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "id_or_name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "force": {
-            "type": "boolean",
-            "default": false
-          }
-        },
-        "required": [
-          "id_or_name"
-        ],
-        "additionalProperties": false
-      },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "const": true
-          },
-          "exit_code": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "ok"
-        ],
-        "additionalProperties": false
-      },
-      "side_effects": [
-        "sends SIGTERM (or SIGKILL if `force: true`) to the worker process",
-        "emits `worker_terminated`",
-        "cleans up the worktree if the spawner created one"
-      ],
-      "error_modes": [
-        "unknown worker → `unknown_worker`"
-      ],
-      "see_also": [
-        "worker_status"
-      ],
-      "card_path": "docs/tool-cards/worker_terminate.md"
     }
   ]
 }

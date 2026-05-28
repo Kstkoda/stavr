@@ -9,8 +9,8 @@ import { NAV_ENTRIES } from '../../src/dashboard/shell.js';
 
 function populated(): ToolRegistry {
   const r = new ToolRegistry();
-  r.record(buildMetadata('worker_spawn', { description: 'spawn worker' }, 'workers/tools.ts'));
-  r.record(buildMetadata('worker_list', { description: 'list workers' }, 'workers/tools.ts'));
+  r.record(buildMetadata('job_dispatch', { description: 'dispatch job' }, 'jobs/tools.ts'));
+  r.record(buildMetadata('job_list', { description: 'list jobs' }, 'jobs/tools.ts'));
   r.record(buildMetadata('emit_event', { description: 'publish event' }, 'server.ts'));
   r.record(buildMetadata('host_exec', { description: 'arbitrary shell' }, 'security/host-exec-tool.ts'));
   r.record(buildMetadata('trust_scope_grant', { description: 'grant scope' }, 'trust/tools.ts'));
@@ -30,9 +30,9 @@ describe('fetchToolsData', () => {
     expect(data.tools.map((t) => t.id)).toEqual([
       'emit_event',
       'host_exec',
+      'job_dispatch',
+      'job_list',
       'trust_scope_grant',
-      'worker_list',
-      'worker_spawn',
     ]);
   });
 
@@ -47,8 +47,8 @@ describe('fetchToolsData', () => {
   it('rows carry the tier + reversibility heuristic results', () => {
     const data = fetchToolsData(populated());
     const byId = Object.fromEntries(data.tools.map((t) => [t.id, t]));
-    expect(byId.worker_spawn.defaultTier).toBe('CONFIRM');
-    expect(byId.worker_spawn.reversibility).toBe('irreversible');
+    expect(byId.job_dispatch.defaultTier).toBe('CONFIRM');
+    expect(byId.job_dispatch.reversibility).toBe('irreversible');
     expect(byId.emit_event.defaultTier).toBe('AUTO');
     expect(byId.emit_event.reversibility).toBe('reversible');
     expect(byId.host_exec.defaultTier).toBe('EXPLICIT');
@@ -83,10 +83,10 @@ describe('renderToolsPage', () => {
   it('renders one card per registered tool with category + tier + reversibility', () => {
     const html = renderToolsPage(fetchToolsData(populated()));
     // every tool id is mentioned
-    for (const id of ['worker_spawn', 'worker_list', 'emit_event', 'host_exec', 'trust_scope_grant']) {
+    for (const id of ['job_dispatch', 'job_list', 'emit_event', 'host_exec', 'trust_scope_grant']) {
       expect(html).toContain(id);
     }
-    // tier styling classes appear (CONFIRM for worker_spawn, EXPLICIT for host_exec)
+    // tier styling classes appear (CONFIRM for job_dispatch, EXPLICIT for host_exec)
     expect(html).toContain('tools-tier-CONFIRM');
     expect(html).toContain('tools-tier-EXPLICIT');
     expect(html).toContain('tools-tier-AUTO');

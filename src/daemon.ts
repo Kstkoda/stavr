@@ -13,7 +13,7 @@ import { STEWARD_MEMORY_ROOT } from './steward/tools.js';
 import { loadMasterKey } from './credentials/vault.js';
 import { CredentialStore } from './credentials/store.js';
 import {
-  getOrchestrator,
+  getJobOrchestrator,
   getTelegramPoller,
   setCredentialStore,
   setHostCeilingContext,
@@ -30,7 +30,6 @@ import {
   STARTER_NO_GO_LIST,
   type NoGoEntry,
 } from './trust/no-go-list.js';
-import { start as startWorkerWatchdog } from './workers/watchdog.js';
 import { start as startJobWatchdog } from './jobs/watchdog.js';
 import { loadConfig } from './config.js';
 import { wireV02Subsystem, type V02SubsystemHandle } from './steward/v02-wiring.js';
@@ -348,11 +347,9 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     });
   }
 
-  const workerWatchdog = startWorkerWatchdog(broker, store);
-  // Phase 3a — parallel job-watchdog reads the jobs table and emits
-  // job_stuck (with worker_stuck dual-emit via dual-emit.ts). Lives
-  // alongside the worker watchdog until 3c deletes the bespoke worker
-  // subsystem.
+  // worker-dispatch Phase 3c.2 — only the job-watchdog runs now. It
+  // reads the jobs table and emits job_stuck (with worker_stuck dual-emit
+  // via dual-emit.ts for legacy subscribers during the 3d-cleanup window).
   const jobWatchdog = startJobWatchdog(broker, store);
 
   // OOM leak-hunt (bom-oom-leak-hunt C1.3): emit a daemon_memory event every
@@ -479,20 +476,23 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
     // host-resource-ceiling Phase 5 — load-shedding. Polls the headroom
     // monitor every 5s; when ram_used_pct_ewma >= shed_threshold_pct OR
     // ram_free_gb < shed_min_free_ram_gb, terminates the most-recent live
-    // worker via orchestrator.shedWorker(). Lazy orchestrator lookup so we
+    // job via orchestrator.shedJob(). Lazy orchestrator lookup so we
     // don't force eager orchestrator construction at boot.
+    //
+    // worker-dispatch Phase 3c.2 — bound to JobOrchestrator now that the
+    // legacy WorkerOrchestrator deleted.
     try {
       loadShedderStop = startLoadShedder({
         ceiling: cfg.config.host_ceiling,
         monitor: hostHeadroomMonitor,
         orchestrator: {
-          liveCount: () => getOrchestrator(broker)?.liveCount() ?? 0,
-          liveWorkerIdsInSpawnOrder: () =>
-            getOrchestrator(broker)?.liveWorkerIdsInSpawnOrder() ?? [],
-          shedWorker: async (id, reason) => {
-            const orch = getOrchestrator(broker);
+          liveCount: () => getJobOrchestrator(broker)?.liveCount() ?? 0,
+          liveJobIdsInDispatchOrder: () =>
+            getJobOrchestrator(broker)?.liveJobIdsInDispatchOrder() ?? [],
+          shedJob: async (id, reason) => {
+            const orch = getJobOrchestrator(broker);
             if (!orch) return {};
-            return orch.shedWorker(id, reason);
+            return orch.shedJob(id, reason);
           },
         },
       });
@@ -671,7 +671,6 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
         /* best effort */
       }
     }
-    workerWatchdog.stop();
     jobWatchdog.stop();
     if (memoryPollerStop) {
       try { memoryPollerStop(); } catch { /* best effort */ }

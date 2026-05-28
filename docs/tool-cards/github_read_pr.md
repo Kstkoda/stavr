@@ -56,7 +56,7 @@ AUTO — runs without confirmation. Read-only or has built-in escape hatches; th
 ```json
 {
   "args": {
-    "repo": "Kstkoda/stavr",
+    "repo": "stenlund/stavr",
     "number": 9
   },
   "result": {

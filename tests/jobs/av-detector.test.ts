@@ -6,7 +6,7 @@ import {
   detectAvBlock,
   matchAvEvent,
   parseExtraChannels,
-} from '../../src/workers/av-detector.js';
+} from '../../src/jobs/av-detector.js';
 
 describe('v0.6.7 P3 — matchAvEvent parses wevtutil text format', () => {
   it('extracts event id + description when the spawned path appears', () => {

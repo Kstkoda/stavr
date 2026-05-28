@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   TIERS,
-  WORKER_TO_JOB_TOOL_ID_ALIAS,
-  aliasCounterpartFor,
   categorize,
   defaultTierFor,
   reversibilityFor,
@@ -17,33 +15,32 @@ describe('tool categories', () => {
     expect(categorize('propose_plan')).toBe('plan');
   });
 
-  it('falls back to prefix-based categorisation for unknown ids', () => {
-    expect(categorize('worker_anything')).toBe('worker');
+  it('falls back to prefix-based categorisation for known prefixes', () => {
     expect(categorize('github_some_new_tool')).toBe('github');
     expect(categorize('steward_quiet')).toBe('steward');
     expect(categorize('credential_revoke_all')).toBe('credentials');
     expect(categorize('trust_scope_grant')).toBe('scope');
   });
 
-  // worker-dispatch Phase 3b — job_* prefix routes to the same 'worker'
-  // bucket as the legacy worker_* prefix so the dashboard filter chip + the
-  // permissions matrix list both wire names together. 3c renames the
-  // bucket when the bespoke subsystem is deleted.
-  it('routes job_* prefix to the worker category (3b parity)', () => {
+  it('routes job_* prefix to the worker category bucket', () => {
+    // worker-dispatch Phase 3c.2 — only job_* routes to the 'worker'
+    // category symbol now (the legacy worker_*/worker. prefix variants
+    // deleted with the bespoke worker subsystem). The category symbol
+    // itself stays 'worker' for back-compat with persisted rows; the
+    // operator-visible label flipped to "Jobs" in 3c.1.
     expect(categorize('job_dispatch')).toBe('worker');
     expect(categorize('job_status')).toBe('worker');
     expect(categorize('job_inject')).toBe('worker');
     expect(categorize('job.terminate')).toBe('worker');
   });
 
-  // v0.6 Task 4 Phase B — github.create_pr, worker.spawn etc. use the
-  // MCP-namespace dot separator. They MUST categorize identically to
-  // the underscore form (legacy + scopeCheck payloads use the latter).
+  // v0.6 Task 4 Phase B — github.create_pr etc. use the MCP-namespace
+  // dot separator. They MUST categorize identically to the underscore
+  // form (legacy + scopeCheck payloads use the latter).
   it('matches the MCP-namespace dot-prefix form for all adapter families', () => {
     expect(categorize('github.create_pr')).toBe('github');
     expect(categorize('github.read_pr')).toBe('github');
     expect(categorize('github.list_issues')).toBe('github');
-    expect(categorize('worker.spawn')).toBe('worker');
     expect(categorize('steward.ask_async')).toBe('steward');
     expect(categorize('credential.add')).toBe('credentials');
     expect(categorize('trust_scope.propose')).toBe('scope');
@@ -56,9 +53,16 @@ describe('tool categories', () => {
     expect(categorize('trust_scope_revoke')).toBe('scope');
   });
 
-  it('returns "other" for completely unrecognised tool ids', () => {
+  it('returns "other" for completely unrecognised tool ids — including legacy worker_* names', () => {
     expect(categorize('completely_made_up_tool')).toBe('other');
     expect(categorize('')).toBe('other');
+    // worker-dispatch Phase 3c.2 — legacy worker_* tool ids no longer
+    // route to the 'worker' category since the worker_/worker. prefixes
+    // were dropped from PREFIX_CATEGORY when the bespoke subsystem
+    // deleted. They fall through to 'other'.
+    expect(categorize('worker_spawn')).toBe('other');
+    expect(categorize('worker.spawn')).toBe('other');
+    expect(categorize('worker_anything')).toBe('other');
   });
 });
 
@@ -66,15 +70,15 @@ describe('default tier policy', () => {
   it('uses AUTO for read / subscription / event-publish tools', () => {
     expect(defaultTierFor('emit_event')).toBe('AUTO');
     expect(defaultTierFor('subscribe_to_events')).toBe('AUTO');
-    expect(defaultTierFor('worker_list_types')).toBe('AUTO');
-    expect(defaultTierFor('worker_status')).toBe('AUTO');
+    expect(defaultTierFor('job_list_bindings')).toBe('AUTO');
+    expect(defaultTierFor('job_status')).toBe('AUTO');
     expect(defaultTierFor('steward_ask')).toBe('AUTO');
   });
 
-  it('uses CONFIRM for spawn / dispatch / write tools', () => {
-    expect(defaultTierFor('worker_spawn')).toBe('CONFIRM');
-    expect(defaultTierFor('worker_dispatch')).toBe('CONFIRM');
-    expect(defaultTierFor('worker_terminate')).toBe('CONFIRM');
+  it('uses CONFIRM for dispatch / inject / terminate tools', () => {
+    expect(defaultTierFor('job_dispatch')).toBe('CONFIRM');
+    expect(defaultTierFor('job_inject')).toBe('CONFIRM');
+    expect(defaultTierFor('job_terminate')).toBe('CONFIRM');
     expect(defaultTierFor('propose_plan')).toBe('CONFIRM');
   });
 
@@ -86,48 +90,16 @@ describe('default tier policy', () => {
 
   it('falls back conservatively to CONFIRM for unrecognised tools', () => {
     expect(defaultTierFor('something_brand_new')).toBe('CONFIRM');
+    // Legacy worker_* falls through to the conservative 'other'-category
+    // CONFIRM default now that the worker_* prefix is gone.
+    expect(defaultTierFor('worker_spawn')).toBe('CONFIRM');
   });
 
   it('returns a value that is a valid Tier', () => {
-    for (const id of ['emit_event', 'worker_spawn', 'host_exec', 'unknown']) {
+    for (const id of ['emit_event', 'job_dispatch', 'host_exec', 'unknown']) {
       const t = defaultTierFor(id);
       expect(TIERS).toContain(t);
     }
-  });
-
-  // worker-dispatch Phase 3b — the parity contract: every legacy /
-  // canonical pair MUST resolve to the same default tier so operator-
-  // authored grants don't silently change tier when a caller migrates.
-  describe('worker_* / job_* tier parity (Phase 3b)', () => {
-    for (const [legacy, canonical] of Object.entries(WORKER_TO_JOB_TOOL_ID_ALIAS)) {
-      it(`${legacy} ≡ ${canonical}`, () => {
-        expect(defaultTierFor(legacy)).toBe(defaultTierFor(canonical));
-        expect(reversibilityFor(legacy)).toBe(reversibilityFor(canonical));
-      });
-    }
-  });
-});
-
-describe('alias counterpart lookup (Phase 3b)', () => {
-  it('returns the new name for a legacy tool id', () => {
-    expect(aliasCounterpartFor('worker_spawn')).toBe('job_dispatch');
-    expect(aliasCounterpartFor('worker_dispatch')).toBe('job_inject');
-    expect(aliasCounterpartFor('worker_terminate')).toBe('job_terminate');
-  });
-
-  it('returns the legacy name for a canonical tool id (bi-directional)', () => {
-    expect(aliasCounterpartFor('job_dispatch')).toBe('worker_spawn');
-    expect(aliasCounterpartFor('job_inject')).toBe('worker_dispatch');
-    expect(aliasCounterpartFor('job_terminate')).toBe('worker_terminate');
-    expect(aliasCounterpartFor('job_list')).toBe('worker_list');
-    expect(aliasCounterpartFor('job_list_bindings')).toBe('worker_list_types');
-    expect(aliasCounterpartFor('job_status')).toBe('worker_status');
-  });
-
-  it('returns undefined for tools outside the rename pair table', () => {
-    expect(aliasCounterpartFor('host_exec')).toBeUndefined();
-    expect(aliasCounterpartFor('emit_event')).toBeUndefined();
-    expect(aliasCounterpartFor('worker_blah_unknown')).toBeUndefined();
   });
 });
 
@@ -135,15 +107,15 @@ describe('reversibility policy', () => {
   it('marks reads + subscribes as reversible', () => {
     expect(reversibilityFor('emit_event')).toBe('reversible');
     expect(reversibilityFor('subscribe_to_events')).toBe('reversible');
-    expect(reversibilityFor('worker_list')).toBe('reversible');
-    expect(reversibilityFor('worker_status')).toBe('reversible');
+    expect(reversibilityFor('job_list')).toBe('reversible');
+    expect(reversibilityFor('job_status')).toBe('reversible');
     expect(reversibilityFor('propose_plan')).toBe('reversible');
   });
 
-  it('marks spawns / dispatch / terminate / host_exec as irreversible', () => {
-    expect(reversibilityFor('worker_spawn')).toBe('irreversible');
-    expect(reversibilityFor('worker_dispatch')).toBe('irreversible');
-    expect(reversibilityFor('worker_terminate')).toBe('irreversible');
+  it('marks dispatch / inject / terminate / host_exec as irreversible', () => {
+    expect(reversibilityFor('job_dispatch')).toBe('irreversible');
+    expect(reversibilityFor('job_inject')).toBe('irreversible');
+    expect(reversibilityFor('job_terminate')).toBe('irreversible');
     expect(reversibilityFor('host_exec')).toBe('irreversible');
   });
 

@@ -11,12 +11,8 @@ import type { EventStore } from './persistence.js';
 import { registerDecisionTools } from './tools/decisions.js';
 import { registerGithubTools } from './adapters/github.js';
 import { registerGithubWriteTools } from './adapters/github-writes.js';
-import { WorkerOrchestrator } from './workers/orchestrator.js';
 import type { HostHeadroomMonitor } from './observability/host-headroom-poller.js';
 import type { HostCeiling } from './types/host-ceiling.js';
-import { builtInSpawners, resolveAllSpawners } from './workers/spawners-registry.js';
-import { ManifestError } from './workers/mcp-workers-config.js';
-import { registerWorkerTools } from './workers/tools.js';
 import { JobOrchestrator } from './jobs/orchestrator.js';
 import { registerJobTools } from './jobs/tools.js';
 import { TrustStore } from './trust/store.js';
@@ -53,20 +49,18 @@ import { getLogger } from './log.js';
 export interface SwitchServerHandle {
   server: McpServer;
   sessionId: string;
-  orchestrator: WorkerOrchestrator;
 }
 
 /**
- * Shared orchestrator per broker. The orchestrator owns the in-process map of
- * live worker instances; we want a single registry across all MCP sessions
- * connecting to the same daemon (otherwise two clients could spawn workers
- * the other never sees).
+ * Shared JobOrchestrator per broker. The orchestrator owns the in-process
+ * map of live job handles; a single registry across all MCP sessions
+ * connecting to the same daemon means two clients dispatch into the same
+ * view of live work.
+ *
+ * worker-dispatch Phase 3c.2 — the legacy WorkerOrchestrator + its
+ * per-broker map were deleted alongside the bespoke worker subsystem.
+ * Only JobOrchestrator remains.
  */
-const orchestratorsByBroker = new WeakMap<Broker, WorkerOrchestrator>();
-// worker-dispatch Phase 3b — parallel JobOrchestrator instance per broker.
-// job_* MCP tools route through this; worker_* tools continue to route
-// through WorkerOrchestrator during the deprecation window. Two tables,
-// two orchestrators, both live; 3c unifies.
 const jobOrchestratorsByBroker = new WeakMap<Broker, JobOrchestrator>();
 const trustStoresByBroker = new WeakMap<Broker, TrustStore>();
 const stewardStoresByBroker = new WeakMap<Broker, StewardStore>();
@@ -168,54 +162,17 @@ export function getOrCreateFederation(broker: Broker): FederationSubsystem {
   return fed;
 }
 
-function getOrCreateOrchestrator(broker: Broker, trustStore: TrustStore): WorkerOrchestrator {
-  const existing = orchestratorsByBroker.get(broker);
-  if (existing) return existing;
-  const ceilingCtx = hostCeilingContextByBroker.get(broker);
-  const orch = new WorkerOrchestrator({
-    broker,
-    store: broker.store,
-    trustStore,
-    ceiling: ceilingCtx?.ceiling,
-    headroomMonitor: ceilingCtx?.monitor,
-  });
-  // ADR-042 Decision 5 — register built-in in-process spawners + any
-  // MCP-backed worker types from `~/.stavr/worker-mcp-servers.yaml`. A
-  // manifest parse error is operator-visible: log + fall back to built-ins
-  // so the daemon still boots with a usable worker set.
-  let spawners;
-  try {
-    spawners = resolveAllSpawners();
-  } catch (err) {
-    if (err instanceof ManifestError) {
-      // Use console.warn rather than the logger — at this construction
-      // point the broker exists but the daemon's logger context isn't
-      // guaranteed wired yet (legacy `getOrCreateOrchestrator` call sites
-      // in tests). Operator sees the parse error on the daemon stderr.
-      console.warn(`[stavr] ${err.message} — booting with built-in workers only`);
-      spawners = builtInSpawners;
-    } else {
-      throw err;
-    }
-  }
-  for (const s of spawners) orch.register(s);
-  orchestratorsByBroker.set(broker, orch);
-  return orch;
-}
-
 /**
- * worker-dispatch Phase 3b — lazy JobOrchestrator factory. Parallel to
- * getOrCreateOrchestrator (legacy WorkerOrchestrator). The host-ceiling
- * context is shared from `hostCeilingContextByBroker` so the daemon's
- * single setHostCeilingContext call propagates to BOTH orchestrators.
+ * Lazy JobOrchestrator factory. The host-ceiling context is read from
+ * `hostCeilingContextByBroker` so the daemon's single setHostCeilingContext
+ * call propagates whenever the orchestrator is constructed.
  *
- * No binding registrations happen here — the binding-target catalogue
- * (cc / shell / mcp-server endpoints / etc.) is operator-configured in 3c
- * when the spawner-mcp consumer migration lands. For 3b, a freshly-spawned
- * JobOrchestrator has zero bindings; `job_dispatch` calls return
- * `unknown_binding` until the catalogue is wired. This is the documented
- * 3b shape; the job_* surface exists so callers + tests can exercise the
- * tier classification + parity contracts without binding work blocking 3b.
+ * worker-dispatch Phase 3c.2 — the binding-target catalogue
+ * (cc / shell / mcp-server endpoints / etc.) is still operator-configured
+ * out-of-band; a freshly-spawned JobOrchestrator has zero bindings and
+ * `job_dispatch` calls return `unknown_binding` until the catalogue is
+ * wired. The downstream `claude-execute-mcp-tool` BOM registers the first
+ * concrete binding target.
  */
 function getOrCreateJobOrchestrator(broker: Broker): JobOrchestrator {
   const existing = jobOrchestratorsByBroker.get(broker);
@@ -263,22 +220,20 @@ export function getCredentialStore(broker: Broker): CredentialStore | undefined 
 
 /**
  * Wire the host-resource-ceiling context onto this broker so any
- * WorkerOrchestrator created later (lazily, on first MCP connection) gets
- * admission control + Phase 5 load-shedding. The daemon calls this after the
- * host-headroom poller starts.
+ * JobOrchestrator created later (lazily, on first MCP connection) gets
+ * admission control + Phase 5 load-shedding. The daemon calls this after
+ * the host-headroom poller starts.
  *
- * Idempotent: re-calling replaces the context. If an orchestrator has already
- * been constructed for this broker, its ceiling context is updated too —
- * otherwise the late-spawned orchestrator picks it up at construction time.
+ * Idempotent: re-calling replaces the context. If a JobOrchestrator has
+ * already been constructed for this broker, its ceiling context is
+ * updated too — otherwise the late-spawned orchestrator picks it up at
+ * construction time.
  */
 export function setHostCeilingContext(
   broker: Broker,
   ctx: { ceiling: HostCeiling; monitor: HostHeadroomMonitor },
 ): void {
   hostCeilingContextByBroker.set(broker, ctx);
-  const orch = orchestratorsByBroker.get(broker);
-  if (orch) orch.setHostCeilingContext(ctx);
-  // Phase 3b — propagate to the parallel JobOrchestrator if it exists.
   const jobOrch = jobOrchestratorsByBroker.get(broker);
   if (jobOrch) jobOrch.setHostCeilingContext(ctx);
 }
@@ -290,14 +245,18 @@ export function getHostCeilingContext(
 }
 
 /**
- * Read-only accessor for an already-constructed orchestrator. Returns
- * undefined when no MCP session has triggered orchestrator creation yet —
- * Phase 5 load-shedding uses this so the watchdog can become live the
+ * Read-only accessor for an already-constructed JobOrchestrator. Returns
+ * undefined when no MCP session has triggered orchestrator creation yet
+ * — Phase 5 load-shedding uses this so the watchdog can become live the
  * moment the orchestrator does, without forcing eager construction at
  * daemon boot (which would change the broker startup semantics).
+ *
+ * worker-dispatch Phase 3c.2 — replaces the legacy `getOrchestrator`
+ * that returned WorkerOrchestrator. Callers (daemon.ts load-shedder
+ * wiring) use this to bind the shedder to job lifecycle.
  */
-export function getOrchestrator(broker: Broker): WorkerOrchestrator | undefined {
-  return orchestratorsByBroker.get(broker);
+export function getJobOrchestrator(broker: Broker): JobOrchestrator | undefined {
+  return jobOrchestratorsByBroker.get(broker);
 }
 
 /**
@@ -442,7 +401,6 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
 
   const trustStore = getOrCreateTrustStore(broker);
   const stewardStore = getOrCreateStewardStore(broker);
-  const orchestrator = getOrCreateOrchestrator(broker, trustStore);
   // v0.6 — initialize notification fabric (no-op when STAVR_NOTIFY_SECRET unset).
   getOrCreateNotifier(broker);
 
@@ -453,11 +411,9 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   registerDecisionTools(server, broker);
   registerGithubTools(server);
   registerGithubWriteTools(server, broker, { trustStore });
-  registerWorkerTools(server, orchestrator);
-  // Phase 3b — primary job_* MCP surface alongside the legacy worker_*
-  // surface. Both live during the deprecation window; tier classification
-  // is parity-tied via WORKER_TO_JOB_TOOL_ID_ALIAS so operator grants
-  // referencing legacy IDs keep working.
+  // worker-dispatch Phase 3c.2 — only the job_* MCP surface remains.
+  // The legacy worker_* tools + WorkerOrchestrator wiring deleted with
+  // the bespoke worker subsystem.
   const jobOrchestrator = getOrCreateJobOrchestrator(broker);
   registerJobTools(server, jobOrchestrator);
   registerTrustScopeTools(server, broker, trustStore);
@@ -476,7 +432,7 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
       connectors: v02.connectors,
     });
   }
-  return { server, sessionId, orchestrator };
+  return { server, sessionId };
 }
 
 function registerEmitEvent(server: McpServer, broker: Broker): void {

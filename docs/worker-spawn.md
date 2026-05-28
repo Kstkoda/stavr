@@ -1,12 +1,21 @@
-# Worker spawn — operator notes
+# Worker-script writer — operator notes
 
-> **v0.6.7** — the shell-worker spawn path now writes each command to a
-> per-worker script file on disk, invokes via `-File <path>` instead of
-> `-Command "..."`, and signs every script with an Ed25519 sidecar that
-> the spawner re-verifies before the child process starts. This page
-> covers the operator-visible side: where scripts land, how to audit
-> them, how integrity is enforced, and the per-AV whitelist recipes you
-> need if your endpoint protection keeps killing the spawn.
+> **worker-dispatch Phase 3c.2 note:** the bespoke worker subsystem is
+> retired (jobs are the substrate now — see [`writing-a-job-binding.md`](./writing-a-job-binding.md)),
+> but the script-writer helper that this page documents survives intact
+> and lives at `src/jobs/script-writer.ts`. Env-var names
+> (`STAVR_WORKER_SCRIPT_DIR`, `STAVR_WORKER_SCRIPT_RETENTION_DAYS`) and
+> on-disk paths (`${STAVR_HOME}/worker-scripts/`) keep the "worker"
+> spelling deliberately — they're an operator surface; silently
+> renaming them would break existing `.env` files and AV whitelist paths.
+
+> **v0.6.7** — the shell-flavored process-spawn binding path writes each
+> command to a per-job script file on disk, invokes via `-File <path>`
+> instead of `-Command "..."`, and signs every script with an Ed25519
+> sidecar that the script-writer re-verifies before the child process
+> starts. This page covers the operator-visible side: where scripts land,
+> how to audit them, how integrity is enforced, and the per-AV whitelist
+> recipes you need if your endpoint protection keeps killing the spawn.
 
 ## Where worker scripts live
 

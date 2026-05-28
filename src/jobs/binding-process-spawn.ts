@@ -28,6 +28,7 @@ import {
 import { createInterface } from 'node:readline';
 import { z } from 'zod';
 import { JobEventBus } from './event-bus.js';
+import { detectAvBlock, type AvBlockResult } from './av-detector.js';
 import type {
   BindingCapabilities,
   BindingContext,
@@ -83,7 +84,7 @@ export function createProcessSpawnBinding(
     capabilities: CAPABILITIES,
     paramsSchema: ProcessSpawnParams,
 
-    async dispatch(params, _ctx: BindingContext): Promise<BindingHandle> {
+    async dispatch(params, ctx: BindingContext): Promise<BindingHandle> {
       const bus = new JobEventBus();
 
       // via_node treats `command` as a Node.js source snippet evaluated via
@@ -167,6 +168,14 @@ export function createProcessSpawnBinding(
           exited = true;
           bus.emitExit({ exitCode: undefined, reason: 'crashed' });
         }
+        // worker-dispatch Phase 3c.2 — when the spawn error looks like an
+        // AV/EDR block (EPERM/EACCES on Windows), kick off background
+        // attribution via the av-detector module. The result lands on the
+        // JobRecord's `metadata.av_block` slot so the dashboard + notify
+        // fabric can surface "Defender killed it, here's the whitelist
+        // path" instead of a generic crash. Fire-and-forget so the spawn
+        // dispatch resolves immediately.
+        void runAvDetection(err, command, ctx).catch(() => { /* never throw */ });
       });
 
       const metadata: Record<string, unknown> = {
@@ -220,4 +229,31 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
       resolve();
     });
   });
+}
+
+/**
+ * AV/EDR attribution path for spawn-error failures (worker-dispatch
+ * Phase 3c.2). Filters on EPERM/EACCES error codes (the typical Windows
+ * shape for an AV block — node child_process surfaces these via
+ * `err.code`), then defers to the platform-aware detectAvBlock helper.
+ * On match, attaches `{ av_block: { product, event_id?, message? } }` to
+ * the JobRecord metadata via `ctx.store.updateJobMetadata`.
+ */
+async function runAvDetection(
+  err: Error,
+  spawnedPath: string,
+  ctx: BindingContext,
+): Promise<void> {
+  const code = (err as Error & { code?: string }).code;
+  // EPERM is the typical AV-block shape on Windows; EACCES the secondary
+  // shape some EDRs surface. Anything else (ENOENT, EAGAIN, …) isn't an
+  // AV signal — short-circuit to avoid the wevtutil round-trip.
+  if (code !== 'EPERM' && code !== 'EACCES') return;
+  const result: AvBlockResult | null = await detectAvBlock({ spawnedPath });
+  if (!result) return;
+  try {
+    ctx.store.updateJobMetadata(ctx.jobId, { av_block: result });
+  } catch {
+    // Store failures shouldn't crash the binding's background path.
+  }
 }

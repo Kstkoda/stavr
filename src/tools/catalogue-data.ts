@@ -71,20 +71,10 @@ const GatedDeclined = z.object({
   correlation_id: z.string().optional(),
 });
 
-const SerializedWorker = z.object({
-  id: z.string(),
-  name: z.string(),
-  type: z.string(),
-  cwd: z.string(),
-  pid: z.number().int().optional(),
-  status: z.enum(['starting', 'running', 'idle', 'terminated', 'crashed']),
-  started_at: z.string(),
-  ended_at: z.string().optional(),
-  last_activity_at: z.string().optional(),
-  metadata: z.record(z.unknown()),
-  termination_reason: z.string().optional(),
-  exit_code: z.number().int().optional(),
-});
+// worker-dispatch Phase 3c.2 — SerializedWorker schema deleted alongside
+// the worker_* tool card entries. JobRecord uses z.record(z.unknown())
+// in the job_* output schemas (the binding-target catalogue is open so
+// no fixed shape would survive future bindings anyway).
 
 const TrustScope = z.object({
   id: z.string(),
@@ -760,155 +750,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     seeAlso: ['github.create_pr'],
   },
 
-  // ─── Worker orchestration ────────────────────────────────────────────────
-  // worker-dispatch Phase 3b — the six worker_* entries are deprecated
-  // aliases. The canonical job_* entries follow this block. Both surfaces
-  // are live during the deprecation window (1 release per
-  // DEPRECATION_WINDOW_RELEASES); tier classification is parity-tied via
-  // WORKER_TO_JOB_TOOL_ID_ALIAS in src/tools/categories.ts.
-  {
-    name: 'worker_list_types',
-    tier: 'auto',
-    category: 'worker',
-    since: '0.1.0',
-    stability: 'stable',
-    deprecatedAliasOf: 'job_list_bindings',
-    description:
-      'DEPRECATED — use job_list_bindings. List registered worker types and their spawn parameter schemas. Auto-tier.',
-    inputSchema: z.object({}),
-    outputSchema: z.object({
-      types: z.array(
-        z.object({
-          type: z.string(),
-          displayName: z.string(),
-          description: z.string(),
-          tier: z.enum(['auto', 'confirm', 'never']),
-          paramsSchema: z.record(z.unknown()),
-        }),
-      ),
-    }),
-    sideEffects: ['read-only registry lookup'],
-    errorModes: ['none'],
-    seeAlso: ['worker_spawn'],
-  },
-  {
-    name: 'worker_spawn',
-    tier: 'per-spawner',
-    category: 'worker',
-    since: '0.1.0',
-    stability: 'stable',
-    deprecatedAliasOf: 'job_dispatch',
-    description:
-      'DEPRECATED — use job_dispatch. Spawn a worker of the given type. Tier comes from the spawner; confirm-tier spawners gate on await_decision. Built-in spawners (`cc`, `shell`) are CONFIRM tier.',
-    inputSchema: z.object({
-      type: z.string().min(1),
-      name: z.string().min(1).max(128),
-      params: z
-        .union([z.record(z.unknown()), z.string()])
-        .describe(
-          'Spawner-specific params. Either an object matching the spawner schema, or a JSON-encoded string (some MCP clients serialize unknowns to strings).',
-        ),
-    }),
-    outputSchema: z.object({
-      worker: SerializedWorker,
-      gated: z.boolean(),
-    }),
-    sideEffects: [
-      'CONFIRM-tier spawners open an await_decision first',
-      'on approve: creates a worker record + spawns the child process',
-      'emits `worker_spawned` and (for cc) a follow-up `worker_progress`/`worker_activity` stream',
-    ],
-    errorModes: [
-      'unknown worker type → OrchestratorError(code=`unknown_type`)',
-      'duplicate name → OrchestratorError(code=`duplicate_name`)',
-      'spawner-specific failures (e.g. cc: git fetch/worktree errors)',
-    ],
-    seeAlso: ['worker_list_types', 'worker_status', 'worker_terminate'],
-  },
-  {
-    name: 'worker_list',
-    tier: 'auto',
-    category: 'worker',
-    since: '0.1.0',
-    stability: 'stable',
-    deprecatedAliasOf: 'job_list',
-    description:
-      'DEPRECATED — use job_list. List workers, optionally filtered by type or status. Auto-tier.',
-    inputSchema: z.object({
-      type: z.string().optional(),
-      status: z.enum(['starting', 'running', 'idle', 'terminated', 'crashed']).optional(),
-    }),
-    outputSchema: z.object({ workers: z.array(SerializedWorker) }),
-    sideEffects: ['read-only orchestrator query'],
-    errorModes: ['none'],
-    seeAlso: ['worker_status'],
-  },
-  {
-    name: 'worker_status',
-    tier: 'auto',
-    category: 'worker',
-    since: '0.1.0',
-    stability: 'stable',
-    deprecatedAliasOf: 'job_status',
-    description:
-      'DEPRECATED — use job_status. Full state of a single worker by id or name. Auto-tier.',
-    inputSchema: z.object({ id_or_name: z.string().min(1) }),
-    outputSchema: z.object({ worker: SerializedWorker.nullable() }),
-    sideEffects: ['read-only'],
-    errorModes: ['none — unknown id_or_name returns `{ worker: null }`'],
-    seeAlso: ['worker_list'],
-  },
-  {
-    name: 'worker_dispatch',
-    tier: 'per-spawner',
-    category: 'worker',
-    since: '0.1.0',
-    stability: 'stable',
-    deprecatedAliasOf: 'job_inject',
-    description:
-      'DEPRECATED — use job_inject. Deliver an instruction to a running worker. Per-spawner tier — some spawners refuse dispatch entirely.',
-    inputSchema: z.object({
-      id_or_name: z.string().min(1),
-      body: z.union([z.record(z.unknown()), z.string(), z.unknown()]),
-    }),
-    outputSchema: z.record(z.unknown()),
-    sideEffects: [
-      'emits `worker_dispatch_request`',
-      'effect on the worker is spawner-specific',
-    ],
-    errorModes: [
-      'unknown worker → `unknown_worker`',
-      'spawner does not support dispatch → `dispatch_not_supported`',
-    ],
-    seeAlso: ['worker_spawn', 'worker_terminate'],
-  },
-  {
-    name: 'worker_terminate',
-    tier: 'confirm',
-    category: 'worker',
-    since: '0.1.0',
-    stability: 'stable',
-    deprecatedAliasOf: 'job_terminate',
-    description:
-      'DEPRECATED — use job_terminate. Terminate a worker. Always confirm-tier.',
-    inputSchema: z.object({
-      id_or_name: z.string().min(1),
-      force: z.boolean().optional().default(false),
-    }),
-    outputSchema: z.object({
-      ok: z.literal(true),
-      exit_code: z.number().int().optional(),
-    }),
-    sideEffects: [
-      'sends SIGTERM (or SIGKILL if `force: true`) to the worker process',
-      'emits `worker_terminated`',
-      'cleans up the worktree if the spawner created one',
-    ],
-    errorModes: ['unknown worker → `unknown_worker`'],
-    seeAlso: ['worker_status'],
-  },
-
-  // ─── Jobs (worker-dispatch BOM, Phase 3b primary surface) ────────────────
+  // ─── Job orchestration (worker-dispatch BOM) ────────────────────────────
+  // worker-dispatch Phase 3c.2 — the six legacy worker_* tool card entries
+  // were here. Deleted along with the bespoke worker subsystem; only the
+  // canonical job_* entries below remain. Legacy worker_* event NAMES
+  // still appear in side-effect notes where the dual-emit window (per
+  // DEPRECATION_WINDOW_RELEASES in src/event-types.ts) keeps the shadow
+  // emissions alive for legacy subscribers.
   {
     name: 'job_list_bindings',
     tier: 'auto',
@@ -932,7 +780,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     }),
     sideEffects: ['read-only catalogue lookup'],
     errorModes: ['none'],
-    seeAlso: ['job_dispatch', 'worker_list_types'],
+    seeAlso: ['job_dispatch'],
   },
   {
     name: 'job_dispatch',
@@ -970,7 +818,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       'duplicate name → OrchestratorError(code=`name_in_use`)',
       'admission refusal → OrchestratorError(code=`headroom_exceeded`|`concurrent_jobs_per_actor_exceeded`|`invalid_budget`|`budget_exceeds_ceiling`)',
     ],
-    seeAlso: ['job_list_bindings', 'job_status', 'job_terminate', 'worker_spawn'],
+    seeAlso: ['job_list_bindings', 'job_status', 'job_terminate'],
   },
   {
     name: 'job_list',
@@ -999,7 +847,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     outputSchema: z.object({ jobs: z.array(z.record(z.unknown())) }),
     sideEffects: ['read-only orchestrator query'],
     errorModes: ['none'],
-    seeAlso: ['job_status', 'worker_list'],
+    seeAlso: ['job_status'],
   },
   {
     name: 'job_status',
@@ -1012,7 +860,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     outputSchema: z.object({ job: z.record(z.unknown()).nullable() }),
     sideEffects: ['read-only'],
     errorModes: ['none — unknown id_or_name returns `{ job: null }`'],
-    seeAlso: ['job_list', 'worker_status'],
+    seeAlso: ['job_list'],
   },
   {
     name: 'job_inject',
@@ -1036,7 +884,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       'job not active → `job_inactive`',
       'binding does not advertise inject → `inject_not_supported`',
     ],
-    seeAlso: ['job_dispatch', 'job_terminate', 'worker_dispatch'],
+    seeAlso: ['job_dispatch', 'job_terminate'],
   },
   {
     name: 'job_terminate',
@@ -1058,7 +906,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       'emits `job_terminated` (shadowed by legacy `worker_terminated` via dual-emit)',
     ],
     errorModes: ['unknown job → `not_found`'],
-    seeAlso: ['job_status', 'worker_terminate'],
+    seeAlso: ['job_status'],
   },
 
   // ─── Trust scopes ────────────────────────────────────────────────────────
@@ -1228,8 +1076,8 @@ export const TOOL_EXAMPLES: Record<string, { args: unknown; result: unknown }> =
     result: { event_id: 'evt_01H...', persisted_at: '2026-05-12T15:00:00.000Z' },
   },
   subscribe_to_events: {
-    args: { kinds: ['decision_request', 'worker_progress'] },
-    result: { subscription_id: 'sub_...', kinds: ['decision_request', 'worker_progress'], replayed_events: 0 },
+    args: { kinds: ['decision_request', 'job_progress'] },
+    result: { subscription_id: 'sub_...', kinds: ['decision_request', 'job_progress'], replayed_events: 0 },
   },
   await_decision: {
     args: {
@@ -1264,9 +1112,10 @@ export const TOOL_EXAMPLES: Record<string, { args: unknown; result: unknown }> =
     },
     result: { ok: true, correlation_id: 'cor_...', pr_url: 'https://github.com/stenlund/stavr/pull/42', pr_number: 42 },
   },
-  worker_spawn: {
+  job_dispatch: {
     args: {
-      type: 'cc',
+      binding_kind: 'process-spawn',
+      binding_target: 'cc',
       name: 'my-cc',
       params: {
         repo_path: 'C:/dev/stavr',
@@ -1275,7 +1124,7 @@ export const TOOL_EXAMPLES: Record<string, { args: unknown; result: unknown }> =
         prompt: 'Implement spec X',
       },
     },
-    result: { worker: { id: 'w_...', name: 'my-cc', type: 'cc', status: 'running' }, gated: true },
+    result: { job: { id: 'j_...', name: 'my-cc', binding_kind: 'process-spawn', binding_target: 'cc', lifecycle_state: 'running' } },
   },
   trust_scope_propose: {
     args: {

@@ -1,14 +1,14 @@
 ---
-name: worker_terminate
+name: job_inject
 tier: confirm
 category: worker
-since: 0.1.0
-stability: stable
+since: 0.7.0
+stability: beta
 ---
 
-# worker_terminate
+# job_inject
 
-Terminate a worker. Always confirm-tier.
+Inject a mid-flight message into a running job. Confirm-tier. The binding must advertise the `inject` capability (see job_list_bindings).
 
 ## Tier behaviour
 
@@ -24,9 +24,17 @@ CONFIRM — opens an `await_decision` first. Only proceeds on approve. On reject
       "type": "string",
       "minLength": 1
     },
-    "force": {
-      "type": "boolean",
-      "default": false
+    "body": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {}
+        },
+        {
+          "type": "string"
+        },
+        {}
+      ]
     }
   },
   "required": [
@@ -42,16 +50,12 @@ CONFIRM — opens an `await_decision` first. Only proceeds on approve. On reject
 {
   "type": "object",
   "properties": {
-    "ok": {
-      "type": "boolean",
-      "const": true
-    },
-    "exit_code": {
-      "type": "integer"
+    "message_id": {
+      "type": "string"
     }
   },
   "required": [
-    "ok"
+    "message_id"
   ],
   "additionalProperties": false
 }
@@ -59,18 +63,20 @@ CONFIRM — opens an `await_decision` first. Only proceeds on approve. On reject
 
 ## Side effects
 
-- sends SIGTERM (or SIGKILL if `force: true`) to the worker process
-- emits `worker_terminated`
-- cleans up the worktree if the spawner created one
+- routes the message via the binding handle
+- effect on the job is binding-specific
 
 
 ## Error modes
 
-- unknown worker → `unknown_worker`
+- unknown job → `not_found`
+- job not active → `job_inactive`
+- binding does not advertise inject → `inject_not_supported`
 
 ## See also
 
-- `worker_status`
+- `job_dispatch`
+- `job_terminate`
 
 ---
 

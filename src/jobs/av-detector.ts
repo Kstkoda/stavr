@@ -1,6 +1,8 @@
-// v0.6.7 P3 — AV / EDR block detection.
+// v0.6.7 P3 — AV / EDR block detection (worker-dispatch Phase 3c.2 —
+// moved from src/workers/ to src/jobs/ when the bespoke worker
+// subsystem deleted; binding-agnostic pure module).
 //
-// When a worker spawn returns EPERM or similar (and the script DID land
+// When a process spawn returns EPERM or similar (and the script DID land
 // on disk — verified by the caller), the cause is almost always an
 // antivirus product blocking the invocation. This module's job is to ask
 // the OS event log "did Defender / CrowdStrike / SentinelOne / Sophos
@@ -79,8 +81,9 @@ export type WevtutilTransport = (
 /**
  * Try to attribute a spawn failure to an AV / EDR block. Returns the
  * matching product + (when available) the AV's event id and a truncated
- * message; returns null when no match is found (caller should fall back
- * to a generic `worker_dispatch_failed`).
+ * message; returns null when no match is found (caller decides what
+ * event/metadata to emit — `binding-process-spawn` attaches the result
+ * to JobRecord metadata under `av_block`).
  *
  * Cross-platform: returns null on non-Windows platforms unconditionally.
  */

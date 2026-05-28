@@ -9,19 +9,19 @@ describe('ToolRegistry', () => {
   it('records a tool and returns it via get()', () => {
     const r = new ToolRegistry();
     const m = buildMetadata(
-      'worker_spawn',
-      { description: 'spawn a worker', inputSchema: {} },
-      'workers/tools.ts',
+      'job_dispatch',
+      { description: 'dispatch a job', inputSchema: {} },
+      'jobs/tools.ts',
     );
     r.record(m);
-    const stored = r.get('worker_spawn');
+    const stored = r.get('job_dispatch');
     expect(stored).toBeDefined();
-    expect(stored?.id).toBe('worker_spawn');
+    expect(stored?.id).toBe('job_dispatch');
     expect(stored?.category).toBe('worker');
     expect(stored?.defaultTier).toBe('CONFIRM');
     expect(stored?.reversibility).toBe('irreversible');
-    expect(stored?.description).toBe('spawn a worker');
-    expect(stored?.registered_by).toBe('workers/tools.ts');
+    expect(stored?.description).toBe('dispatch a job');
+    expect(stored?.registered_by).toBe('jobs/tools.ts');
   });
 
   it('is idempotent — second record() with the same id is a no-op', () => {
@@ -57,21 +57,21 @@ describe('ToolRegistry', () => {
 
   it('byCategory() returns only tools in that category', () => {
     const r = new ToolRegistry();
-    r.record(buildMetadata('worker_spawn', {}, 'x'));
-    r.record(buildMetadata('worker_status', {}, 'x'));
+    r.record(buildMetadata('job_dispatch', {}, 'x'));
+    r.record(buildMetadata('job_status', {}, 'x'));
     r.record(buildMetadata('emit_event', {}, 'x'));
     expect(r.byCategory('worker').map((m) => m.id).sort()).toEqual([
-      'worker_spawn',
-      'worker_status',
+      'job_dispatch',
+      'job_status',
     ]);
     expect(r.byCategory('event').map((m) => m.id)).toEqual(['emit_event']);
   });
 
   it('categories() lists distinct categories sorted', () => {
     const r = new ToolRegistry();
-    r.record(buildMetadata('worker_spawn', {}, 'x'));
+    r.record(buildMetadata('job_dispatch', {}, 'x'));
     r.record(buildMetadata('emit_event', {}, 'x'));
-    r.record(buildMetadata('worker_list', {}, 'x'));
+    r.record(buildMetadata('job_list', {}, 'x'));
     expect(r.categories()).toEqual(['event', 'worker']);
   });
 
@@ -104,12 +104,12 @@ describe('wrapServerForRegistry', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     wrapServerForRegistry(server as any, r, 'fake');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (server as any).registerTool('worker_spawn', { description: 'd1' }, () => {});
+    (server as any).registerTool('job_dispatch', { description: 'd1' }, () => {});
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (server as any).registerTool('emit_event', { description: 'd2' }, () => {});
     expect(r.size()).toBe(2);
-    expect(r.get('worker_spawn')?.description).toBe('d1');
-    expect(r.get('worker_spawn')?.registered_by).toBe('fake');
+    expect(r.get('job_dispatch')?.description).toBe('d1');
+    expect(r.get('job_dispatch')?.registered_by).toBe('fake');
     expect(r.get('emit_event')?.description).toBe('d2');
   });
 

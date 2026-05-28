@@ -165,55 +165,12 @@ describe('ActorPermissionStore', () => {
     });
   });
 
-  // worker-dispatch Phase 3b — alias-aware fallback so an operator-written
-  // matrix row for one wire name applies to the counterpart name during
-  // the deprecation window.
-  describe('Phase 3b — worker_* / job_* alias-aware fallback', () => {
-    it('legacy worker_spawn NO_GO row applies when caller invokes job_dispatch', () => {
-      perms.set('cowork-claude', 'worker_spawn', 'NO_GO', 'operator');
-      const r = perms.resolve('cowork-claude', 'job_dispatch');
-      expect(r.tier).toBe('NO_GO');
-      expect(r.source).toBe('matrix');
-    });
-
-    it('canonical job_dispatch NO_GO row applies when caller invokes legacy worker_spawn', () => {
-      perms.set('cowork-claude', 'job_dispatch', 'NO_GO', 'operator');
-      const r = perms.resolve('cowork-claude', 'worker_spawn');
-      expect(r.tier).toBe('NO_GO');
-      expect(r.source).toBe('matrix');
-    });
-
-    it('direct row beats alias counterpart row when both exist', () => {
-      // Operator wrote both — the direct match wins so the operator's
-      // explicit intent for this specific name is honored.
-      perms.set('cowork-claude', 'worker_spawn', 'EXPLICIT', 'operator');
-      perms.set('cowork-claude', 'job_dispatch', 'NO_GO', 'operator');
-      expect(perms.resolve('cowork-claude', 'worker_spawn').tier).toBe('EXPLICIT');
-      expect(perms.resolve('cowork-claude', 'job_dispatch').tier).toBe('NO_GO');
-    });
-
-    it.each([
-      ['worker_list_types', 'job_list_bindings'],
-      ['worker_list', 'job_list'],
-      ['worker_status', 'job_status'],
-      ['worker_spawn', 'job_dispatch'],
-      ['worker_dispatch', 'job_inject'],
-      ['worker_terminate', 'job_terminate'],
-    ])(
-      'every pair carries the matrix row across the alias: %s ↔ %s',
-      (legacy, canonical) => {
-        perms.set('peer:remote', legacy, 'CONFIRM', 'operator');
-        expect(perms.resolve('peer:remote', canonical).tier).toBe('CONFIRM');
-        expect(perms.resolve('peer:remote', canonical).source).toBe('matrix');
-      },
-    );
-
-    it('alias fallback does NOT apply when the tool has no rename counterpart', () => {
-      // host_exec isn't in the rename pair table; no spurious alias lookup.
-      perms.set('cowork-claude', 'host_exec', 'EXPLICIT', 'operator');
-      expect(perms.resolve('cowork-claude', 'host_exec').tier).toBe('EXPLICIT');
-      // emit_event isn't in the table either; default falls through normally.
-      expect(perms.resolve('cowork-claude', 'emit_event').source).toBe('default');
-    });
-  });
+  // worker-dispatch Phase 3c.2 — the alias-aware fallback test block was
+  // here. Deleted along with `aliasCounterpartFor` and the legacy
+  // worker_* tool registrations. The legacy tool-ID strings (`worker_spawn`
+  // etc) still appear in the tests above only as arbitrary string tokens
+  // exercising the matrix-row CRUD + default-tier resolution — they no
+  // longer correspond to any registered tool, but the matrix table accepts
+  // any tool_id string and `defaultTierFor` returns the conservative
+  // 'CONFIRM' for unknown ids via the 'other' category branch.
 });

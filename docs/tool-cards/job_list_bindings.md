@@ -1,14 +1,14 @@
 ---
-name: worker_list_types
+name: job_list_bindings
 tier: auto
 category: worker
-since: 0.1.0
-stability: stable
+since: 0.7.0
+stability: beta
 ---
 
-# worker_list_types
+# job_list_bindings
 
-List registered worker types and their spawn parameter schemas. Auto-tier.
+List registered executor bindings (kind + target) and their dispatch parameter schemas. Auto-tier.
 
 ## Tier behaviour
 
@@ -30,12 +30,21 @@ AUTO — runs without confirmation. Read-only or has built-in escape hatches; th
 {
   "type": "object",
   "properties": {
-    "types": {
+    "bindings": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "type": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "mcp-call",
+              "http",
+              "process-spawn",
+              "cc-session-attach"
+            ]
+          },
+          "target": {
             "type": "string"
           },
           "displayName": {
@@ -44,32 +53,33 @@ AUTO — runs without confirmation. Read-only or has built-in escape hatches; th
           "description": {
             "type": "string"
           },
-          "tier": {
-            "type": "string",
-            "enum": [
-              "auto",
-              "confirm",
-              "never"
-            ]
-          },
-          "paramsSchema": {
+          "capabilities": {
             "type": "object",
-            "additionalProperties": {}
-          }
+            "properties": {
+              "inject": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "inject"
+            ],
+            "additionalProperties": false
+          },
+          "paramsSchema": {}
         },
         "required": [
-          "type",
+          "kind",
+          "target",
           "displayName",
           "description",
-          "tier",
-          "paramsSchema"
+          "capabilities"
         ],
         "additionalProperties": false
       }
     }
   },
   "required": [
-    "types"
+    "bindings"
   ],
   "additionalProperties": false
 }
@@ -77,7 +87,7 @@ AUTO — runs without confirmation. Read-only or has built-in escape hatches; th
 
 ## Side effects
 
-- read-only registry lookup
+- read-only catalogue lookup
 
 
 ## Error modes
@@ -86,7 +96,7 @@ AUTO — runs without confirmation. Read-only or has built-in escape hatches; th
 
 ## See also
 
-- `worker_spawn`
+- `job_dispatch`
 
 ---
 

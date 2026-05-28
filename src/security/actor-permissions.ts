@@ -23,7 +23,7 @@
  */
 
 import type { Database } from '../db/index.js';
-import { aliasCounterpartFor, defaultTierFor, type Tier } from '../tools/categories.js';
+import { defaultTierFor, type Tier } from '../tools/categories.js';
 
 /**
  * Stable actor identifiers used as PRIMARY KEY in `actor_permissions`.
@@ -175,17 +175,13 @@ export class ActorPermissionStore {
   resolve(actorId: string, toolId: string): ResolvedTier {
     const row = this.get(actorId, toolId);
     if (row) return { tier: row.tier, source: 'matrix' };
-    // worker-dispatch Phase 3b — alias-aware fallback. An operator-written
-    // matrix row for the counterpart name (e.g. `worker_spawn` set to
-    // NO_GO) MUST apply when a caller migrates to the new name
-    // (`job_dispatch`) and vice versa. Without this fallback an operator's
-    // existing restriction would silently NOT apply across the rename
-    // window. See WORKER_TO_JOB_TOOL_ID_ALIAS in tools/categories.ts.
-    const alias = aliasCounterpartFor(toolId);
-    if (alias) {
-      const aliasRow = this.get(actorId, alias);
-      if (aliasRow) return { tier: aliasRow.tier, source: 'matrix' };
-    }
+    // worker-dispatch Phase 3c.2 — the worker_*/job_* alias-aware fallback
+    // branch deleted. The bespoke worker subsystem is gone; legacy
+    // worker_* tool IDs no longer exist as registered tools, so an alias
+    // lookup has nothing to resolve to. Operators with stale matrix rows
+    // referencing `worker_spawn` etc. land on direct-hit (the row still
+    // exists in the table — see ResolvedTier.matrix), but no tool invokes
+    // those names anymore so the row is inert data until cleaned up.
     if (isOperatorShapeActor(actorId)) {
       return { tier: defaultTierFor(toolId), source: 'default' };
     }
