@@ -35,6 +35,12 @@ import type {
   JobRecord,
 } from './types.js';
 import type { JobLifecycleState } from './lifecycle.js';
+import { dualEmitLegacy } from './dual-emit.js';
+import type { HostCeiling } from '../types/host-ceiling.js';
+import type {
+  HeadroomSnapshot,
+  HostHeadroomMonitor,
+} from '../observability/host-headroom-poller.js';
 
 const IDLE_AFTER_MS = 5 * 60 * 1000;
 
@@ -44,6 +50,35 @@ export interface JobOrchestratorOptions {
   /** Override the idle timer. Tests pass null to disable; production uses
    *  the 5-minute default. */
   idleAfterMs?: number | null;
+  /**
+   * Phase 3a — admission control. Host-resource ceiling + headroom monitor
+   * port from WorkerOrchestrator. When both `ceiling.enabled` is true AND
+   * `headroomMonitor` is provided, `dispatch()` refuses with
+   * OrchestratorError('headroom_exceeded' | 'concurrent_jobs_exceeded' | ...)
+   * when admitting the dispatch would breach the ceiling. Fail-open if
+   * either is missing (caller didn't opt in).
+   */
+  ceiling?: HostCeiling;
+  headroomMonitor?: HostHeadroomMonitor;
+  /**
+   * Phase 3a — per-actor concurrency cap (federation precursor). An "actor"
+   * is the originator_peer for federated dispatches, `grant:<id>` for jobs
+   * dispatched under a trust scope, or `'local'` for the operator's own
+   * dispatches. Unlimited when undefined or <= 0. The cap counts in-flight
+   * (running/dispatched) jobs per actor against the configured limit.
+   *
+   * This is the substrate Phase 4 (scope-aware enforcement) lights up — for
+   * 3a the limit is operator-set, not derived from a grant's budget.
+   */
+  maxConcurrentPerActor?: number;
+  /**
+   * Phase 3a — pre-dispatch budget ceiling. If a JobBudget.max_runtime_ms is
+   * provided that exceeds this, dispatch refuses. Defaults to no cap when
+   * undefined or <= 0. This is the "you can't ask for an unbounded job"
+   * knob, paired with the runtime enforcement that lives in the binding
+   * handles (out of scope for 3a).
+   */
+  maxRuntimeMsCeiling?: number;
 }
 
 export interface JobDispatchInput {
@@ -75,14 +110,51 @@ interface LiveJob {
 export class JobOrchestrator {
   private bindings = new Map<string, ExecutorBinding>();
   private live = new Map<string, LiveJob>();
+  /** Per-actor live count for the per-actor concurrency cap. Decremented
+   *  on the `exit` event (terminal lifecycle) or on early dispatch failure. */
+  private liveByActor = new Map<string, number>();
   private readonly broker: Broker;
   private readonly store: EventStore;
   private readonly idleAfterMs: number | null;
+  private ceiling: HostCeiling | undefined;
+  private headroomMonitor: HostHeadroomMonitor | undefined;
+  private readonly maxConcurrentPerActor: number | undefined;
+  private readonly maxRuntimeMsCeiling: number | undefined;
 
   constructor(opts: JobOrchestratorOptions) {
     this.broker = opts.broker;
     this.store = opts.store;
     this.idleAfterMs = opts.idleAfterMs === undefined ? IDLE_AFTER_MS : opts.idleAfterMs;
+    this.ceiling = opts.ceiling;
+    this.headroomMonitor = opts.headroomMonitor;
+    this.maxConcurrentPerActor = opts.maxConcurrentPerActor;
+    this.maxRuntimeMsCeiling = opts.maxRuntimeMsCeiling;
+  }
+
+  /** Late-bind the ceiling + headroom monitor — mirrors the WorkerOrchestrator
+   *  setter so the daemon can attach the monitor on boot regardless of
+   *  orchestrator construction order. */
+  setHostCeilingContext(ctx: { ceiling: HostCeiling; monitor: HostHeadroomMonitor }): void {
+    this.ceiling = ctx.ceiling;
+    this.headroomMonitor = ctx.monitor;
+  }
+
+  /**
+   * Read-only accessor used by dashboard fetchers — returns the ceiling, the
+   * latest snapshot, and the live job count in one shot. Parallels
+   * WorkerOrchestrator.getCeilingStatus so the dashboard data layer can
+   * source from either during the cutover.
+   */
+  getCeilingStatus(): {
+    ceiling: HostCeiling | null;
+    snapshot: HeadroomSnapshot | null;
+    live_jobs: number;
+  } {
+    return {
+      ceiling: this.ceiling ?? null,
+      snapshot: this.headroomMonitor?.current() ?? null,
+      live_jobs: this.live.size,
+    };
   }
 
   /** Register a binding (kind + target). The catalogue key is
@@ -147,6 +219,22 @@ export class JobOrchestrator {
     }
     const validated = parsed.data;
 
+    // Phase 3a — admission control. Order: pre-dispatch budget shape check
+    // (cheapest, no I/O), then per-actor concurrency, then global host
+    // ceiling. The most-actionable refusal wins; each emits a
+    // host_ceiling_refused event so the dashboard can surface why.
+    const actorId = resolveActorId(input);
+    this.checkBudgetShape(input.budget);
+    await this.checkPerActorConcurrency(actorId, key, input.name);
+    try {
+      await this.checkHostAdmission(key, input.name);
+    } catch (err) {
+      // Host admission refused after per-actor reserved its slot — release
+      // before re-raising so the slot doesn't leak.
+      this.releaseActorSlot(actorId);
+      throw err;
+    }
+
     const id = randomUUID();
     const startedAt = new Date().toISOString();
     const paramsHash = hashParams({
@@ -203,7 +291,10 @@ export class JobOrchestrator {
       handle = await binding.dispatch(validated, ctx);
     } catch (err) {
       // Dispatch threw — mark the job crashed before re-raising so the row
-      // doesn't sit forever in `dispatched`.
+      // doesn't sit forever in `dispatched`. Release the per-actor slot we
+      // reserved in checkPerActorConcurrency so a failed dispatch doesn't
+      // leak quota.
+      this.releaseActorSlot(actorId);
       this.store.markJobTerminated(id, 'crashed', undefined, undefined);
       await this.publish(
         'job_terminated',
@@ -313,6 +404,7 @@ export class JobOrchestrator {
           sourceAgent(binding, input.name),
         );
         this.live.delete(id);
+        this.releaseActorSlot(actorId);
       }),
     );
     live.detach = () => {
@@ -395,6 +487,45 @@ export class JobOrchestrator {
       }),
     );
     this.live.clear();
+    this.liveByActor.clear();
+  }
+
+  /**
+   * Phase 5 load-shedding parallel for jobs. Terminates the live binding
+   * handle without the operator gate (the load-shedder, not the operator,
+   * is the decision authority for shed). Emits `host_ceiling_shed` with
+   * the victim and reason, then leans on the handle's terminate() to fire
+   * `exit` (which the orchestrator routes into `job_terminated`).
+   *
+   * Caller picks the victim. This method does NOT pick.
+   */
+  async shedJob(jobId: string, reason: string): Promise<{ exitCode?: number }> {
+    const rec = this.store.getJob(jobId);
+    if (!rec) throw new OrchestratorError('not_found', `no job: ${jobId}`);
+    const live = this.live.get(jobId);
+    if (!live) {
+      // Already terminated; idempotent.
+      return { exitCode: rec.exit_code };
+    }
+    await this.broker.publish({
+      kind: 'host_ceiling_shed',
+      at: new Date().toISOString(),
+      source_agent: 'stavr-jobs',
+      payload: {
+        // Legacy schema slot names — the existing dashboard chart-binding
+        // reads worker_id / worker_name / worker_type. Cutover 3c re-points
+        // the chart at job_* fields and these get renamed.
+        worker_id: rec.id,
+        worker_name: rec.name,
+        worker_type: `${rec.binding_kind}:${rec.binding_target}`,
+        reason,
+      },
+    });
+    const result = await live.handle.terminate(true);
+    if (!this.store.getJob(rec.id)?.ended_at) {
+      this.store.markJobTerminated(rec.id, 'shed_by_host', result.exitCode);
+    }
+    return result;
   }
 
   // --- internals --------------------------------------------------------
@@ -411,6 +542,16 @@ export class JobOrchestrator {
       correlation_id: correlationId,
       source_agent: sourceAgentName,
       payload,
+    });
+    // Phase 3a dual-emit window: shadow the new job_* event as the legacy
+    // worker_* equivalent so subscribers tuned to the old kinds keep
+    // working through one minor release. See src/jobs/dual-emit.ts +
+    // DEPRECATION_WINDOW_RELEASES in src/event-types.ts.
+    await dualEmitLegacy(this.broker, {
+      kind,
+      payload,
+      correlationId,
+      sourceAgent: sourceAgentName,
     });
   }
 
@@ -436,6 +577,207 @@ export class JobOrchestrator {
     if (typeof live.idleTimer.unref === 'function') live.idleTimer.unref();
   }
 
+  /**
+   * Pre-dispatch budget shape check (Phase 3a).
+   *
+   * Cheap, no I/O. Validates that user-supplied budget values are sane:
+   *   - max_runtime_ms positive when set (zod's z.number().int().positive()
+   *     already enforces this at the schema layer, but the orchestrator's
+   *     dispatch() takes an unknown `params` and trusts zod was run upstream,
+   *     so we re-check here too).
+   *   - max_runtime_ms doesn't exceed the configured ceiling (operator
+   *     wired this; default unlimited).
+   *
+   * Enforcement site: src/jobs/orchestrator.ts dispatch(), right after
+   * params validation, before the persisted dispatched row + binding call.
+   */
+  private checkBudgetShape(budget?: JobBudget): void {
+    if (!budget) return;
+    if (budget.max_runtime_ms !== undefined && budget.max_runtime_ms <= 0) {
+      throw new OrchestratorError(
+        'invalid_budget',
+        'budget.max_runtime_ms must be > 0 when set',
+      );
+    }
+    if (budget.max_steps !== undefined && budget.max_steps <= 0) {
+      throw new OrchestratorError(
+        'invalid_budget',
+        'budget.max_steps must be > 0 when set',
+      );
+    }
+    if (
+      this.maxRuntimeMsCeiling !== undefined &&
+      this.maxRuntimeMsCeiling > 0 &&
+      budget.max_runtime_ms !== undefined &&
+      budget.max_runtime_ms > this.maxRuntimeMsCeiling
+    ) {
+      throw new OrchestratorError(
+        'budget_exceeds_ceiling',
+        `budget.max_runtime_ms ${budget.max_runtime_ms} exceeds host ceiling ${this.maxRuntimeMsCeiling}`,
+      );
+    }
+  }
+
+  /**
+   * Per-actor concurrency cap (Phase 3a).
+   *
+   * Reserves a slot in the per-actor live-count map on dispatch; the slot
+   * is released on the binding's `exit` event (or on early dispatch
+   * failure). Refuses with `concurrent_jobs_per_actor_exceeded` when the
+   * actor is already at the configured cap.
+   *
+   * Phase 4 (scope-aware enforcement) will derive the cap from the grant
+   * itself; for 3a it's a single operator-set knob.
+   *
+   * Enforcement site: src/jobs/orchestrator.ts dispatch(), after the
+   * budget check, before the host-ceiling check (per-actor is the cheaper
+   * map lookup; host ceiling needs the headroom snapshot).
+   */
+  private async checkPerActorConcurrency(
+    actorId: string,
+    bindingKey: string,
+    jobName: string,
+  ): Promise<void> {
+    const cap = this.maxConcurrentPerActor;
+    if (cap === undefined || cap <= 0) {
+      // Even with no cap, reserve the slot so we can introspect the count.
+      this.reserveActorSlot(actorId);
+      return;
+    }
+    const current = this.liveByActor.get(actorId) ?? 0;
+    if (current >= cap) {
+      await this.broker.publish({
+        kind: 'host_ceiling_refused',
+        at: new Date().toISOString(),
+        source_agent: 'stavr-jobs',
+        payload: {
+          tool: 'job_dispatch',
+          type: bindingKey,
+          worker_name: jobName,
+          reason: 'max_concurrent_per_actor',
+          knob: 'maxConcurrentPerActor',
+          current,
+          limit: cap,
+        },
+      });
+      throw new OrchestratorError(
+        'concurrent_jobs_per_actor_exceeded',
+        `job dispatch refused: actor "${actorId}" already at ${current} jobs, cap is ${cap}`,
+      );
+    }
+    this.reserveActorSlot(actorId);
+  }
+
+  private reserveActorSlot(actorId: string): void {
+    this.liveByActor.set(actorId, (this.liveByActor.get(actorId) ?? 0) + 1);
+  }
+
+  private releaseActorSlot(actorId: string): void {
+    const cur = this.liveByActor.get(actorId) ?? 0;
+    if (cur <= 1) this.liveByActor.delete(actorId);
+    else this.liveByActor.set(actorId, cur - 1);
+  }
+
+  /** Test/introspection helper — current live job count for an actor. */
+  liveCountForActor(actorId: string): number {
+    return this.liveByActor.get(actorId) ?? 0;
+  }
+
+  /**
+   * Host-resource ceiling admission check (Phase 3a — port from
+   * WorkerOrchestrator.checkAdmission).
+   *
+   * Fail-open semantics carry over verbatim:
+   *   - No ceiling or ceiling.enabled=false → allow.
+   *   - No headroomMonitor wired → allow.
+   *   - monitor.current() returns null (cold start) → allow.
+   *   - cpu_busy_pct_ewma null (one sample) → skip the CPU branch.
+   *
+   * Checks in order so the most-actionable refusal wins:
+   *   1. max_concurrent_workers (job count cap; named in the existing
+   *      HostCeiling schema — kept verbatim so operators don't have to
+   *      re-tune this knob between 3a and 3c).
+   *   2. min_free_ram_gb — hard floor.
+   *   3. max_host_ram_pct — pct ceiling.
+   *   4. max_sustained_cpu_pct — EWMA only.
+   *
+   * Enforcement site: src/jobs/orchestrator.ts dispatch(), after per-actor
+   * concurrency, before the dispatched row + binding call. The per-actor
+   * reservation has already happened; if host admission refuses we release
+   * the reservation so it doesn't leak.
+   */
+  private async checkHostAdmission(bindingKey: string, jobName: string): Promise<void> {
+    const refusal = this.computeAdmissionRefusal();
+    if (!refusal) return;
+    await this.broker.publish({
+      kind: 'host_ceiling_refused',
+      at: new Date().toISOString(),
+      source_agent: 'stavr-jobs',
+      payload: {
+        tool: 'job_dispatch',
+        type: bindingKey,
+        worker_name: jobName,
+        reason: refusal.reason,
+        knob: refusal.knob,
+        current: refusal.current,
+        limit: refusal.limit,
+      },
+    });
+    throw new OrchestratorError('headroom_exceeded', refusal.message);
+  }
+
+  private computeAdmissionRefusal(): AdmissionRefusal | undefined {
+    const c = this.ceiling;
+    if (!c || !c.enabled) return undefined;
+
+    if (c.max_concurrent_workers > 0 && this.live.size >= c.max_concurrent_workers) {
+      return {
+        reason: 'max_concurrent_workers',
+        knob: 'max_concurrent_workers',
+        current: this.live.size,
+        limit: c.max_concurrent_workers,
+        message: `job dispatch refused: ${this.live.size} live jobs already, limit is ${c.max_concurrent_workers}`,
+      };
+    }
+
+    const monitor = this.headroomMonitor;
+    if (!monitor) return undefined;
+    const snap = monitor.current();
+    if (!snap) return undefined;
+
+    if (snap.ram_free_gb < c.min_free_ram_gb) {
+      return {
+        reason: 'min_free_ram_gb',
+        knob: 'min_free_ram_gb',
+        current: snap.ram_free_gb,
+        limit: c.min_free_ram_gb,
+        message: `job dispatch refused: ${snap.ram_free_gb.toFixed(2)} GB free RAM, floor is ${c.min_free_ram_gb} GB`,
+      };
+    }
+
+    if (snap.ram_used_pct_ewma >= c.max_host_ram_pct) {
+      return {
+        reason: 'max_host_ram_pct',
+        knob: 'max_host_ram_pct',
+        current: snap.ram_used_pct_ewma,
+        limit: c.max_host_ram_pct,
+        message: `job dispatch refused: host RAM ${(snap.ram_used_pct_ewma * 100).toFixed(1)}% in use, ceiling is ${(c.max_host_ram_pct * 100).toFixed(0)}%`,
+      };
+    }
+
+    if (snap.cpu_busy_pct_ewma !== null && snap.cpu_busy_pct_ewma >= c.max_sustained_cpu_pct) {
+      return {
+        reason: 'max_sustained_cpu_pct',
+        knob: 'max_sustained_cpu_pct',
+        current: snap.cpu_busy_pct_ewma,
+        limit: c.max_sustained_cpu_pct,
+        message: `job dispatch refused: host CPU ${(snap.cpu_busy_pct_ewma * 100).toFixed(1)}% sustained, ceiling is ${(c.max_sustained_cpu_pct * 100).toFixed(0)}%`,
+      };
+    }
+
+    return undefined;
+  }
+
   private cancelIdle(id: string): void {
     const live = this.live.get(id);
     if (live?.idleTimer) {
@@ -443,6 +785,33 @@ export class JobOrchestrator {
       live.idleTimer = undefined;
     }
   }
+}
+
+interface AdmissionRefusal {
+  reason: string;
+  knob: string;
+  current: number;
+  limit: number;
+  message: string;
+}
+
+/**
+ * Map a dispatch request to an actor identifier for the per-actor
+ * concurrency cap. Precedence (most-specific wins):
+ *
+ *   1. originator_peer  — the federated principal that asked for the job
+ *      (Phase 5 will populate this from the JSON-RPC envelope).
+ *   2. grant:<grant_id> — a trust scope is gating this dispatch.
+ *   3. 'local'          — the operator's own dispatch, no federation
+ *      attribution and no trust scope.
+ *
+ * The actor key is opaque to the rest of the orchestrator; only the
+ * concurrency map and `host_ceiling_refused` payloads see it.
+ */
+function resolveActorId(input: JobDispatchInput): string {
+  if (input.originator_peer) return input.originator_peer;
+  if (input.grant_id) return `grant:${input.grant_id}`;
+  return 'local';
 }
 
 function bindingKey(kind: string, target: string): string {

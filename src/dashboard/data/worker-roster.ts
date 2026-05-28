@@ -16,6 +16,7 @@ import {
   isHistoric,
   type LifecycleState,
 } from '../../workers/lifecycle.js';
+import { resolveWorkerRetentionOpts } from '../../observability/worker-retention.js';
 
 /**
  * Roster entry: a WorkerRecord enriched with the derived lifecycle_state
@@ -47,13 +48,12 @@ export interface RosterOptions {
 }
 
 // v0.6.12 Phase 5 — worker retention policy. Default window is 4h
-// (env-overridable via STAVR_WORKER_RETENTION_HOURS). The "Show archived"
-// toggle on Workers + Topology passes a larger maxAgeMs to reveal older
-// entries up to the hard-delete cutoff (30 days default).
+// (env-overridable; prefers STAVR_JOB_RETENTION_HOURS, falls back to the
+// legacy STAVR_WORKER_RETENTION_HOURS — see src/observability/worker-retention.ts
+// for the deprecation window).
 function defaultHistoryWindowMs(): number {
-  const raw = process.env.STAVR_WORKER_RETENTION_HOURS;
-  const hours = raw && Number.isFinite(Number(raw)) && Number(raw) > 0 ? Number(raw) : 4;
-  return hours * 60 * 60 * 1000;
+  const { retentionHours } = resolveWorkerRetentionOpts();
+  return retentionHours * 60 * 60 * 1000;
 }
 const DEFAULT_HISTORY_WINDOW_MS = defaultHistoryWindowMs();
 /** Toggle target — when the operator clicks "Show archived" the page passes

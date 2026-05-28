@@ -59,6 +59,21 @@ MCP-call, HTTP, CC-session-attach. Prefer attach for CC. Each binding is small a
 
 Re-point the `worker_*` MCP tools onto invoke+job (rename where the 10-3-1 retired the "worker" terminology); migrate `src/workers/*` consumers; migrate the dashboard workers page + data fetchers + retention observability. Delete what the recon marked dead. `high` sensitivity — operator approval gate, `full` verification window, a migration for any persistence change.
 
+### Phase 3 split — 3a / 3b / 3c (added 2026-05-28)
+
+Phase 3 is the largest single phase in this BOM — recon §1 counts 15 modules + 3,773 LOC of `src/workers/*` alone, plus ~25 test files, the broker event taxonomy, the dashboard pages + data layer, retention observability, the watchdog, env-var-named operator knobs, the spawner-mcp design call, and the Unity decision. Shipping that as one commit risks:
+  - Context exhaustion mid-cutover, leaving a partial migration the next session has to reconstruct.
+  - Rushed test rewrites that mask real regressions because the diff is too large to review carefully.
+  - A single revert button — if any sub-area regresses on `main`, the whole cutover backs out, including the parts that were correct.
+
+So Phase 3 splits into three operator-gated sub-phases, each a standalone commit per CLAUDE.md §4 (one commit, independently passing `npm test` + `npm run build`, DCO sign-off, push at end). High-sensitivity ceremony applies to each — operator approval gate before each commit, full diff dump, status check.
+
+  - **Phase 3a — substrate.** Admission control wiring on `JobOrchestrator` (per-actor concurrency, host-ceiling, budget shape check); job-watchdog with `job_stuck` + `worker_stuck` dual-emit; retention env-var rename (`STAVR_WORKER_*` → `STAVR_JOB_*`) with backwards-compat reader + boot warning; broker-event dual-emit policy (`DEPRECATION_WINDOW_RELEASES = 1` constant; every `job_*` event shadowed as the legacy `worker_*` equivalent via `src/jobs/dual-emit.ts`). No MCP tool rename, no dashboard touch, no Unity decision, no spawner-mcp design call.
+  - **Phase 3b — MCP tool surface.** Rename `worker_*` → `job_*` tools (`job_dispatch`, `job_list_bindings`, `job_list`, `job_status`, `job_inject`, `job_terminate`); add the deprecation-window aliases so the bespoke `worker_*` tools delegate to the new `job_*` for one release; update tool-cards, the categories registry, and the security policy strings; rewrite the affected `tests/security/*` + `tests/tools/*` assertions in the same commit (CLAUDE.md §1).
+  - **Phase 3c — dashboard cutover + deletes.** Rename `src/dashboard/pages/workers.ts` → `jobs.ts` + adapters/data fetchers (`worker-roster.ts` → `job-roster.ts`, `worker-counters.ts` → `job-counters.ts`); re-point Helm + Topology + Diagnostics at job records; legacy `/dashboard/workers` alias; delete the bespoke worker subsystem (`src/workers/*` except `av-detector.ts` + `script-writer.ts` which generalise — see recon §1); migrate `spawner-mcp.ts` consumers onto the mcp-call binding (design call: collapse or layer the long-running pattern); delete Unity per operator 2026-05-27.
+
+The sub-phases are linear — 3b consumes 3a's dual-emit substrate (the legacy `worker_*` events still fire so dashboard subscribers keep working until 3c re-points them); 3c consumes the renamed MCP surface from 3b. Each commits and ships before the next dispatch.
+
 ## Phase 4 — Scope-aware enforcement (hard prerequisite for federation)
 
 Today the enforcement chokepoint checks an actor's *tier* but not their *grant scope* (trust scopes only gate the `gatedAction` subset). Make the chokepoint **grant-scope-aware**: every job step from a federated principal is validated against the specific grant — resource, feature, budget, expiry — before it runs. This MUST land before Phase 5. `high` sensitivity — it is a security primitive; operator approval gate.
@@ -74,7 +89,7 @@ Today the enforcement chokepoint checks an actor's *tier* but not their *grant s
 
 - PR 1 — Phase 0 (recon doc).
 - PR 2 — Phases 1-2 (job model + bindings).
-- PR 3 — Phase 3 (the worker-subsystem cutover).
+- PR 3 — Phase 3a + 3b + 3c (the worker-subsystem cutover, three commits inside one PR — each commit lands and ships clean; the PR opens after 3c is in).
 - PR 4 — Phase 4 (scope-aware enforcement).
 - PR 5 — Phase 5 (federated job-flow).
 

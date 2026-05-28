@@ -31,6 +31,7 @@ import {
   type NoGoEntry,
 } from './trust/no-go-list.js';
 import { start as startWorkerWatchdog } from './workers/watchdog.js';
+import { start as startJobWatchdog } from './jobs/watchdog.js';
 import { loadConfig } from './config.js';
 import { wireV02Subsystem, type V02SubsystemHandle } from './steward/v02-wiring.js';
 import { startMemoryPoller, type MemoryPollerStop } from './observability/memory-poller.js';
@@ -348,6 +349,11 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
   }
 
   const workerWatchdog = startWorkerWatchdog(broker, store);
+  // Phase 3a — parallel job-watchdog reads the jobs table and emits
+  // job_stuck (with worker_stuck dual-emit via dual-emit.ts). Lives
+  // alongside the worker watchdog until 3c deletes the bespoke worker
+  // subsystem.
+  const jobWatchdog = startJobWatchdog(broker, store);
 
   // OOM leak-hunt (bom-oom-leak-hunt C1.3): emit a daemon_memory event every
   // 60s so the dashboard / `stavr tail --kind daemon_memory` show heap, RSS
@@ -666,6 +672,7 @@ export async function startDaemonForeground(opts: DaemonOptions): Promise<Mounte
       }
     }
     workerWatchdog.stop();
+    jobWatchdog.stop();
     if (memoryPollerStop) {
       try { memoryPollerStop(); } catch { /* best effort */ }
     }

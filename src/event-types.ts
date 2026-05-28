@@ -1,5 +1,21 @@
 import { z } from 'zod';
 
+/**
+ * Dual-emit deprecation window length (worker-dispatch BOM Phase 3a).
+ *
+ * During the cutover from the bespoke worker subsystem to invoke + job,
+ * the JobOrchestrator publishes every job_* event AND its legacy worker_*
+ * equivalent so external subscribers (dashboard, federation receivers,
+ * any operator-side broker tail) keep working without simultaneous
+ * code changes. The translation lives in src/jobs/dual-emit.ts.
+ *
+ * Window length is one minor release (0.7.x → 0.8.0 per recon §12 Q3).
+ * The constant is here, not in dual-emit.ts, so a `grep DEPRECATION_WINDOW`
+ * across the repo finds every consumer at a glance — when this number
+ * decrements to 0 the legacy `worker_*` emitters are deleted.
+ */
+export const DEPRECATION_WINDOW_RELEASES = 1;
+
 export const EventKind = z.enum([
   'session_started',
   'phase_started',
@@ -186,6 +202,10 @@ export const EventKind = z.enum([
   'job_log',
   'job_error',
   'job_terminated',
+  // worker-dispatch Phase 3a — watchdog dual-emit. Parallel to worker_stuck.
+  // The JobOrchestrator-attached watchdog (src/jobs/watchdog.ts) emits BOTH
+  // kinds during the deprecation window — see DEPRECATION_WINDOW_RELEASES.
+  'job_stuck',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -410,6 +430,18 @@ export const JobTerminatedPayload = z.object({
   ]),
   exit_code: z.number().int().optional(),
   result: z.unknown().optional(),
+});
+
+export const JobStuckPayload = z.object({
+  job_id: z.string(),
+  job_name: z.string(),
+  binding_kind: z.string(),
+  binding_target: z.string(),
+  pid: z.number().int().optional(),
+  started_at: z.string(),
+  last_activity_at: z.string(),
+  idle_seconds: z.number().nonnegative(),
+  hint: z.string(),
 });
 
 // Trust-scope payloads (spec 46)
@@ -1189,6 +1221,7 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     job_log: JobLogPayload,
     job_error: JobErrorPayload,
     job_terminated: JobTerminatedPayload,
+    job_stuck: JobStuckPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);
