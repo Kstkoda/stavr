@@ -45,7 +45,7 @@ export type DashboardPageId =
   | 'helm'
   | 'home'
   | 'topology'
-  | 'workers'
+  | 'jobs'
   | 'history'
   | 'plans'
   | 'decide'
@@ -68,8 +68,8 @@ export interface NavEntry {
 export const NAV_ENTRIES: NavEntry[] = [
   { id: 'helm',         label: 'Helm',         href: '/dashboard/helm' },
   { id: 'topology',     label: 'Topology',     href: '/dashboard/topology' },
-  { id: 'workers',      label: 'Workers',      href: '/dashboard/workers' },
-  // v0.8 — audit history dashboard. Sits between Workers (live tail) and
+  { id: 'jobs',         label: 'Jobs',         href: '/dashboard/jobs' },
+  // v0.8 — audit history dashboard. Sits between Jobs (live tail) and
   // Decide (gate UI) so the operator's "what happened?" question lands
   // right next to "what's happening now?" and "what needs me?". The
   // surface is server-rendered + read-only; pages don't write through
@@ -97,11 +97,16 @@ export const LEGACY_NAV_ENTRIES: NavEntry[] = [
   // v0.7 Phase 6 — about page is reachable but not in the primary nav.
   // It's linked from family-mode and from the settings page's intro.
   { id: 'about', label: 'About stavR', href: '/dashboard/about' },
-  // chore/streams-to-workers — the page was renamed from "Streams" to
-  // "Workers". The legacy /dashboard/streams URL keeps serving the same
-  // page so bookmarks, helm cross-links, and operator muscle memory
-  // don't break.
-  { id: 'workers', label: 'Streams (legacy)', href: '/dashboard/streams' },
+  // worker-dispatch Phase 3c.1 — the page was renamed from "Workers" to
+  // "Jobs". The legacy /dashboard/workers URL keeps serving the same
+  // page (same renderer, same data) so bookmarks, helm cross-links, and
+  // operator muscle memory don't break.
+  { id: 'jobs', label: 'Workers (legacy)', href: '/dashboard/workers' },
+  // chore/streams-to-workers (now chore/streams-to-jobs) — the page was
+  // renamed from "Streams" to "Workers" then to "Jobs". The legacy
+  // /dashboard/streams URL still serves the same page for very-old
+  // bookmarks.
+  { id: 'jobs', label: 'Streams (legacy)', href: '/dashboard/streams' },
 ];
 
 export interface RenderShellInput {

@@ -1,53 +1,50 @@
 /**
- * Workers page — multi-pane terminal view for live worker output.
+ * Jobs page — multi-pane terminal view for live job output.
  *
- * One pane per running worker, up to 20, in a 4-wide responsive grid.
- * Each pane shows the worker name + type + status pill and tails the
- * last few events. Top bar carries filters (type / status / scope) and
+ * One pane per running job, up to 20, in a 4-wide responsive grid. Each
+ * pane shows the job name + binding kind/target + lifecycle pill and tails
+ * the last few events. Top bar carries filters (kind / state / scope) and
  * a search box that substring-filters across panes.
  *
  * Live updates: every event on /dashboard/stream (the SSE event-stream
- * endpoint — distinct concept from this page) is appended to the
- * matching pane (matched on correlation_id == worker.id OR
- * event.payload.id == worker.id). Workers with no output in N minutes
+ * endpoint — distinct concept from this page) is appended to the matching
+ * pane (matched on correlation_id == job.id OR event.payload.id == job.id
+ * OR event.payload.job_id == job.id). Jobs with no output in N minutes
  * fade to half opacity.
  *
- * Historic split: non-active workers fall into a collapsed details
- * section, bounded to the last 24h. Older runs live in the audit log;
- * the Workers page is the 24h live view. A link in the historic
- * section deep-links into /dashboard/history for the rest.
+ * Historic split: non-active jobs fall into a collapsed details section,
+ * bounded to the last 24h. Older runs live in the audit log; the Jobs page
+ * is the 24h live view. A link in the historic section deep-links into
+ * /dashboard/history for the rest.
+ *
+ * Phase 3c.1 of proposed/worker-dispatch-bom.md — renamed from
+ * src/dashboard/pages/workers.ts; carries the same UX with JobRecord as
+ * the data shape.
  */
-import type { WorkerRecord, StoredEvent } from '../../persistence.js';
+import type { StoredEvent } from '../../persistence.js';
+import type { JobRecord } from '../../jobs/types.js';
 import { renderShell } from '../shell.js';
 import { renderPill, type PillVariant } from '../components/pill.js';
 import {
   deriveLifecycleState,
   isCurrentlyActive,
   lifecycleLabel,
-  type LifecycleState,
-} from '../../workers/lifecycle.js';
+  type JobLifecycleState,
+} from '../../jobs/lifecycle.js';
 
-export interface WorkersData {
-  workers: WorkerRecord[];
-  /** Map of workerId → last N events (most recent last). */
+export interface JobsData {
+  jobs: JobRecord[];
+  /** Map of jobId → last N events (most recent last). */
   recent: Record<string, StoredEvent[]>;
 }
 
-const STATUS_PILL: Record<WorkerRecord['status'], PillVariant> = {
-  starting:   'info',
-  running:    'info',
-  idle:       'success',
-  terminated: 'neutral',
-  crashed:    'danger',
-};
-
 /**
- * v0.6.10 Task 2 — per-lifecycle pill variant for the worker roster table
- * (lifted from the Topology page; see CLAUDE.md §5 and the BOM v0.6.6 P3
- * rule that operator-kill must read distinct from a clean exit).
+ * Per-lifecycle pill variant for the job roster table — mirrors the
+ * Topology page's halo mapping. Operator-kill reads distinct from a clean
+ * exit per the BOM v0.6.6 P3 rule.
  */
-const WORKER_LIFECYCLE_PILL: Record<LifecycleState, PillVariant> = {
-  'starting':           'info',
+const JOB_LIFECYCLE_PILL: Record<JobLifecycleState, PillVariant> = {
+  'dispatched':         'info',
   'running':            'info',
   'completed-clean':    'success',
   'completed-error':    'warning',
@@ -57,25 +54,29 @@ const WORKER_LIFECYCLE_PILL: Record<LifecycleState, PillVariant> = {
   'stale':              'warning',
 };
 
+function bindingLabel(j: JobRecord): string {
+  return `${j.binding_kind}:${j.binding_target}`;
+}
+
 /**
- * v0.6.10 Task 2 — Worker roster table, lifted from the Topology page.
- * Renders one row per worker with name + type + lifecycle pill. Sits
- * below the workers grid as the canonical "list of workers" surface.
+ * Job roster table, lifted from the Topology page. Renders one row per
+ * job with name + binding + lifecycle pill. Sits below the jobs grid as
+ * the canonical "list of jobs" surface.
  */
-function renderWorkerRoster(workers: WorkerRecord[], now: number = Date.now()): string {
-  if (workers.length === 0) {
-    return `<div class="workers-roster-empty">No workers running.</div>`;
+function renderJobRoster(jobs: JobRecord[], now: number = Date.now()): string {
+  if (jobs.length === 0) {
+    return `<div class="jobs-roster-empty">No jobs running.</div>`;
   }
-  return workers.map((w) => {
-    const lifecycle = deriveLifecycleState(w, now);
+  return jobs.map((j) => {
+    const lifecycle = deriveLifecycleState(j, now);
     const pill = renderPill({
       text: lifecycleLabel(lifecycle),
-      variant: WORKER_LIFECYCLE_PILL[lifecycle] ?? 'neutral',
+      variant: JOB_LIFECYCLE_PILL[lifecycle] ?? 'neutral',
     });
     return [
-      `<li class="roster-row" data-id="${escapeHtml(w.id)}" data-lifecycle="${escapeHtml(lifecycle)}">`,
-      `<span class="roster-name">${escapeHtml(w.name || w.id)}</span>`,
-      `<span class="roster-type">${escapeHtml(w.type)}</span>`,
+      `<li class="roster-row" data-id="${escapeHtml(j.id)}" data-lifecycle="${escapeHtml(lifecycle)}">`,
+      `<span class="roster-name">${escapeHtml(j.name || j.id)}</span>`,
+      `<span class="roster-type">${escapeHtml(bindingLabel(j))}</span>`,
       pill,
       `</li>`,
     ].join('');
@@ -108,38 +109,66 @@ function eventLine(ev: StoredEvent): string {
   ].join('');
 }
 
-function renderPane(w: WorkerRecord, events: StoredEvent[]): string {
-  const status = w.status;
-  const pill = renderPill({ text: status, variant: STATUS_PILL[status] });
+/**
+ * Map lifecycle state to the pane border treatment + dot variant. Mirrors
+ * the iron-palette mapping from helm.ts so panes read the same colour
+ * across pages.
+ */
+function paneStateClass(state: JobLifecycleState): 'ok' | 'warn' | 'crit' | 'idle' {
+  switch (state) {
+    case 'dispatched':
+    case 'running':
+      return 'ok';
+    case 'killed-by-operator':
+    case 'stale':
+    case 'completed-error':
+      return 'warn';
+    case 'killed-by-system':
+    case 'crashed':
+      return 'crit';
+    case 'completed-clean':
+    default:
+      return 'idle';
+  }
+}
+
+function renderPane(j: JobRecord, events: StoredEvent[], now: number): string {
+  const lifecycle = deriveLifecycleState(j, now);
+  const stateClass = paneStateClass(lifecycle);
+  const pill = renderPill({
+    text: lifecycleLabel(lifecycle),
+    variant: JOB_LIFECYCLE_PILL[lifecycle] ?? 'neutral',
+  });
   const lines = events.length === 0
     ? `<div class="line line-empty">No output yet.</div>`
     : events.slice(-8).map(eventLine).join('');
-  const lastAt = events.length > 0 ? events[events.length - 1].at : (w.last_activity_at || w.started_at);
+  const lastAt = events.length > 0 ? events[events.length - 1].at : (j.last_activity_at || j.started_at);
   return [
-    `<article class="stream-pane" data-worker-id="${escapeHtml(w.id)}"`,
-    ` data-type="${escapeHtml(w.type)}" data-status="${escapeHtml(status)}"`,
+    `<article class="stream-pane" data-job-id="${escapeHtml(j.id)}"`,
+    ` data-kind="${escapeHtml(j.binding_kind)}" data-target="${escapeHtml(j.binding_target)}"`,
+    ` data-lifecycle="${escapeHtml(lifecycle)}" data-state="${escapeHtml(stateClass)}"`,
     ` data-last-at="${escapeHtml(lastAt ?? '')}">`,
     `<header class="pane-head">`,
-    `<span class="pane-name">${escapeHtml(w.name || w.id)}</span>`,
-    `<span class="pane-type">${escapeHtml(w.type)}</span>`,
+    `<span class="pane-name">${escapeHtml(j.name || j.id)}</span>`,
+    `<span class="pane-type">${escapeHtml(bindingLabel(j))}</span>`,
     pill,
     `</header>`,
     `<div class="pane-tail" data-role="tail">${lines}</div>`,
-    `<button type="button" class="pane-expand" data-role="expand" data-id="${escapeHtml(w.id)}"`,
+    `<button type="button" class="pane-expand" data-role="expand" data-id="${escapeHtml(j.id)}"`,
     ` aria-label="Open full tail">⤢</button>`,
     `</article>`,
   ].join('');
 }
 
-const WORKERS_CSS = `
-.workers-toolbar {
+const JOBS_CSS = `
+.jobs-toolbar {
   display: flex;
   gap: 12px;
   align-items: center;
   margin-bottom: 14px;
   flex-wrap: wrap;
 }
-.workers-search {
+.jobs-search {
   flex: 1;
   min-width: 220px;
   padding: 7px 11px;
@@ -150,7 +179,7 @@ const WORKERS_CSS = `
   color: var(--text-primary);
   font-family: inherit;
 }
-.workers-search:focus { outline: 2px solid var(--accent-mcp); outline-offset: 1px; }
+.jobs-search:focus { outline: 2px solid var(--accent-mcp); outline-offset: 1px; }
 .filter-select {
   padding: 6px 10px;
   font-size: 12px;
@@ -160,14 +189,14 @@ const WORKERS_CSS = `
   color: var(--text-primary);
   font-family: inherit;
 }
-.workers-count {
+.jobs-count {
   font-size: 11px;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
-.workers-grid {
+.jobs-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 12px;
@@ -187,8 +216,8 @@ const WORKERS_CSS = `
 }
 .stream-pane.quiet { opacity: 0.5; }
 .stream-pane.hidden { display: none; }
-.stream-pane[data-status="crashed"] { border-color: var(--crit); }
-.stream-pane[data-status="running"] { border-color: rgba(106,169,255,.35); }
+.stream-pane[data-state="crit"] { border-color: var(--crit); }
+.stream-pane[data-state="ok"]   { border-color: rgba(106,169,255,.35); }
 
 .pane-head {
   display: flex;
@@ -240,7 +269,7 @@ const WORKERS_CSS = `
 }
 .pane-expand:hover { color: var(--text-primary); }
 
-.workers-empty {
+.jobs-empty {
   padding: 60px 24px;
   text-align: center;
   color: var(--ink-2);
@@ -250,18 +279,18 @@ const WORKERS_CSS = `
   backdrop-filter: blur(14px) saturate(140%);
 }
 
-.workers-history { margin-top: 14px; }
-.workers-history-foot {
+.jobs-history { margin-top: 14px; }
+.jobs-history-foot {
   margin-top: 10px;
   font-size: 11px;
   color: var(--ink-3);
 }
-.workers-history-link {
+.jobs-history-link {
   color: var(--sky, var(--accent-mcp));
   text-decoration: none;
   border-bottom: 1px dashed currentColor;
 }
-.workers-history-link:hover { color: var(--ink-0); }
+.jobs-history-link:hover { color: var(--ink-0); }
 
 .fullscreen-tail {
   position: fixed;
@@ -293,8 +322,7 @@ const WORKERS_CSS = `
   font-size: 13px;
 }
 
-/* v0.6.10 Task 2 — Worker roster table lifted from Topology. */
-.workers-roster {
+.jobs-roster {
   margin-top: 18px;
   padding: 14px;
   background: var(--bg-glass);
@@ -303,9 +331,9 @@ const WORKERS_CSS = `
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
 }
-.workers-roster h2 { margin: 0 0 8px 0; }
-.workers-roster ul { list-style: none; padding: 0; margin: 0; }
-.workers-roster .roster-row {
+.jobs-roster h2 { margin: 0 0 8px 0; }
+.jobs-roster ul { list-style: none; padding: 0; margin: 0; }
+.jobs-roster .roster-row {
   display: grid;
   grid-template-columns: 1fr auto auto;
   gap: 10px;
@@ -314,14 +342,14 @@ const WORKERS_CSS = `
   padding: 6px 0;
   border-bottom: 1px solid var(--line);
 }
-.workers-roster .roster-row:last-child { border-bottom: 0; }
-.workers-roster .roster-name { color: var(--ink-0); }
-.workers-roster .roster-type {
+.jobs-roster .roster-row:last-child { border-bottom: 0; }
+.jobs-roster .roster-name { color: var(--ink-0); }
+.jobs-roster .roster-type {
   color: var(--ink-3);
   font-family: var(--mono);
   font-size: 11px;
 }
-.workers-roster-empty {
+.jobs-roster-empty {
   color: var(--ink-3);
   font-style: italic;
   font-size: 12px;
@@ -331,35 +359,35 @@ const WORKERS_CSS = `
 
 const QUIET_THRESHOLD_MS = 2 * 60 * 1000; // 2 min idle = quiet pane
 
-const WORKERS_JS = `
+const JOBS_JS = `
 (function() {
-  const grid = document.querySelector('[data-role="workers-grid"]');
+  const grid = document.querySelector('[data-role="jobs-grid"]');
   if (!grid) return;
 
   const search    = document.querySelector('[data-role="search"]');
-  const typeFilt  = document.querySelector('[data-role="filter-type"]');
-  const statusFilt = document.querySelector('[data-role="filter-status"]');
+  const kindFilt  = document.querySelector('[data-role="filter-kind"]');
+  const stateFilt = document.querySelector('[data-role="filter-state"]');
   const countEl   = document.querySelector('[data-role="visible-count"]');
 
   function applyFilters() {
     const q = (search && search.value || '').toLowerCase().trim();
-    const wantType = typeFilt && typeFilt.value || '*';
-    const wantStatus = statusFilt && statusFilt.value || '*';
+    const wantKind = kindFilt && kindFilt.value || '*';
+    const wantState = stateFilt && stateFilt.value || '*';
     let visible = 0;
     grid.querySelectorAll('.stream-pane').forEach(function(pane) {
       const text = pane.textContent.toLowerCase();
       const matchSearch = q === '' || text.indexOf(q) !== -1;
-      const matchType = wantType === '*' || pane.getAttribute('data-type') === wantType;
-      const matchStatus = wantStatus === '*' || pane.getAttribute('data-status') === wantStatus;
-      const show = matchSearch && matchType && matchStatus;
+      const matchKind = wantKind === '*' || pane.getAttribute('data-kind') === wantKind;
+      const matchState = wantState === '*' || pane.getAttribute('data-lifecycle') === wantState;
+      const show = matchSearch && matchKind && matchState;
       pane.classList.toggle('hidden', !show);
       if (show) visible++;
     });
     if (countEl) countEl.textContent = visible + ' visible';
   }
   if (search) search.addEventListener('input', applyFilters);
-  if (typeFilt) typeFilt.addEventListener('change', applyFilters);
-  if (statusFilt) statusFilt.addEventListener('change', applyFilters);
+  if (kindFilt) kindFilt.addEventListener('change', applyFilters);
+  if (stateFilt) stateFilt.addEventListener('change', applyFilters);
   applyFilters();
 
   // ---------- quiet treatment ----------
@@ -368,7 +396,7 @@ const WORKERS_JS = `
     grid.querySelectorAll('.stream-pane').forEach(function(pane) {
       const lastAt = Date.parse(pane.getAttribute('data-last-at') || '');
       const quiet = Number.isFinite(lastAt) && now - lastAt > ${QUIET_THRESHOLD_MS};
-      pane.classList.toggle('quiet', quiet && pane.getAttribute('data-status') !== 'crashed');
+      pane.classList.toggle('quiet', quiet && pane.getAttribute('data-state') !== 'crit');
     });
   }
   tickQuiet();
@@ -403,11 +431,9 @@ const WORKERS_JS = `
     div.innerHTML = '<span class="line-time">' + esc(time) + '</span>'
       + '<span class="line-kind">' + esc(ev.kind || '') + '</span>'
       + '<span class="line-msg">' + esc(msg) + '</span>';
-    // Drop the empty placeholder if it's still there.
     const empty = tail.querySelector('.line-empty');
     if (empty) tail.removeChild(empty);
     tail.appendChild(div);
-    // Keep tail length bounded.
     while (tail.children.length > 30) tail.removeChild(tail.firstChild);
     tail.scrollTop = tail.scrollHeight;
     pane.setAttribute('data-last-at', new Date().toISOString());
@@ -418,9 +444,12 @@ const WORKERS_JS = `
     window.__stavrStream.on('event', function(ev) {
       try {
         const data = JSON.parse(ev.data || '{}');
-        const workerId = (data && (data.correlation_id || (data.payload && data.payload.id))) || null;
-        if (!workerId) return;
-        const pane = grid.querySelector('[data-worker-id="' + workerId.replace(/"/g, '\\\\"') + '"]');
+        // Match a pane on correlation_id, payload.id (job_started / progress /
+        // heartbeat / metadata / error / terminated), or payload.job_id (job_log).
+        const payload = data && data.payload || {};
+        const jobId = (data && data.correlation_id) || payload.id || payload.job_id || null;
+        if (!jobId) return;
+        const pane = grid.querySelector('[data-job-id="' + String(jobId).replace(/"/g, '\\\\"') + '"]');
         if (pane) appendLine(pane, data);
       } catch (_) { /* ignore */ }
     });
@@ -429,115 +458,97 @@ const WORKERS_JS = `
 `;
 
 /**
- * 24h cutoff for the historic section. Older runs drop off the page;
- * the audit-history dashboard is the canonical surface for anything
- * past this window.
+ * 24h cutoff for the historic section. Older runs drop off the page; the
+ * audit-history dashboard is the canonical surface for anything past this
+ * window.
  */
 const HISTORIC_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Most recent timestamp on a non-active worker record. Falls back
- * through `ended_at → last_activity_at → started_at`. Returns NaN
- * when no parseable timestamp exists (caller decides whether NaN
- * means "drop" or "keep" — here we drop).
+ * Most recent timestamp on a non-active job record. Falls back through
+ * `ended_at → last_activity_at → started_at`. Returns NaN when no parseable
+ * timestamp exists (caller decides whether NaN means "drop" or "keep" —
+ * here we drop).
  */
-function historicTimestampMs(w: WorkerRecord): number {
-  const raw = w.ended_at ?? w.last_activity_at ?? w.started_at;
+function historicTimestampMs(j: JobRecord): number {
+  const raw = j.ended_at ?? j.last_activity_at ?? j.started_at;
   if (!raw) return NaN;
   return Date.parse(raw);
 }
 
-export function renderWorkersPage(data?: WorkersData): string {
-  const snapshot: WorkersData = data ?? { workers: [], recent: {} };
+export function renderJobsPage(data?: JobsData): string {
+  const snapshot: JobsData = data ?? { jobs: [], recent: {} };
 
-  // BOM v0.6.6 P3 — primary view shows ONLY currently-active worker panes.
-  // Historic panes (completed / crashed / killed) move to a collapsible
-  // section below the grid, so the operator still has the audit thread
-  // but the live view stops being polluted by May-15 zombies.
-  //
-  // chore/streams-to-workers — historic panes are further filtered to a
-  // 24h window. Older workers drop off this page entirely and live on
-  // /dashboard/history (it's all in the audit log anyway; the Workers
-  // page is the 24h live view, not the archive).
+  // BOM v0.6.6 P3 — primary view shows ONLY currently-active job panes.
+  // Historic panes move to a collapsible section below the grid, bounded
+  // to 24h.
   const now = Date.now();
   const cutoffMs = now - HISTORIC_WINDOW_MS;
-  const active: WorkerRecord[] = [];
-  const historic: WorkerRecord[] = [];
-  for (const w of snapshot.workers) {
-    const state = deriveLifecycleState(w, now);
+  const active: JobRecord[] = [];
+  const historic: JobRecord[] = [];
+  for (const j of snapshot.jobs) {
+    const state = deriveLifecycleState(j, now);
     if (isCurrentlyActive(state)) {
-      active.push(w);
+      active.push(j);
       continue;
     }
-    const ts = historicTimestampMs(w);
-    if (Number.isFinite(ts) && ts >= cutoffMs) historic.push(w);
-    // else: older than 24h or undatable — drop. Operator finds it on
-    // /dashboard/history.
+    const ts = historicTimestampMs(j);
+    if (Number.isFinite(ts) && ts >= cutoffMs) historic.push(j);
   }
 
-  // Cap visible (active) workers at 20 — beyond that the grid is unusable.
+  // Cap visible (active) jobs at 20 — beyond that the grid is unusable.
   const visible = active.slice(0, 20);
-  const types = Array.from(new Set(active.map((w) => w.type))).sort();
-  const statuses: WorkerRecord['status'][] = ['running', 'idle', 'starting', 'crashed', 'terminated'];
+  const kinds = Array.from(new Set(active.map((j) => j.binding_kind))).sort();
+  const states: JobLifecycleState[] = ['running', 'dispatched', 'stale', 'crashed', 'completed-clean', 'completed-error', 'killed-by-operator', 'killed-by-system'];
 
   const panes = visible.length === 0
-    ? `<div class="workers-empty">No workers running. Worker panes will appear here once stavr spawns a worker.</div>`
-    : visible.map((w) => renderPane(w, snapshot.recent[w.id] ?? [])).join('');
+    ? `<div class="jobs-empty">No jobs running. Job panes will appear here once stavr dispatches a job.</div>`
+    : visible.map((j) => renderPane(j, snapshot.recent[j.id] ?? [], now)).join('');
 
-  // Historic section — collapsed by default. Renders the same pane shape
-  // so a click still inspects the row, but the grid doesn't fight for
-  // attention with the active panes. Bounded to the last 24h; the
-  // history-dashboard link below covers older runs.
-  const historyLink = `<a class="workers-history-link" href="/dashboard/history">Older runs → /dashboard/history</a>`;
+  const historyLink = `<a class="jobs-history-link" href="/dashboard/history">Older runs → /dashboard/history</a>`;
   const historicPanes = historic.length === 0
     ? ''
     : [
-        `<details class="workers-history" data-role="workers-history">`,
+        `<details class="jobs-history" data-role="jobs-history">`,
         `<summary>History · last 24h · ${historic.length} pane${historic.length === 1 ? '' : 's'}</summary>`,
-        `<div class="workers-grid">${historic.slice(0, 40).map((w) => renderPane(w, snapshot.recent[w.id] ?? [])).join('')}</div>`,
-        `<div class="workers-history-foot">${historyLink}</div>`,
+        `<div class="jobs-grid">${historic.slice(0, 40).map((j) => renderPane(j, snapshot.recent[j.id] ?? [], now)).join('')}</div>`,
+        `<div class="jobs-history-foot">${historyLink}</div>`,
         `</details>`,
       ].join('');
 
-  const typeOptions = ['<option value="*">all types</option>']
-    .concat(types.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`))
+  const kindOptions = ['<option value="*">all kinds</option>']
+    .concat(kinds.map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`))
     .join('');
-  const statusOptions = ['<option value="*">all statuses</option>']
-    .concat(statuses.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`))
+  const stateOptions = ['<option value="*">all states</option>']
+    .concat(states.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`))
     .join('');
 
   const body = [
     `<div class="page-head">`,
-    `<h1 class="page-title">Workers</h1>`,
-    `<span class="page-sub" data-role="workers-header">${visible.length} active pane${visible.length === 1 ? '' : 's'}${active.length > 20 ? ` · capped at 20 of ${active.length}` : ''}${historic.length > 0 ? ` · ${historic.length} historic (24h)` : ''}</span>`,
+    `<h1 class="page-title">Jobs</h1>`,
+    `<span class="page-sub" data-role="jobs-header">${visible.length} active pane${visible.length === 1 ? '' : 's'}${active.length > 20 ? ` · capped at 20 of ${active.length}` : ''}${historic.length > 0 ? ` · ${historic.length} historic (24h)` : ''}</span>`,
     `</div>`,
-    `<div class="workers-toolbar">`,
-    `<input class="workers-search" data-role="search" type="search" placeholder="Search across panes…" aria-label="Search worker output" />`,
-    `<select class="filter-select" data-role="filter-type" aria-label="Filter by type">${typeOptions}</select>`,
-    `<select class="filter-select" data-role="filter-status" aria-label="Filter by status">${statusOptions}</select>`,
-    `<span class="workers-count" data-role="visible-count">${visible.length} visible</span>`,
+    `<div class="jobs-toolbar">`,
+    `<input class="jobs-search" data-role="search" type="search" placeholder="Search across panes…" aria-label="Search job output" />`,
+    `<select class="filter-select" data-role="filter-kind" aria-label="Filter by binding kind">${kindOptions}</select>`,
+    `<select class="filter-select" data-role="filter-state" aria-label="Filter by lifecycle state">${stateOptions}</select>`,
+    `<span class="jobs-count" data-role="visible-count">${visible.length} visible</span>`,
     `</div>`,
-    `<div class="workers-grid" data-role="workers-grid">${panes}</div>`,
+    `<div class="jobs-grid" data-role="jobs-grid">${panes}</div>`,
     historicPanes,
-    // v0.6.10 Task 2 — Worker roster table lifted from Topology. Shows
-    // the active + 24h-historic list as a compact alternative view for
-    // operators who'd rather scan rows than panes. Workers outside the
-    // 24h window are NOT included here either (chore/streams-to-workers
-    // — they drop off the page entirely; the audit log on /dashboard/history
-    // is the canonical surface for older runs).
-    `<section class="workers-roster glass" data-role="workers-roster">`,
-    `<h2 class="card-title">Worker roster</h2>`,
+    `<section class="jobs-roster glass" data-role="jobs-roster">`,
+    `<h2 class="card-title">Job roster</h2>`,
     `<ul>`,
-    renderWorkerRoster([...active, ...historic], now),
+    renderJobRoster([...active, ...historic], now),
     `</ul>`,
     `</section>`,
   ].join('');
 
   return renderShell({
-    title: 'Stavr — Workers',
-    activePage: 'workers',
+    title: 'Stavr — Jobs',
+    activePage: 'jobs',
     body,
-    head: `<style>${WORKERS_CSS}</style>`,
-    script: WORKERS_JS,
+    head: `<style>${JOBS_CSS}</style>`,
+    script: JOBS_JS,
   });
 }

@@ -23,16 +23,19 @@ beforeAll(async () => {
   store = new EventStore();
   store.init(':memory:');
   broker = new Broker(store);
-  // Seed some state so every page has something to render.
-  store.upsertWorker({
-    id: 'w-e2e',
+  // Seed some state so every page has something to render. worker-dispatch
+  // Phase 3c.1 — Topology + Jobs page now read from listJobs(), so we seed
+  // the jobs table instead of the legacy workers table.
+  store.upsertJob({
+    id: 'j-e2e',
     name: 'cc-e2e',
-    type: 'cc',
-    cwd: '/tmp',
-    status: 'running',
+    binding_kind: 'process-spawn',
+    binding_target: 'cc',
+    params_hash: 'h',
+    lifecycle_state: 'running',
     started_at: new Date().toISOString(),
+    last_activity_at: new Date().toISOString(),
     metadata: {},
-    spawn_params_hash: 'h',
   });
   store.saveBom({
     id: 'bom_e2e',
@@ -102,9 +105,12 @@ describe('Dashboard e2e — every page reachable + shell intact', () => {
     expect(decide).toContain('merge?');
     const topology = await (await fetch(`${base}/dashboard/topology`)).text();
     expect(topology).toContain('cc-e2e');
-    const workers = await (await fetch(`${base}/dashboard/workers`)).text();
-    expect(workers).toContain('cc-e2e');
-    // legacy /dashboard/streams alias still serves the same page
+    const jobs = await (await fetch(`${base}/dashboard/jobs`)).text();
+    expect(jobs).toContain('cc-e2e');
+    // legacy /dashboard/workers alias still serves the same page
+    const workersLegacy = await (await fetch(`${base}/dashboard/workers`)).text();
+    expect(workersLegacy).toContain('cc-e2e');
+    // super-legacy /dashboard/streams alias still serves the same page
     const streamsLegacy = await (await fetch(`${base}/dashboard/streams`)).text();
     expect(streamsLegacy).toContain('cc-e2e');
   });

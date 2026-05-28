@@ -2,7 +2,7 @@
  * Topology — walkable graph (v0.4.1 polish).
  *
  * Independent of brick.ts and the radial-bricks adapter. Builds a typed
- * graph from the daemon snapshot (core, MCPs, workers, models, peers, DB,
+ * graph from the daemon snapshot (core, MCPs, jobs, models, peers, DB,
  * webhooks) and renders it as an HTML node layer on top of an SVG edge
  * layer per the canonical mockup design-mockups/dashboard-topology-v2-graph.html.
  *
@@ -14,23 +14,20 @@
  *    (qps, p95, err, retries) with 5m/1h/24h/7d windows.
  *  - Filter chips toggle node visibility by type. LIVE toggle dims edges
  *    and stops particle animation when off.
- *  - SSE on /dashboard/stream refreshes when worker_/bom_step_/trust_scope_
+ *  - SSE on /dashboard/stream refreshes when job_/bom_step_/trust_scope_
  *    events arrive (unchanged from v0.4).
  *  - Edit-mode parked with a v0.7 badge in the palette door.
  *
- * Worker nodes carry data-id + data-layer="worker" + data-started-at;
- * the SSE subscription refreshes on worker_/bom_step_/trust_scope_ events.
- * The bricks/workers data fed in still drives the node set, but the
- * visual layer is now graph-first instead of bus-row-stacked. The v0.3/v8
- * legacy scaffolding (topo-bus structural axis, topo-mode-chips
- * RADIAL/HEAT/HISTORY switcher, "STAVR DAEMON" core label) was removed
- * in v0.4.1 — see CLAUDE.md invariant #1.
+ * worker-dispatch Phase 3c.1 — the snapshot now carries JobRecord[] under
+ * `.jobs` instead of WorkerRecord[] under `.workers`. The graph node type
+ * for these stays `worker` internally (CSS keys + iron-palette pink
+ * unchanged); only the visible label flips to "Jobs".
  *
- * v0.6.10 Task 2 — the In-flight BOMs sidebar moved to
- * /dashboard/plans and the Worker roster table moved to
- * /dashboard/workers. Topology is now pure-topology (constellation only).
+ * v0.6.10 Task 2 — the In-flight BOMs sidebar moved to /dashboard/plans
+ * and the Worker (now Job) roster table moved to /dashboard/jobs. Topology
+ * is pure-topology (constellation only).
  */
-import type { WorkerRecord } from '../../persistence.js';
+import type { JobRecord } from '../../jobs/types.js';
 import type { Bom } from '../../types/stavr-bom.js';
 import { renderShell } from '../shell.js';
 import type { InstalledBrickLite } from '../adapters/topology.js';
@@ -38,8 +35,8 @@ import { resolveIconId, renderIcon } from '../components/icon-sprite.js';
 import {
   deriveLifecycleState,
   isCurrentlyActive,
-} from '../../workers/lifecycle.js';
-import { fetchWorkerCounters } from '../data/worker-counters.js';
+} from '../../jobs/lifecycle.js';
+import { fetchJobCounters } from '../data/job-counters.js';
 import type {
   McpCategoryNodeLite,
   PeerEntryLite,
@@ -83,7 +80,7 @@ export interface TrustScopeLite {
 }
 
 export interface TopologyData {
-  workers: WorkerRecord[];
+  jobs: JobRecord[];
   bricks: InstalledBrickLite[];
   scopes: TrustScopeLite[];
   /** BOMs whose status is approved/running/proposed — what's in flight. */
@@ -285,30 +282,39 @@ function actorsToNodes(actors: ActorNodeLite[]): GraphNode[] {
   });
 }
 
-function workersToNodes(workers: WorkerRecord[], now: number = Date.now()): GraphNode[] {
-  return workers.map((w) => {
-    // BOM v0.6.6: halo color comes from lifecycle_state (status = node
-    // halo per CLAUDE.md §5). Currently-active gets ok; stale gets warn;
-    // failures get crit; operator-kill is warn (not a process failure).
-    const lifecycle = deriveLifecycleState(w, now);
+function jobsToNodes(jobs: JobRecord[], now: number = Date.now()): GraphNode[] {
+  return jobs.map((j) => {
+    // CLAUDE.md §5: halo color comes from lifecycle_state. Currently-active
+    // gets ok; stale gets warn; failures get crit; operator-kill is warn
+    // (not a process failure). The node type stays `worker` so the CSS
+    // iron-palette pink reads unchanged across the cutover; only the
+    // visible label flips to "Jobs" in the filter strip + legend.
+    const lifecycle = deriveLifecycleState(j, now);
     const status: GraphStatus =
       lifecycle === 'crashed' || lifecycle === 'killed-by-system'
         ? 'crit'
         : lifecycle === 'completed-error' || lifecycle === 'killed-by-operator' || lifecycle === 'stale'
         ? 'warn'
         : 'ok';
+    const bindingLabel = `${j.binding_kind}:${j.binding_target}`;
+    const cwd = typeof j.metadata?.cwd === 'string' ? j.metadata.cwd : '';
     return {
-      id: w.id,
+      id: j.id,
       type: 'worker',
-      displayName: w.name || w.id,
-      role: w.type,
-      iconId: resolveIconId(w.type),
+      displayName: j.name || j.id,
+      role: bindingLabel,
+      iconId: resolveIconId(j.binding_kind),
       shape: 'round',
       status,
       x: 0, y: 0,
-      startedAt: Date.parse(w.started_at) || 0,
-      endedAt: w.ended_at ? Date.parse(w.ended_at) : undefined,
-      meta: { type: w.type, status: w.status, lifecycle_state: lifecycle, cwd: w.cwd || '' },
+      startedAt: Date.parse(j.started_at) || 0,
+      endedAt: j.ended_at ? Date.parse(j.ended_at) : undefined,
+      meta: {
+        binding_kind: j.binding_kind,
+        binding_target: j.binding_target,
+        lifecycle_state: lifecycle,
+        cwd,
+      },
     };
   });
 }
@@ -439,7 +445,7 @@ function renderEdge(n: Map<string, GraphNode>, e: GraphEdge): string {
 
 // v0.6.10 Task 2 — renderBomSidebar moved to src/dashboard/pages/plans.ts
 // (now lives as `renderInFlightSidebar`).
-// v0.6.10 Task 2 — renderWorkerRoster moved to src/dashboard/pages/workers.ts.
+// v0.6.10 Task 2 — renderJobRoster lives on src/dashboard/pages/jobs.ts.
 
 function renderFilterStrip(typeCounts: Record<GraphType, number>): string {
   const cell = (cls: string, label: string, type: GraphType) =>
@@ -454,7 +460,7 @@ function renderFilterStrip(typeCounts: Record<GraphType, number>): string {
     cell('webhook', 'Webhook', 'webhook'),
     cell('db', 'DB', 'db'),
     cell('model', 'Model', 'model'),
-    cell('worker', 'Worker', 'worker'),
+    cell('worker', 'Job', 'worker'),
     cell('peer', 'Peer', 'peer'),
     cell('actor', 'Actor', 'actor'),
     `</div>`,
@@ -496,7 +502,7 @@ function renderLegend(): string {
     `<div class="lr"><span class="sw t-mcp-remote"></span>MCP · remote</div>`,
     `<div class="lr"><span class="sw t-mcp-local"></span>MCP · local</div>`,
     `<div class="lr"><span class="sw t-model"></span>model</div>`,
-    `<div class="lr"><span class="sw t-worker"></span>worker</div>`,
+    `<div class="lr"><span class="sw t-worker"></span>job</div>`,
     `<div class="lr"><span class="sw t-db"></span>db</div>`,
     `<div class="lh" style="margin-top:8px;">status (halo)</div>`,
     `<div class="lr"><span class="dot ok"></span>ok</div>`,
@@ -962,7 +968,7 @@ const TOPOLOGY_CSS = `
 .placeholder { color: var(--ink-3); font-style: italic; font-size: 12px; padding: 8px 0; }
 
 /* roster */
-/* v0.6.10 Task 2 — .topo-roster removed; roster lives on /dashboard/workers now. */
+/* v0.6.10 Task 2 — .topo-roster removed; roster lives on /dashboard/jobs now. */
 .roster-row {
   display: grid; grid-template-columns: 1fr auto auto;
   gap: 10px; align-items: center;
@@ -1381,7 +1387,7 @@ const TOPOLOGY_JS = `
       try {
         const data = JSON.parse(ev.data || '{}');
         const k = data && data.kind;
-        if (typeof k === 'string' && (k.indexOf('bom_step_') === 0 || k.indexOf('worker_') === 0 || k.indexOf('trust_scope_') === 0)) {
+        if (typeof k === 'string' && (k.indexOf('bom_step_') === 0 || k.indexOf('job_') === 0 || k.indexOf('trust_scope_') === 0)) {
           scheduleTopologyReload();
         }
       } catch (_) {}
@@ -1485,7 +1491,7 @@ const TOPOLOGY_JS = `
 
 export function renderTopologyPage(data?: TopologyData): string {
   const snapshot: TopologyData = data ?? {
-    workers: [],
+    jobs: [],
     bricks: [],
     scopes: [],
     inFlightBoms: [],
@@ -1502,29 +1508,29 @@ export function renderTopologyPage(data?: TopologyData): string {
     x: CENTER_X, y: CENTER_Y,
     meta: { layer: 'steward' },
   };
-  // BOM v0.6.6 P4 — canvas filters out historic workers by default.
-  // Per BOM hard rule #7 the primary view shows currently-active +
-  // recent (within 24h) workers; older historic rows go into the
-  // "Show terminated (N)" toggle below. With 0 active workers the
-  // canvas now shows just the daemon hexagon, not 8 zombie dots.
+  // BOM v0.6.6 P4 — canvas filters out historic jobs by default. Per BOM
+  // hard rule #7 the primary view shows currently-active + recent (within
+  // 24h) jobs; older historic rows go into the "Show terminated (N)"
+  // toggle below. With 0 active jobs the canvas shows just the daemon
+  // hexagon, not 8 zombie dots.
   const canvasNow = Date.now();
   const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
-  const canvasWorkers: WorkerRecord[] = [];
-  const hiddenHistoricWorkers: WorkerRecord[] = [];
-  for (const w of snapshot.workers) {
-    const lifecycle = deriveLifecycleState(w, canvasNow);
+  const canvasJobs: JobRecord[] = [];
+  const hiddenHistoricJobs: JobRecord[] = [];
+  for (const j of snapshot.jobs) {
+    const lifecycle = deriveLifecycleState(j, canvasNow);
     if (isCurrentlyActive(lifecycle)) {
-      canvasWorkers.push(w);
+      canvasJobs.push(j);
       continue;
     }
     // Recent terminations stay on canvas so an operator clicking "what
     // just finished?" doesn't lose context.
-    const endRef = w.ended_at ?? w.last_activity_at ?? w.started_at;
+    const endRef = j.ended_at ?? j.last_activity_at ?? j.started_at;
     const age = canvasNow - Date.parse(endRef);
     if (Number.isFinite(age) && age <= HISTORY_WINDOW_MS) {
-      canvasWorkers.push(w);
+      canvasJobs.push(j);
     } else {
-      hiddenHistoricWorkers.push(w);
+      hiddenHistoricJobs.push(j);
     }
   }
   // v0.6.10 Task 1 — pull in MCP-category nodes (registry-derived, even
@@ -1534,7 +1540,7 @@ export function renderTopologyPage(data?: TopologyData): string {
   const brickNodes = bricksToNodes(snapshot.bricks);
   const mcpNodes = mcpCategoryNodesToGraph(snapshot.mcpCategoryNodes ?? []);
   const peerNodes = peersToNodes(snapshot.peers ?? []);
-  const workerNodes = workersToNodes(canvasWorkers, canvasNow);
+  const workerNodes = jobsToNodes(canvasJobs, canvasNow);
   // v0.6.10 Task 4a — actor-nodes from the fetcher (event-derived +
   // peers.yaml overlay).
   const actorGraphNodes = actorsToNodes(snapshot.actorNodes ?? []);
@@ -1607,11 +1613,11 @@ export function renderTopologyPage(data?: TopologyData): string {
   // BOM v0.6.6 P3 — header shows ACTIVE-vs-LIFETIME per hard rule #5.
   // Lifetime worker count goes after the active count; the gap surfaces
   // exactly when historic rows are clogging the DB.
-  const workerCounters = fetchWorkerCounters(snapshot.workers);
-  const workerHeader = workerCounters.total === workerCounters.active
-    ? `${workerCounters.active} worker${workerCounters.active === 1 ? '' : 's'} active`
-    : `${workerCounters.active} active · ${workerCounters.total} lifetime`;
-  const hiddenN = hiddenHistoricWorkers.length;
+  const jobCounters = fetchJobCounters(snapshot.jobs);
+  const jobHeader = jobCounters.total === jobCounters.active
+    ? `${jobCounters.active} job${jobCounters.active === 1 ? '' : 's'} active`
+    : `${jobCounters.active} active · ${jobCounters.total} lifetime`;
+  const hiddenN = hiddenHistoricJobs.length;
   const hiddenChip = hiddenN > 0
     ? ` · <button type="button" class="topo-show-terminated" data-role="show-terminated" aria-pressed="false">Show terminated (${hiddenN})</button>`
     : '';
@@ -1619,12 +1625,12 @@ export function renderTopologyPage(data?: TopologyData): string {
     `<div class="topo-page">`,
     `<div class="page-head">`,
     `<h1 class="page-title">Topology</h1>`,
-    `<span class="page-sub" data-role="topology-header">${workerHeader} · ${snapshot.bricks.length} brick${snapshot.bricks.length === 1 ? '' : 's'} · ${snapshot.inFlightBoms.length} in-flight · drag to pin${hiddenChip}</span>`,
+    `<span class="page-sub" data-role="topology-header">${jobHeader} · ${snapshot.bricks.length} brick${snapshot.bricks.length === 1 ? '' : 's'} · ${snapshot.inFlightBoms.length} in-flight · drag to pin${hiddenChip}</span>`,
     `</div>`,
     filterStrip,
     // v0.6.10 Task 2 — Topology page is now pure-topology: the BOM
-    // sidebar moved to /dashboard/plans and the Worker roster moved
-    // to /dashboard/workers. Operators reach those from the topbar.
+    // sidebar moved to /dashboard/plans and the Job roster moved to
+    // /dashboard/jobs. Operators reach those from the topbar.
     `<div class="topo-frame topo-frame-solo">`,
     `<div class="topo-canvas glass" data-role="topo-canvas" data-live="on">`,
     `<div class="grid-bg"></div>`,
@@ -1645,10 +1651,10 @@ export function renderTopologyPage(data?: TopologyData): string {
     allNodes.length <= 1 ? [
       `<div class="topo-empty-overlay">`,
       `<div class="topo-empty-title">No nodes on the map yet</div>`,
-      `<div class="topo-empty-body">Connect an MCP server or spawn a worker to populate the constellation. The canvas auto-updates as the daemon registers new entries.</div>`,
+      `<div class="topo-empty-body">Connect an MCP server or dispatch a job to populate the constellation. The canvas auto-updates as the daemon registers new entries.</div>`,
       `<div class="topo-empty-actions">`,
       `<a class="topo-empty-cta" href="/dashboard/mcps">Browse MCPs →</a>`,
-      `<a class="topo-empty-cta" href="/dashboard/workers">Live workers →</a>`,
+      `<a class="topo-empty-cta" href="/dashboard/jobs">Live jobs →</a>`,
       `</div>`,
       `</div>`,
     ].join('') : '',

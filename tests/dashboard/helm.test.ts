@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderHelmPage, type HelmData } from '../../src/dashboard/pages/helm.js';
+import { renderHelmPage, type HelmData, type HelmJob } from '../../src/dashboard/pages/helm.js';
 
 function snapshot(over: Partial<HelmData> = {}): HelmData {
   return {
@@ -17,9 +17,21 @@ function snapshot(over: Partial<HelmData> = {}): HelmData {
     },
     boms: { recent: [], total: 0, open: 0, ...(over.boms ?? {}) },
     decisions: { recent: [], open: 0, ...(over.decisions ?? {}) },
-    workers: over.workers ?? [],
-    worker_counters: over.worker_counters,
+    jobs: over.jobs ?? [],
+    job_counters: over.job_counters,
     systems: over.systems ?? [],
+  };
+}
+
+function job(over: Partial<HelmJob> = {}): HelmJob {
+  return {
+    id: over.id ?? 'job-1',
+    binding_kind: over.binding_kind ?? 'process-spawn',
+    binding_target: over.binding_target ?? 'generic',
+    status: over.status ?? 'running',
+    lifecycle_state: over.lifecycle_state,
+    uptime_sec: over.uptime_sec,
+    current_step: over.current_step,
   };
 }
 
@@ -28,12 +40,12 @@ describe('Helm page — 5-band v8 stack', () => {
     const html = renderHelmPage(snapshot());
     expect(html).toContain('data-slot="intent"');
     expect(html).toContain('data-slot="plans"');
-    expect(html).toContain('data-slot="workers"');
+    expect(html).toContain('data-slot="jobs"');
     expect(html).toContain('data-slot="tool-calls"');
     expect(html).toContain('data-slot="systems"');
     expect(html).toContain('L4 · INTENT');
     expect(html).toContain('L3 · PLANS');
-    expect(html).toContain('L2 · WORKERS');
+    expect(html).toContain('L2 · JOBS');
     expect(html).toContain('L1 · TOOL CALLS');
     expect(html).toContain('L0 · SYSTEMS');
   });
@@ -46,46 +58,46 @@ describe('Helm page — 5-band v8 stack', () => {
     expect(html).toContain('pill-profile-eco');
   });
 
-  it('worker dots are clickable with data-fi-open="worker"', () => {
-    // BOM v0.6.6: L2 chips show ONLY currently-active workers (starting /
-    // running). Both workers in this test are passed lifecycle_state so the
+  it('job dots are clickable with data-fi-open="job"', () => {
+    // BOM v0.6.6: L2 chips show ONLY currently-active jobs (dispatched /
+    // running). Both jobs in this test are passed lifecycle_state so the
     // new chip path renders them; data-lifecycle is the forward-compatible
     // attribute, data-state remains for back-compat with click handlers.
     const html = renderHelmPage(
       snapshot({
-        workers: [
-          { id: 'wkr_abcd', type: 'cc', status: 'running', lifecycle_state: 'running', current_step: 'step 1' },
-          { id: 'wkr_efgh', type: 'shell', status: 'running', lifecycle_state: 'starting' },
+        jobs: [
+          job({ id: 'job_abcd', binding_kind: 'process-spawn', binding_target: 'cc', status: 'running', lifecycle_state: 'running', current_step: 'step 1' }),
+          job({ id: 'job_efgh', binding_kind: 'process-spawn', binding_target: 'shell', status: 'running', lifecycle_state: 'dispatched' }),
         ],
       }),
     );
-    expect(html).toContain('data-worker-id="wkr_abcd"');
+    expect(html).toContain('data-job-id="job_abcd"');
     expect(html).toContain('data-state="running"');
     expect(html).toContain('data-lifecycle="running"');
-    expect(html).toContain('data-lifecycle="starting"');
-    expect(html).toContain('data-fi-open="worker"');
+    expect(html).toContain('data-lifecycle="dispatched"');
+    expect(html).toContain('data-fi-open="job"');
   });
 
-  it('historic workers (completed / killed / crashed) are filtered out of L2 chips', () => {
-    // BOM v0.6.6 hard rule #7: primary view never shows historic workers.
+  it('historic jobs (completed / killed / crashed) are filtered out of L2 chips', () => {
+    // BOM v0.6.6 hard rule #7: primary view never shows historic jobs.
     // The 2026-05-17 scenario had 6 historic rows showing as if active —
     // this test makes that regression impossible.
     const html = renderHelmPage(
       snapshot({
-        workers: [
-          { id: 'old1', type: 'cc', status: 'idle', lifecycle_state: 'completed-clean' },
-          { id: 'old2', type: 'cc', status: 'crashed', lifecycle_state: 'crashed' },
-          { id: 'op-killed', type: 'shell', status: 'idle', lifecycle_state: 'killed-by-operator' },
+        jobs: [
+          job({ id: 'old1', binding_kind: 'process-spawn', binding_target: 'cc', status: 'idle', lifecycle_state: 'completed-clean' }),
+          job({ id: 'old2', binding_kind: 'process-spawn', binding_target: 'cc', status: 'crashed', lifecycle_state: 'crashed' }),
+          job({ id: 'op-killed', binding_kind: 'process-spawn', binding_target: 'shell', status: 'idle', lifecycle_state: 'killed-by-operator' }),
         ],
-        worker_counters: {
+        job_counters: {
           active: 0, completed: 1, crashed: 1, killed_by_operator: 1, stale: 0, total: 3,
         },
       }),
     );
-    expect(html).toContain('No workers running');
-    expect(html).not.toContain('data-worker-id="old1"');
-    expect(html).not.toContain('data-worker-id="old2"');
-    expect(html).not.toContain('data-worker-id="op-killed"');
+    expect(html).toContain('No jobs running');
+    expect(html).not.toContain('data-job-id="old1"');
+    expect(html).not.toContain('data-job-id="old2"');
+    expect(html).not.toContain('data-job-id="op-killed"');
     // The counter summary line MUST mention 0 active (not 3) — that's the
     // exact lie this BOM is fixing.
     expect(html).toMatch(/0 active/);
@@ -94,10 +106,10 @@ describe('Helm page — 5-band v8 stack', () => {
   it('L2 summary distinguishes lifetime vs current per BOM hard rule #5', () => {
     const html = renderHelmPage(
       snapshot({
-        workers: [
-          { id: 'a', type: 'cc', status: 'running', lifecycle_state: 'running' },
+        jobs: [
+          job({ id: 'a', binding_kind: 'process-spawn', binding_target: 'cc', status: 'running', lifecycle_state: 'running' }),
         ],
-        worker_counters: {
+        job_counters: {
           active: 1, completed: 7, crashed: 0, killed_by_operator: 1, stale: 2, total: 11,
         },
       }),
@@ -135,10 +147,10 @@ describe('Helm page — 5-band v8 stack', () => {
     expect(html).toContain('data-role="watchdog-pip"');
   });
 
-  it('falls back to a friendly empty state when there are no plans/workers/systems', () => {
+  it('falls back to a friendly empty state when there are no plans/jobs/systems', () => {
     const html = renderHelmPage(snapshot());
     expect(html).toContain('No active plans');
-    expect(html).toContain('No workers running');
+    expect(html).toContain('No jobs running');
     expect(html).toContain('No external systems');
   });
 

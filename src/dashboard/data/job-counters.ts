@@ -1,30 +1,29 @@
 /**
- * src/dashboard/data/worker-counters.ts
+ * src/dashboard/data/job-counters.ts
  *
- * Single source of truth for worker counts across Helm, Topology, Workers,
- * and Diagnostics. Every page that wants to display a worker count MUST
- * read from `fetchWorkerCounters` here, not roll its own filter from
- * WorkerRecord[].
+ * Single source of truth for job counts across Helm, Topology, Jobs, and
+ * Diagnostics. Every page that wants to display a job count MUST read from
+ * `fetchJobCounters` here, not roll its own filter from JobRecord[].
  *
- * BOM v0.6.6 hard rule #4: no page-specific definition of "active". The
- * 2026-05-17 lie ("6 active" when 0 were running) lived in the gap
- * between four pages each interpreting status differently. This module
- * closes that gap.
+ * Carries forward BOM v0.6.6 hard rule #4 (no page-specific definition of
+ * "active") from the legacy worker-counters module — the 2026-05-17 lie
+ * ("6 active" when 0 were running) lived in the gap between four pages
+ * each interpreting status differently. Same closure, JobRecord-shaped.
  *
- * The roster sibling (`worker-roster.ts`) handles per-page slicing and
+ * The roster sibling (`job-roster.ts`) handles per-page slicing and
  * paginating; this file is just counts.
  */
-import type { WorkerRecord } from '../../persistence.js';
+import type { JobRecord } from '../../jobs/types.js';
 import {
   deriveLifecycleState,
   isCurrentlyActive,
   isHistoric,
-  type LifecycleState,
-} from '../../workers/lifecycle.js';
+  type JobLifecycleState,
+} from '../../jobs/lifecycle.js';
 
-export interface WorkerCounters {
+export interface JobCounters {
   /**
-   * Currently-active = `starting` or `running`. The number an operator
+   * Currently-active = `dispatched` or `running`. The number an operator
    * cares about when asking "what's the daemon doing right now?".
    */
   active: number;
@@ -34,21 +33,22 @@ export interface WorkerCounters {
   completed_error: number;
   /** Operator pressed Terminate. Distinct from `crashed` per BOM rule #6. */
   killed_by_operator: number;
-  /** OS-level kill (OOM, AV). v0.6.7 will populate this; today usually 0. */
+  /** OS-level kill (OOM, AV). Populated when the binding's failure path
+   *  fires the right termination_reason. */
   killed_by_system: number;
   /** Crashed (non-zero exit AND not operator-killed). */
   crashed: number;
   /** Has no heartbeat / old heartbeat AND no exit recorded yet. */
   stale: number;
-  /** Total rows in the workers table (all lifecycle states). */
+  /** Total rows in the jobs table (all lifecycle states). */
   total: number;
 }
 
 /**
  * Per-state breakdown — handy for callers that want to iterate without
- * branching on every field. Maps every LifecycleState to its count.
+ * branching on every field. Maps every JobLifecycleState to its count.
  */
-export type WorkerCountersByState = Readonly<Record<LifecycleState, number>>;
+export type JobCountersByState = Readonly<Record<JobLifecycleState, number>>;
 
 /**
  * Compute lifetime counts plus the per-state breakdown.
@@ -56,12 +56,12 @@ export type WorkerCountersByState = Readonly<Record<LifecycleState, number>>;
  * `now` is parameterised so callers (and tests) can pass a stable clock.
  * Defaults to Date.now(); production callers pass undefined.
  */
-export function fetchWorkerCounters(
-  workers: readonly WorkerRecord[],
+export function fetchJobCounters(
+  jobs: readonly JobRecord[],
   now: number = Date.now(),
-): WorkerCounters & { byState: WorkerCountersByState } {
-  const byState: Record<LifecycleState, number> = {
-    'starting': 0,
+): JobCounters & { byState: JobCountersByState } {
+  const byState: Record<JobLifecycleState, number> = {
+    'dispatched': 0,
     'running': 0,
     'completed-clean': 0,
     'completed-error': 0,
@@ -70,36 +70,36 @@ export function fetchWorkerCounters(
     'crashed': 0,
     'stale': 0,
   };
-  for (const w of workers) {
-    const s = deriveLifecycleState(w, now);
+  for (const j of jobs) {
+    const s = deriveLifecycleState(j, now);
     byState[s] += 1;
   }
   return {
-    active: byState['starting'] + byState['running'],
+    active: byState['dispatched'] + byState['running'],
     completed_clean: byState['completed-clean'],
     completed_error: byState['completed-error'],
     killed_by_operator: byState['killed-by-operator'],
     killed_by_system: byState['killed-by-system'],
     crashed: byState['crashed'],
     stale: byState['stale'],
-    total: workers.length,
+    total: jobs.length,
     byState,
   };
 }
 
 /**
  * The currently-active count, by itself. Equivalent to
- * `fetchWorkerCounters(ws).active` but doesn't allocate the breakdown
+ * `fetchJobCounters(jobs).active` but doesn't allocate the breakdown
  * object — handy for the topbar polling path where this gets called
  * frequently.
  */
-export function fetchActiveWorkerCount(
-  workers: readonly WorkerRecord[],
+export function fetchActiveJobCount(
+  jobs: readonly JobRecord[],
   now: number = Date.now(),
 ): number {
   let n = 0;
-  for (const w of workers) {
-    if (isCurrentlyActive(deriveLifecycleState(w, now))) n += 1;
+  for (const j of jobs) {
+    if (isCurrentlyActive(deriveLifecycleState(j, now))) n += 1;
   }
   return n;
 }
@@ -107,13 +107,13 @@ export function fetchActiveWorkerCount(
 /**
  * Compact human-readable counter string used in headers and chip labels.
  * Format: "0 active · 7 completed · 1 crashed" with optional " · N stale"
- * appended when any stale workers exist (so the operator knows there are
+ * appended when any stale jobs exist (so the operator knows there are
  * orphaned rows to deal with, but stale doesn't pollute the steady state).
  *
  * BOM hard rule #5: never display a single number that conflates lifetime
  * vs current. This helper is the canonical compact form.
  */
-export function formatCounterSummary(counters: WorkerCounters): string {
+export function formatCounterSummary(counters: JobCounters): string {
   const completed = counters.completed_clean + counters.completed_error;
   const failed = counters.crashed + counters.killed_by_system;
   const parts: string[] = [

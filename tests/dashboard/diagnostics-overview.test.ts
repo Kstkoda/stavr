@@ -2,9 +2,9 @@
  * v0.6.12 Phase 2 — Diagnostics 5-tile overview tests.
  *
  * Verifies the new /dashboard/diagnostics landing renders 5 tiles
- * (Engine / Connections / Workers / Federation / Alerts), each with
- * a drill route declared inline. The no-orphan-components rule says
- * every tile MUST have a non-empty drill href.
+ * (Engine / Connections / Jobs / Federation / Alerts), each with a drill
+ * route declared inline. The no-orphan-components rule says every tile
+ * MUST have a non-empty drill href.
  */
 import { describe, expect, it } from 'vitest';
 import { renderDiagnosticsOverview } from '../../src/dashboard/pages/diagnostics-overview.js';
@@ -13,7 +13,7 @@ import { renderDiagnosticsDetailStub } from '../../src/dashboard/pages/diagnosti
 describe('Diagnostics overview — 5 tiles, no orphans', () => {
   it('renders all 5 canonical tiles with drill hrefs', () => {
     const html = renderDiagnosticsOverview();
-    for (const id of ['engine', 'connections', 'workers', 'federation', 'alerts']) {
+    for (const id of ['engine', 'connections', 'jobs', 'federation', 'alerts']) {
       expect(html).toContain(`data-tile="${id}"`);
       expect(html).toContain(`href="/dashboard/diagnostics/${id}"`);
     }
@@ -81,7 +81,7 @@ describe('Diagnostics overview — 5 tiles, no orphans', () => {
 });
 
 describe('Diagnostics drill detail pages — every route renders real content', () => {
-  for (const id of ['connections', 'workers', 'federation', 'alerts'] as const) {
+  for (const id of ['connections', 'jobs', 'federation', 'alerts'] as const) {
     it(`${id} renders with breadcrumb back to overview`, () => {
       const html = renderDiagnosticsDetailStub(id);
       expect(html).toContain('href="/dashboard/diagnostics"');

@@ -7,22 +7,22 @@
  * detail routes in Phase 4).
  *
  * Per BOM:
- *   - 5 tiles: Engine, Connections, Workers, Federation, Alerts
+ *   - 5 tiles: Engine, Connections, Jobs, Federation, Alerts
  *   - Each: one status word/count + status-colored border + drill → affordance
  *   - No sparklines on the overview (those live on the detail pages)
  *   - Empty/future tiles dim with honest copy
  *   - NO-ORPHAN rule: every tile has a drill route declared inline
  */
-import type { WorkerRecord } from '../../persistence.js';
+import type { JobRecord } from '../../jobs/types.js';
 import type { InstalledBrickLite } from '../adapters/topology.js';
 import { renderShell } from '../shell.js';
-import { fetchWorkerCounters } from '../data/worker-counters.js';
+import { fetchJobCounters } from '../data/job-counters.js';
 import { snapshotBuildVersions, type BuildVersions } from '../data/build-versions.js';
 import { heartbeatStore } from '../../governor/heartbeat-store.js';
 
 export interface DiagnosticsOverviewData {
   bricks?: InstalledBrickLite[];
-  workers?: WorkerRecord[];
+  jobs?: JobRecord[];
   peerCount?: number;
   steward?: {
     pid: number | null;
@@ -158,7 +158,7 @@ const DIAG_OVERVIEW_CSS = `
 `;
 
 interface Tile {
-  id: 'engine' | 'connections' | 'workers' | 'federation' | 'alerts';
+  id: 'engine' | 'connections' | 'jobs' | 'federation' | 'alerts';
   title: string;
   big: string;
   sub: string;
@@ -186,7 +186,7 @@ function renderTile(t: Tile): string {
 
 export function renderDiagnosticsOverview(data?: DiagnosticsOverviewData): string {
   const bricks = data?.bricks ?? [];
-  const workers = data?.workers ?? [];
+  const jobs = data?.jobs ?? [];
   const peerCount = data?.peerCount ?? 0;
   const steward = data?.steward;
   const alerts = data?.alerts;
@@ -229,23 +229,23 @@ export function renderDiagnosticsOverview(data?: DiagnosticsOverviewData): strin
     drillLabel: 'drill · roster · latency · traffic',
   };
 
-  // ----- Workers -----
-  const workerCounters = fetchWorkerCounters(workers, Date.now());
-  const workerCrashed = workerCounters.crashed + workerCounters.killed_by_system;
-  const workersStatus: Tile['status'] =
-    workerCrashed > 0 ? 'crit'
-    : workerCounters.active > 0 ? 'ok'
-    : workerCounters.total > 0 ? 'idle'
+  // ----- Jobs -----
+  const jobCounters = fetchJobCounters(jobs, Date.now());
+  const jobCrashed = jobCounters.crashed + jobCounters.killed_by_system;
+  const jobsStatus: Tile['status'] =
+    jobCrashed > 0 ? 'crit'
+    : jobCounters.active > 0 ? 'ok'
+    : jobCounters.total > 0 ? 'idle'
     : 'idle';
-  const workersTile: Tile = {
-    id: 'workers',
-    title: 'Workers',
-    big: `${workerCounters.active} active`,
-    sub: `${workerCounters.total} lifetime · ${workerCrashed} crashed · last-4h shown by default on Workers + Topology`,
-    statusLabel: workerCrashed > 0 ? `${workerCrashed} crashed` : workerCounters.active > 0 ? 'running' : 'idle',
-    status: workersStatus,
-    drillHref: '/dashboard/diagnostics/workers',
-    drillLabel: 'drill · active · last-4h · spawner protocol',
+  const jobsTile: Tile = {
+    id: 'jobs',
+    title: 'Jobs',
+    big: `${jobCounters.active} active`,
+    sub: `${jobCounters.total} lifetime · ${jobCrashed} crashed · last-4h shown by default on Jobs + Topology`,
+    statusLabel: jobCrashed > 0 ? `${jobCrashed} crashed` : jobCounters.active > 0 ? 'running' : 'idle',
+    status: jobsStatus,
+    drillHref: '/dashboard/diagnostics/jobs',
+    drillLabel: 'drill · active · last-4h · binding catalogue',
   };
 
   // ----- Federation -----
@@ -290,7 +290,7 @@ export function renderDiagnosticsOverview(data?: DiagnosticsOverviewData): strin
     `</div>`,
     `</div>`,
     `<div class="diag-ov-grid">`,
-    [engineTile, connectionsTile, workersTile, federationTile, alertsTile].map(renderTile).join(''),
+    [engineTile, connectionsTile, jobsTile, federationTile, alertsTile].map(renderTile).join(''),
     `</div>`,
     `<div class="diag-ov-foot">No-orphan rule: every tile here drills to a detail page. Status = halo on the left border (ok / warn / crit / idle).</div>`,
     `</div>`,

@@ -1,5 +1,11 @@
 /**
  * C5 acceptance — Topology page.
+ *
+ * worker-dispatch Phase 3c.1 — renderTopologyPage now consumes JobRecord
+ * via TopologyData.jobs. The `computeTopology` adapter (a legacy "bricks
+ * above bus" layout helper) still takes WorkerRecord — it's not wired
+ * into the live page anymore; the tests for it stay against the legacy
+ * worker surface that lives until 3c.2.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
@@ -9,6 +15,7 @@ import { mountTransports, type MountedTransports } from '../../src/transports.js
 import { renderTopologyPage, type TopologyData } from '../../src/dashboard/pages/topology.js';
 import { computeTopology } from '../../src/dashboard/adapters/topology.js';
 import type { WorkerRecord } from '../../src/persistence.js';
+import type { JobRecord } from '../../src/jobs/types.js';
 import type { Bom } from '../../src/types/stavr-bom.js';
 
 function worker(over: Partial<WorkerRecord> = {}): WorkerRecord {
@@ -21,6 +28,21 @@ function worker(over: Partial<WorkerRecord> = {}): WorkerRecord {
     started_at: new Date().toISOString(),
     metadata: {},
     spawn_params_hash: 'hash',
+    ...over,
+  };
+}
+
+function job(over: Partial<JobRecord> = {}): JobRecord {
+  return {
+    id: 'j_' + Math.random().toString(36).slice(2, 6),
+    name: 'sample',
+    binding_kind: 'process-spawn',
+    binding_target: 'cc',
+    params_hash: 'h',
+    lifecycle_state: 'running',
+    started_at: new Date().toISOString(),
+    last_activity_at: new Date().toISOString(),
+    metadata: {},
     ...over,
   };
 }
@@ -49,7 +71,7 @@ function bom(over: Partial<Bom> = {}): Bom {
 
 function snapshot(over: Partial<TopologyData> = {}): TopologyData {
   return {
-    workers: [],
+    jobs: [],
     bricks: [],
     scopes: [],
     inFlightBoms: [],
@@ -127,10 +149,6 @@ describe('Topology page — unit', () => {
     expect(html).toContain('ns-tabs');
     expect(html).toContain('type-chips');
     expect(html).toContain('palette-door');
-    // v0.6 Task 4 Phase C #4 — Add + Edit FAB buttons were parked with
-    // a v0.7 badge but never delivered functionality; hidden until v0.7
-    // actually ships those affordances. Reset stays as the operator-
-    // facing primary action.
     expect(html).toContain('data-role="topo-reset"');
     expect(html).not.toContain('class="parked"');
     expect(html).toContain('topo-legend');
@@ -139,40 +157,35 @@ describe('Topology page — unit', () => {
     expect(html).not.toContain('data-mode="radial"');
   });
 
-  // v0.6 Task 4 Phase C #7 — Ctrl+K collides with browser omnibox.
-  // The label now renders `/` for non-Mac platforms (visible by default)
-  // and ⌘K hidden behind `kbd-mac` (the page JS unhides it on macOS).
   it('renders platform-aware keyboard hints (/ visible on non-Mac, ⌘K behind kbd-mac)', () => {
     const html = renderTopologyPage(snapshot());
     expect(html).toContain('data-role="topo-search-shortcut"');
     expect(html).toContain('class="kbd kbd-other">/');
     expect(html).toContain('class="kbd kbd-mac" hidden>⌘K');
-    // Legend row also reflects the same dual-rendering.
     expect(html).toContain('data-role="topo-keys-legend"');
   });
 
-  it('renders a node per worker tagged with started/ended-at for the scrubber', () => {
+  it('renders a node per job tagged with started/ended-at for the scrubber', () => {
     const t0 = new Date('2030-01-01T00:00:00Z').toISOString();
     const html = renderTopologyPage(snapshot({
-      workers: [worker({ id: 'w1', name: 'alpha', started_at: t0 })],
+      jobs: [job({ id: 'j1', name: 'alpha', started_at: t0 })],
     }));
-    expect(html).toContain('data-id="w1"');
+    expect(html).toContain('data-id="j1"');
+    // Node type stays `worker` so the iron-palette pink reads unchanged
+    // across the cutover — only the filter-chip label flips to "Job".
     expect(html).toContain('data-layer="worker"');
     expect(html).toContain(`data-started-at="${Date.parse(t0)}"`);
   });
 
   it('renders an inspector + heatmap timeline (BOM sidebar moved to /plans in v0.6.10 Task 2)', () => {
     const html = renderTopologyPage(snapshot({
-      workers: [worker({ id: 'w1' })],
+      jobs: [job({ id: 'j1' })],
       inFlightBoms: [bom({ id: 'bom_1', goal: 'do it', scope_id: 'scope_a' })],
       scopes: [{ id: 'scope_a', title: 'release-cut' }],
     }));
     expect(html).toContain('id="inspector"');
-    // v0.6.10 Task 3 — flat scrubber replaced by the heatmap timeline.
     expect(html).toContain('data-role="topo-timeline"');
     expect(html).toContain('data-role="topo-tl-slider"');
-    // v0.6.10 Task 2 — In-flight BOMs sidebar lives on /dashboard/plans now.
-    // Topology is pure-topology; the BOM list must NOT render here.
     expect(html).not.toContain('In-flight BOMs');
     expect(html).not.toContain('release-cut');
     expect(html).not.toContain('do it');
@@ -188,7 +201,7 @@ describe('Topology page — unit', () => {
         buckets: [
           { at: '2026-05-19T11:00:00.000Z', count: 0, kinds: {} },
           { at: '2026-05-19T11:01:00.000Z', count: 3, kinds: { progress: 3 } },
-          { at: '2026-05-19T11:02:00.000Z', count: 1, kinds: { worker_started: 1 } },
+          { at: '2026-05-19T11:02:00.000Z', count: 1, kinds: { job_started: 1 } },
         ],
       },
     }));
@@ -204,11 +217,15 @@ describe('Topology page — unit', () => {
     expect(html).toContain('data-kinds="progress=3"');
   });
 
-  it('wires SSE refresh on worker_/bom_step_/trust_scope_ events', () => {
+  it('wires SSE refresh on job_/bom_step_/trust_scope_ events', () => {
+    // 3c.1 re-points the SSE filter from worker_* to job_* (primary). The
+    // dual-emit shadow still fires worker_* events but matching only one
+    // shape avoids double-refresh per job event during the deprecation
+    // window.
     const html = renderTopologyPage(snapshot());
     expect(html).toContain('/dashboard/stream');
     expect(html).toContain('bom_step_');
-    expect(html).toContain('worker_');
+    expect(html).toContain('job_');
     expect(html).toContain('trust_scope_');
   });
 
@@ -222,6 +239,9 @@ describe('Topology page — unit', () => {
     expect(html).toContain('data-id="mcp-cat-worker"');
     expect(html).toContain('data-id="mcp-cat-github"');
     expect(html).toContain('data-type="mcp-local"');
+    // The category 'worker' display label stays "Workers" — that's the
+    // tool-category surface (src/tools/categories.ts) which is still alive
+    // in 3c.1 (deletes in 3c.2).
     expect(html).toContain('Workers');
     expect(html).toContain('GitHub');
   });
@@ -239,12 +259,12 @@ describe('Topology page — unit', () => {
     const html = renderTopologyPage(snapshot({
       permissions: {
         tools: [
-          { id: 'worker_spawn', category: 'worker', description: '', defaultTier: 'CONFIRM', layer0: null, disabledNow: false },
+          { id: 'job_dispatch', category: 'worker', description: '', defaultTier: 'CONFIRM', layer0: null, disabledNow: false },
         ],
         actors: ['operator', 'cc'],
         matrix: [
-          { actor: 'operator', tool: 'worker_spawn', tier: 'AUTO', source: 'matrix' },
-          { actor: 'cc',       tool: 'worker_spawn', tier: 'CONFIRM', source: 'default' },
+          { actor: 'operator', tool: 'job_dispatch', tier: 'AUTO', source: 'matrix' },
+          { actor: 'cc',       tool: 'job_dispatch', tier: 'CONFIRM', source: 'default' },
         ],
         disabledCount: 0,
         toolCount: 1,
@@ -252,7 +272,7 @@ describe('Topology page — unit', () => {
       },
     }));
     expect(html).toContain('id="topo-permissions-data"');
-    expect(html).toContain('"worker_spawn"');
+    expect(html).toContain('"job_dispatch"');
     expect(html).toContain('"operator"');
   });
 
@@ -264,7 +284,6 @@ describe('Topology page — unit', () => {
     expect(html).toContain('data-role="tpi-corr"');
     expect(html).toContain('data-role="tpi-payload"');
     expect(html).toContain('data-role="tpi-eventlog"');
-    // v0.7 passkey placeholder is the canonical copy from the dispatch.
     expect(html).toContain('v0.7 will add operator passkey signature');
     expect(html).toContain('View in event log');
   });
@@ -273,7 +292,6 @@ describe('Topology page — unit', () => {
     const html = renderTopologyPage(snapshot());
     expect(html).toContain('data-role="topo-particles"');
     expect(html).toContain('.tp-dot');
-    // Icon SVG strings for the five classes are inlined in the JS.
     expect(html).toContain('"operator":');
     expect(html).toContain('"cc":');
     expect(html).toContain('"cowork":');
@@ -295,7 +313,6 @@ describe('Topology page — unit', () => {
     expect(html).toContain('data-actor-class="cc"');
     expect(html).toContain('data-actor-class="cowork"');
     expect(html).toContain('class="gnode actor-node"');
-    // Actor filter chip is part of the legend strip.
     expect(html).toContain('data-type="actor"');
   });
 
@@ -312,17 +329,19 @@ describe('Topology page — unit', () => {
     expect(html).toContain('Twin A');
   });
 
-  it('v0.6.10 Task 2 — Worker roster table moved to /workers; topology is pure-topology', () => {
+  it('v0.6.10 Task 2 — Job roster table moved to /jobs; topology is pure-topology', () => {
     const html = renderTopologyPage(snapshot({
-      workers: [
-        worker({ id: 'w1', name: 'alpha', status: 'running' }),
-        worker({ id: 'w2', name: 'beta',  status: 'idle' }),
+      jobs: [
+        job({ id: 'j1', name: 'alpha', lifecycle_state: 'running' }),
+        job({ id: 'j2', name: 'beta',  lifecycle_state: 'completed-clean' }),
       ],
     }));
-    // Workers still appear as constellation NODES (canvas), not as a roster table.
-    expect(html).toContain('data-id="w1"');
-    expect(html).toContain('data-id="w2"');
+    // Jobs still appear as constellation NODES (canvas), not as a roster table.
+    expect(html).toContain('data-id="j1"');
+    // Completed jobs ≤24h stay on the canvas per the recent-history window.
+    expect(html).toContain('data-id="j2"');
     // The roster table section must NOT render on Topology anymore.
+    expect(html).not.toContain('Job roster');
     expect(html).not.toContain('Worker roster');
     expect(html).not.toContain('class="topo-roster');
   });
@@ -350,13 +369,23 @@ describe('Topology page — integration', () => {
   beforeEach(async () => { h = await boot(); });
   afterEach(async () => { await h.transports.shutdown(); });
 
-  it('GET /dashboard/topology renders live workers through the shell', async () => {
-    h.store.upsertWorker(worker({ id: 'w-live', name: 'cc-feat-1', status: 'running' }));
+  it('GET /dashboard/topology renders live jobs through the shell', async () => {
+    h.store.upsertJob({
+      id: 'j-live',
+      name: 'cc-feat-1',
+      binding_kind: 'process-spawn',
+      binding_target: 'cc',
+      params_hash: 'h',
+      lifecycle_state: 'running',
+      started_at: new Date().toISOString(),
+      last_activity_at: new Date().toISOString(),
+      metadata: {},
+    });
     const r = await fetch(`${h.base}/dashboard/topology`);
     expect(r.status).toBe(200);
     const body = await r.text();
     expect(body).toContain('cc-feat-1');
-    expect(body).toContain('data-id="w-live"');
+    expect(body).toContain('data-id="j-live"');
     expect(body).toContain('data-page="topology"');
   });
 });

@@ -512,12 +512,16 @@ export class JobOrchestrator {
       at: new Date().toISOString(),
       source_agent: 'stavr-jobs',
       payload: {
-        // Legacy schema slot names — the existing dashboard chart-binding
-        // reads worker_id / worker_name / worker_type. Cutover 3c re-points
-        // the chart at job_* fields and these get renamed.
-        worker_id: rec.id,
-        worker_name: rec.name,
-        worker_type: `${rec.binding_kind}:${rec.binding_target}`,
+        // worker-dispatch Phase 3c.1 — primary slot names are job_id /
+        // job_name / binding_kind + binding_target. The dashboard chart
+        // (src/dashboard/data/host-ceiling.ts) is bound to these names
+        // in the same commit. Legacy worker_* slot names live on the
+        // dual-emit shadow (WorkerOrchestrator.shedWorker still publishes
+        // the legacy payload directly for back-compat subscribers).
+        job_id: rec.id,
+        job_name: rec.name,
+        binding_kind: rec.binding_kind,
+        binding_target: rec.binding_target,
         reason,
       },
     });

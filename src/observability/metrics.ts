@@ -15,8 +15,11 @@
 //
 // Cardinality discipline: the BOM lists `source_agent` as a label on the events
 // counter. To keep cardinality bounded we normalize source_agent into a small
-// set of recognized prefixes (worker:cc, worker:shell, worker:unity, dashboard,
-// steward, stavr-daemon, stavr-cli) plus an "other" bucket.
+// set of recognized prefixes (job:..., worker:cc, worker:shell, worker:unity,
+// dashboard, steward, stavr-daemon, stavr-cli) plus an "other" bucket. The
+// worker: prefixes survive during the dual-emit window so legacy emitters
+// keep landing in the same bucket; the new JobOrchestrator sources land
+// under the `job:` prefix.
 
 import {
   collectDefaultMetrics,
@@ -62,10 +65,10 @@ export const stavrBomState = new Gauge({
   registers: [registry],
 });
 
-export const stavrWorkersAlive = new Gauge({
-  name: 'stavr_workers_alive',
-  help: 'Workers currently running',
-  labelNames: ['type'],
+export const stavrJobsAlive = new Gauge({
+  name: 'stavr_jobs_alive',
+  help: 'Jobs currently running (worker-dispatch Phase 3c.1 — renamed from stavr_workers_alive)',
+  labelNames: ['kind'],
   registers: [registry],
 });
 
@@ -119,6 +122,7 @@ export function normalizeModelLabel(model: string): string {
 // ---- Source-agent normalization ----
 
 const KNOWN_SOURCE_PREFIXES = [
+  'job:',
   'worker:cc',
   'worker:shell',
   'worker:unity',
@@ -134,22 +138,25 @@ export function normalizeSourceAgent(raw: string | undefined): string {
   for (const prefix of KNOWN_SOURCE_PREFIXES) {
     if (raw === prefix || raw.startsWith(prefix + ':') || raw.startsWith(prefix)) {
       // Use the recognized prefix (without the per-name tail) as the label value.
-      // e.g. `worker:cc:my-task` -> `worker:cc`.
+      // e.g. `worker:cc:my-task` -> `worker:cc`. JobOrchestrator emits
+      // `job:<kind>:<target>:<name>` (src/jobs/orchestrator.ts sourceAgent());
+      // we collapse that to the single `job` label so cardinality stays bounded.
       if (prefix === 'worker:') return 'worker:other';
+      if (prefix === 'job:')    return 'job';
       return prefix;
     }
   }
   return 'other';
 }
 
-// ---- BOM / worker state tracking ----
+// ---- BOM / job state tracking ----
 //
 // We maintain small in-process maps so Gauges always reflect the latest known
 // state. This avoids needing a direct dependency on the EventStore from the
 // metrics module and keeps the tap pure event-driven.
 
 const bomState = new Map<string, string>(); // bom_id -> state
-const workerTypeById = new Map<string, string>(); // worker_id -> type
+const jobKindById = new Map<string, string>(); // job_id -> binding_kind
 
 function setBomState(bomId: string, next: string): void {
   const prev = bomState.get(bomId);
@@ -168,22 +175,27 @@ function endBomState(bomId: string): void {
   bomState.delete(bomId);
 }
 
-function workerSpawned(id: string, type: string): void {
-  if (workerTypeById.has(id)) return;
-  workerTypeById.set(id, type);
-  stavrWorkersAlive.labels(type).inc();
+function jobStarted(id: string, kind: string): void {
+  if (jobKindById.has(id)) return;
+  jobKindById.set(id, kind);
+  stavrJobsAlive.labels(kind).inc();
 }
 
-function workerTerminated(id: string): void {
-  const type = workerTypeById.get(id);
-  if (!type) return;
-  workerTypeById.delete(id);
-  stavrWorkersAlive.labels(type).dec();
+function jobTerminated(id: string): void {
+  const kind = jobKindById.get(id);
+  if (!kind) return;
+  jobKindById.delete(id);
+  stavrJobsAlive.labels(kind).dec();
 }
 
 /**
  * Called from `Broker.publish` after fanout. Bumps the events counter and,
- * for a handful of well-known kinds, keeps the BOM/worker gauges in sync.
+ * for a handful of well-known kinds, keeps the BOM/job gauges in sync.
+ *
+ * worker-dispatch Phase 3c.1 — subscribes to job_started / job_terminated
+ * directly (decoupled from the dual-emit window). The legacy worker_*
+ * shadow events still fire, but this module reads the primary `job_*`
+ * stream so the gauge source-of-truth lives with the JobOrchestrator.
  */
 export function recordBrokerEvent(stored: StoredEvent): void {
   const sa = normalizeSourceAgent(stored.source_agent);
@@ -206,15 +218,15 @@ export function recordBrokerEvent(stored: StoredEvent): void {
     case 'bom_failed':
       if (typeof payload.bom_id === 'string') endBomState(payload.bom_id);
       break;
-    case 'worker_spawned': {
+    case 'job_started': {
       const id = typeof payload.id === 'string' ? payload.id : undefined;
-      const type = typeof payload.type === 'string' ? payload.type : 'unknown';
-      if (id) workerSpawned(id, type);
+      const kind = typeof payload.binding_kind === 'string' ? payload.binding_kind : 'unknown';
+      if (id) jobStarted(id, kind);
       break;
     }
-    case 'worker_terminated': {
+    case 'job_terminated': {
       const id = typeof payload.id === 'string' ? payload.id : undefined;
-      if (id) workerTerminated(id);
+      if (id) jobTerminated(id);
       break;
     }
     default:
@@ -257,5 +269,5 @@ export function normalizeRoute(path: string): string {
  *  values; tests that need a clean registry should construct a fresh one. */
 export function _resetMetricsState(): void {
   bomState.clear();
-  workerTypeById.clear();
+  jobKindById.clear();
 }
