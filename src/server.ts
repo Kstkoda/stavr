@@ -17,6 +17,8 @@ import type { HostCeiling } from './types/host-ceiling.js';
 import { builtInSpawners, resolveAllSpawners } from './workers/spawners-registry.js';
 import { ManifestError } from './workers/mcp-workers-config.js';
 import { registerWorkerTools } from './workers/tools.js';
+import { JobOrchestrator } from './jobs/orchestrator.js';
+import { registerJobTools } from './jobs/tools.js';
 import { TrustStore } from './trust/store.js';
 import { registerTrustScopeTools } from './trust/tools.js';
 import { initTrustReporter } from './trust/reporter.js';
@@ -61,6 +63,11 @@ export interface SwitchServerHandle {
  * the other never sees).
  */
 const orchestratorsByBroker = new WeakMap<Broker, WorkerOrchestrator>();
+// worker-dispatch Phase 3b — parallel JobOrchestrator instance per broker.
+// job_* MCP tools route through this; worker_* tools continue to route
+// through WorkerOrchestrator during the deprecation window. Two tables,
+// two orchestrators, both live; 3c unifies.
+const jobOrchestratorsByBroker = new WeakMap<Broker, JobOrchestrator>();
 const trustStoresByBroker = new WeakMap<Broker, TrustStore>();
 const stewardStoresByBroker = new WeakMap<Broker, StewardStore>();
 const credentialStoresByBroker = new WeakMap<Broker, CredentialStore>();
@@ -196,6 +203,34 @@ function getOrCreateOrchestrator(broker: Broker, trustStore: TrustStore): Worker
   return orch;
 }
 
+/**
+ * worker-dispatch Phase 3b — lazy JobOrchestrator factory. Parallel to
+ * getOrCreateOrchestrator (legacy WorkerOrchestrator). The host-ceiling
+ * context is shared from `hostCeilingContextByBroker` so the daemon's
+ * single setHostCeilingContext call propagates to BOTH orchestrators.
+ *
+ * No binding registrations happen here — the binding-target catalogue
+ * (cc / shell / mcp-server endpoints / etc.) is operator-configured in 3c
+ * when the spawner-mcp consumer migration lands. For 3b, a freshly-spawned
+ * JobOrchestrator has zero bindings; `job_dispatch` calls return
+ * `unknown_binding` until the catalogue is wired. This is the documented
+ * 3b shape; the job_* surface exists so callers + tests can exercise the
+ * tier classification + parity contracts without binding work blocking 3b.
+ */
+function getOrCreateJobOrchestrator(broker: Broker): JobOrchestrator {
+  const existing = jobOrchestratorsByBroker.get(broker);
+  if (existing) return existing;
+  const ceilingCtx = hostCeilingContextByBroker.get(broker);
+  const orch = new JobOrchestrator({
+    broker,
+    store: broker.store,
+    ceiling: ceilingCtx?.ceiling,
+    headroomMonitor: ceilingCtx?.monitor,
+  });
+  jobOrchestratorsByBroker.set(broker, orch);
+  return orch;
+}
+
 export function getOrCreateTrustStore(broker: Broker): TrustStore {
   const existing = trustStoresByBroker.get(broker);
   if (existing) return existing;
@@ -243,6 +278,9 @@ export function setHostCeilingContext(
   hostCeilingContextByBroker.set(broker, ctx);
   const orch = orchestratorsByBroker.get(broker);
   if (orch) orch.setHostCeilingContext(ctx);
+  // Phase 3b — propagate to the parallel JobOrchestrator if it exists.
+  const jobOrch = jobOrchestratorsByBroker.get(broker);
+  if (jobOrch) jobOrch.setHostCeilingContext(ctx);
 }
 
 export function getHostCeilingContext(
@@ -416,6 +454,12 @@ export function createSwitchServer(broker: Broker): SwitchServerHandle {
   registerGithubTools(server);
   registerGithubWriteTools(server, broker, { trustStore });
   registerWorkerTools(server, orchestrator);
+  // Phase 3b — primary job_* MCP surface alongside the legacy worker_*
+  // surface. Both live during the deprecation window; tier classification
+  // is parity-tied via WORKER_TO_JOB_TOOL_ID_ALIAS so operator grants
+  // referencing legacy IDs keep working.
+  const jobOrchestrator = getOrCreateJobOrchestrator(broker);
+  registerJobTools(server, jobOrchestrator);
   registerTrustScopeTools(server, broker, trustStore);
   registerHostExecTool(server, broker, { trustStore });
   registerStewardTools(server, broker, stewardStore, trustStore);

@@ -67,6 +67,15 @@ export const BUILT_IN_POLICIES: Record<PolicyPresetId, PolicyPreset> = {
       worker_spawn: 'CONFIRM',
       worker_dispatch: 'CONFIRM',
       worker_terminate: 'CONFIRM',
+      // worker-dispatch Phase 3b — job_* parity mirrors worker_* in every
+      // preset so applying a policy writes consistent rows for both wire
+      // names. See WORKER_TO_JOB_TOOL_ID_ALIAS in tools/categories.ts.
+      job_list: 'AUTO',
+      job_list_bindings: 'AUTO',
+      job_status: 'AUTO',
+      job_dispatch: 'CONFIRM',
+      job_inject: 'CONFIRM',
+      job_terminate: 'CONFIRM',
       propose_plan: 'CONFIRM',
       // dangerous — EXPLICIT
       host_exec: 'EXPLICIT',
@@ -91,6 +100,13 @@ export const BUILT_IN_POLICIES: Record<PolicyPresetId, PolicyPreset> = {
       worker_spawn: 'AUTO',
       worker_dispatch: 'CONFIRM',
       worker_terminate: 'CONFIRM',
+      // Phase 3b parity — see 'tight' for the rationale.
+      job_list: 'AUTO',
+      job_list_bindings: 'AUTO',
+      job_status: 'AUTO',
+      job_dispatch: 'AUTO',
+      job_inject: 'CONFIRM',
+      job_terminate: 'CONFIRM',
       propose_plan: 'AUTO',
       // host_exec NEVER drops below EXPLICIT — arbitrary shell deserves
       // friction even when the operator has signed off on the actor
@@ -116,6 +132,13 @@ export const BUILT_IN_POLICIES: Record<PolicyPresetId, PolicyPreset> = {
       worker_spawn: 'NO_GO',
       worker_dispatch: 'NO_GO',
       worker_terminate: 'CONFIRM',
+      // Phase 3b parity — see 'tight'.
+      job_list: 'AUTO',
+      job_list_bindings: 'AUTO',
+      job_status: 'AUTO',
+      job_dispatch: 'NO_GO',
+      job_inject: 'NO_GO',
+      job_terminate: 'CONFIRM',
       propose_plan: 'CONFIRM',
       host_exec: 'NO_GO',
     },

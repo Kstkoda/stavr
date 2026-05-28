@@ -58,6 +58,33 @@ describe('v0.6.9 P6 — named policy presets', () => {
     expect(r.worker_terminate).toBe('CONFIRM');
   });
 
+  // worker-dispatch Phase 3b — every preset MUST carry job_* parity entries
+  // for each worker_* tier choice so applying a policy writes consistent
+  // rows for both wire names. Otherwise an operator clicking 'review-only'
+  // gets worker_spawn=NO_GO but job_dispatch silently falls back to the
+  // baseline CONFIRM tier.
+  describe('Phase 3b — worker_* / job_* preset parity', () => {
+    const PAIRS: Array<[keyof typeof BUILT_IN_POLICIES.tight.tiers, keyof typeof BUILT_IN_POLICIES.tight.tiers]> = [
+      ['worker_list_types', 'job_list_bindings'],
+      ['worker_list', 'job_list'],
+      ['worker_status', 'job_status'],
+      ['worker_spawn', 'job_dispatch'],
+      ['worker_dispatch', 'job_inject'],
+      ['worker_terminate', 'job_terminate'],
+    ];
+
+    for (const presetId of POLICY_PRESET_IDS) {
+      describe(`${presetId} preset`, () => {
+        for (const [legacy, canonical] of PAIRS) {
+          it(`${legacy} ≡ ${canonical}`, () => {
+            const tiers = BUILT_IN_POLICIES[presetId].tiers as Record<string, string>;
+            expect(tiers[canonical]).toBe(tiers[legacy]);
+          });
+        }
+      });
+    }
+  });
+
   it('listPolicyPresets returns all three in stable order', () => {
     const presets = listPolicyPresets();
     expect(presets.map((p) => p.id)).toEqual(['tight', 'developer', 'review-only']);

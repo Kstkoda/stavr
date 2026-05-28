@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   TIERS,
+  WORKER_TO_JOB_TOOL_ID_ALIAS,
+  aliasCounterpartFor,
   categorize,
   defaultTierFor,
   reversibilityFor,
@@ -21,6 +23,17 @@ describe('tool categories', () => {
     expect(categorize('steward_quiet')).toBe('steward');
     expect(categorize('credential_revoke_all')).toBe('credentials');
     expect(categorize('trust_scope_grant')).toBe('scope');
+  });
+
+  // worker-dispatch Phase 3b — job_* prefix routes to the same 'worker'
+  // bucket as the legacy worker_* prefix so the dashboard filter chip + the
+  // permissions matrix list both wire names together. 3c renames the
+  // bucket when the bespoke subsystem is deleted.
+  it('routes job_* prefix to the worker category (3b parity)', () => {
+    expect(categorize('job_dispatch')).toBe('worker');
+    expect(categorize('job_status')).toBe('worker');
+    expect(categorize('job_inject')).toBe('worker');
+    expect(categorize('job.terminate')).toBe('worker');
   });
 
   // v0.6 Task 4 Phase B — github.create_pr, worker.spawn etc. use the
@@ -80,6 +93,41 @@ describe('default tier policy', () => {
       const t = defaultTierFor(id);
       expect(TIERS).toContain(t);
     }
+  });
+
+  // worker-dispatch Phase 3b — the parity contract: every legacy /
+  // canonical pair MUST resolve to the same default tier so operator-
+  // authored grants don't silently change tier when a caller migrates.
+  describe('worker_* / job_* tier parity (Phase 3b)', () => {
+    for (const [legacy, canonical] of Object.entries(WORKER_TO_JOB_TOOL_ID_ALIAS)) {
+      it(`${legacy} ≡ ${canonical}`, () => {
+        expect(defaultTierFor(legacy)).toBe(defaultTierFor(canonical));
+        expect(reversibilityFor(legacy)).toBe(reversibilityFor(canonical));
+      });
+    }
+  });
+});
+
+describe('alias counterpart lookup (Phase 3b)', () => {
+  it('returns the new name for a legacy tool id', () => {
+    expect(aliasCounterpartFor('worker_spawn')).toBe('job_dispatch');
+    expect(aliasCounterpartFor('worker_dispatch')).toBe('job_inject');
+    expect(aliasCounterpartFor('worker_terminate')).toBe('job_terminate');
+  });
+
+  it('returns the legacy name for a canonical tool id (bi-directional)', () => {
+    expect(aliasCounterpartFor('job_dispatch')).toBe('worker_spawn');
+    expect(aliasCounterpartFor('job_inject')).toBe('worker_dispatch');
+    expect(aliasCounterpartFor('job_terminate')).toBe('worker_terminate');
+    expect(aliasCounterpartFor('job_list')).toBe('worker_list');
+    expect(aliasCounterpartFor('job_list_bindings')).toBe('worker_list_types');
+    expect(aliasCounterpartFor('job_status')).toBe('worker_status');
+  });
+
+  it('returns undefined for tools outside the rename pair table', () => {
+    expect(aliasCounterpartFor('host_exec')).toBeUndefined();
+    expect(aliasCounterpartFor('emit_event')).toBeUndefined();
+    expect(aliasCounterpartFor('worker_blah_unknown')).toBeUndefined();
   });
 });
 

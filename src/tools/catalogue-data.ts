@@ -25,6 +25,15 @@ export interface ToolDefinition {
   sideEffects: string[];
   errorModes: string[];
   seeAlso: string[];
+  /**
+   * worker-dispatch Phase 3b — when set, this tool is deprecated and the
+   * named tool ID is the canonical replacement. The catalog page shows a
+   * deprecation badge and an "alias of: X" link. The two surfaces have
+   * identical security tier classification (see WORKER_TO_JOB_TOOL_ID_ALIAS
+   * in src/tools/categories.ts) so operator grants don't break across
+   * the rename.
+   */
+  deprecatedAliasOf?: string;
 }
 
 const CorrelationId = z.string().optional();
@@ -752,13 +761,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 
   // ─── Worker orchestration ────────────────────────────────────────────────
+  // worker-dispatch Phase 3b — the six worker_* entries are deprecated
+  // aliases. The canonical job_* entries follow this block. Both surfaces
+  // are live during the deprecation window (1 release per
+  // DEPRECATION_WINDOW_RELEASES); tier classification is parity-tied via
+  // WORKER_TO_JOB_TOOL_ID_ALIAS in src/tools/categories.ts.
   {
     name: 'worker_list_types',
     tier: 'auto',
     category: 'worker',
     since: '0.1.0',
     stability: 'stable',
-    description: 'List registered worker types and their spawn parameter schemas. Auto-tier.',
+    deprecatedAliasOf: 'job_list_bindings',
+    description:
+      'DEPRECATED — use job_list_bindings. List registered worker types and their spawn parameter schemas. Auto-tier.',
     inputSchema: z.object({}),
     outputSchema: z.object({
       types: z.array(
@@ -781,8 +797,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     category: 'worker',
     since: '0.1.0',
     stability: 'stable',
+    deprecatedAliasOf: 'job_dispatch',
     description:
-      'Spawn a worker of the given type. Tier comes from the spawner; confirm-tier spawners gate on await_decision. Built-in spawners (`cc`, `shell`) are CONFIRM tier.',
+      'DEPRECATED — use job_dispatch. Spawn a worker of the given type. Tier comes from the spawner; confirm-tier spawners gate on await_decision. Built-in spawners (`cc`, `shell`) are CONFIRM tier.',
     inputSchema: z.object({
       type: z.string().min(1),
       name: z.string().min(1).max(128),
@@ -814,7 +831,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     category: 'worker',
     since: '0.1.0',
     stability: 'stable',
-    description: 'List workers, optionally filtered by type or status. Auto-tier.',
+    deprecatedAliasOf: 'job_list',
+    description:
+      'DEPRECATED — use job_list. List workers, optionally filtered by type or status. Auto-tier.',
     inputSchema: z.object({
       type: z.string().optional(),
       status: z.enum(['starting', 'running', 'idle', 'terminated', 'crashed']).optional(),
@@ -830,7 +849,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     category: 'worker',
     since: '0.1.0',
     stability: 'stable',
-    description: 'Full state of a single worker by id or name. Auto-tier.',
+    deprecatedAliasOf: 'job_status',
+    description:
+      'DEPRECATED — use job_status. Full state of a single worker by id or name. Auto-tier.',
     inputSchema: z.object({ id_or_name: z.string().min(1) }),
     outputSchema: z.object({ worker: SerializedWorker.nullable() }),
     sideEffects: ['read-only'],
@@ -843,8 +864,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     category: 'worker',
     since: '0.1.0',
     stability: 'stable',
+    deprecatedAliasOf: 'job_inject',
     description:
-      'Deliver an instruction to a running worker. Per-spawner tier — some spawners refuse dispatch entirely.',
+      'DEPRECATED — use job_inject. Deliver an instruction to a running worker. Per-spawner tier — some spawners refuse dispatch entirely.',
     inputSchema: z.object({
       id_or_name: z.string().min(1),
       body: z.union([z.record(z.unknown()), z.string(), z.unknown()]),
@@ -866,7 +888,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     category: 'worker',
     since: '0.1.0',
     stability: 'stable',
-    description: 'Terminate a worker. Always confirm-tier.',
+    deprecatedAliasOf: 'job_terminate',
+    description:
+      'DEPRECATED — use job_terminate. Terminate a worker. Always confirm-tier.',
     inputSchema: z.object({
       id_or_name: z.string().min(1),
       force: z.boolean().optional().default(false),
@@ -882,6 +906,159 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     ],
     errorModes: ['unknown worker → `unknown_worker`'],
     seeAlso: ['worker_status'],
+  },
+
+  // ─── Jobs (worker-dispatch BOM, Phase 3b primary surface) ────────────────
+  {
+    name: 'job_list_bindings',
+    tier: 'auto',
+    category: 'worker',
+    since: '0.7.0',
+    stability: 'beta',
+    description:
+      'List registered executor bindings (kind + target) and their dispatch parameter schemas. Auto-tier.',
+    inputSchema: z.object({}),
+    outputSchema: z.object({
+      bindings: z.array(
+        z.object({
+          kind: z.enum(['mcp-call', 'http', 'process-spawn', 'cc-session-attach']),
+          target: z.string(),
+          displayName: z.string(),
+          description: z.string(),
+          capabilities: z.object({ inject: z.boolean() }),
+          paramsSchema: z.unknown(),
+        }),
+      ),
+    }),
+    sideEffects: ['read-only catalogue lookup'],
+    errorModes: ['none'],
+    seeAlso: ['job_dispatch', 'worker_list_types'],
+  },
+  {
+    name: 'job_dispatch',
+    tier: 'confirm',
+    category: 'worker',
+    since: '0.7.0',
+    stability: 'beta',
+    description:
+      'Dispatch a new job under the given binding + target. Confirm-tier. Admission control runs first (per-actor concurrency + host ceiling).',
+    inputSchema: z.object({
+      binding_kind: z.enum(['mcp-call', 'http', 'process-spawn', 'cc-session-attach']),
+      binding_target: z.string().min(1),
+      name: z.string().min(1).max(128),
+      params: z.union([z.record(z.unknown()), z.string()]),
+      budget: z
+        .object({
+          max_runtime_ms: z.number().int().positive().optional(),
+          max_steps: z.number().int().positive().optional(),
+          credit_pool: z.string().optional(),
+        })
+        .optional(),
+      audit_correlation_id: z.string().optional(),
+      federation_role: z.enum(['originator', 'participant', 'convener']).optional(),
+      originator_peer: z.string().optional(),
+      grant_id: z.string().optional(),
+    }),
+    outputSchema: z.object({ job: z.record(z.unknown()) }),
+    sideEffects: [
+      'admission control runs first (budget + per-actor + host ceiling)',
+      'inserts a JobRecord in `dispatched` state, transitions to `running`',
+      'emits `job_dispatched` then `job_started` (each shadowed by legacy worker_* via dual-emit)',
+    ],
+    errorModes: [
+      'unknown binding → OrchestratorError(code=`unknown_binding`)',
+      'duplicate name → OrchestratorError(code=`name_in_use`)',
+      'admission refusal → OrchestratorError(code=`headroom_exceeded`|`concurrent_jobs_per_actor_exceeded`|`invalid_budget`|`budget_exceeds_ceiling`)',
+    ],
+    seeAlso: ['job_list_bindings', 'job_status', 'job_terminate', 'worker_spawn'],
+  },
+  {
+    name: 'job_list',
+    tier: 'auto',
+    category: 'worker',
+    since: '0.7.0',
+    stability: 'beta',
+    description: 'List jobs, optionally filtered by binding_kind or lifecycle_state. Auto-tier.',
+    inputSchema: z.object({
+      binding_kind: z
+        .enum(['mcp-call', 'http', 'process-spawn', 'cc-session-attach'])
+        .optional(),
+      lifecycle_state: z
+        .enum([
+          'dispatched',
+          'running',
+          'completed-clean',
+          'completed-error',
+          'killed-by-operator',
+          'killed-by-system',
+          'crashed',
+          'stale',
+        ])
+        .optional(),
+    }),
+    outputSchema: z.object({ jobs: z.array(z.record(z.unknown())) }),
+    sideEffects: ['read-only orchestrator query'],
+    errorModes: ['none'],
+    seeAlso: ['job_status', 'worker_list'],
+  },
+  {
+    name: 'job_status',
+    tier: 'auto',
+    category: 'worker',
+    since: '0.7.0',
+    stability: 'beta',
+    description: 'Full state of a single job by id or name. Auto-tier.',
+    inputSchema: z.object({ id_or_name: z.string().min(1) }),
+    outputSchema: z.object({ job: z.record(z.unknown()).nullable() }),
+    sideEffects: ['read-only'],
+    errorModes: ['none — unknown id_or_name returns `{ job: null }`'],
+    seeAlso: ['job_list', 'worker_status'],
+  },
+  {
+    name: 'job_inject',
+    tier: 'confirm',
+    category: 'worker',
+    since: '0.7.0',
+    stability: 'beta',
+    description:
+      'Inject a mid-flight message into a running job. Confirm-tier. The binding must advertise the `inject` capability (see job_list_bindings).',
+    inputSchema: z.object({
+      id_or_name: z.string().min(1),
+      body: z.union([z.record(z.unknown()), z.string(), z.unknown()]),
+    }),
+    outputSchema: z.object({ message_id: z.string() }),
+    sideEffects: [
+      'routes the message via the binding handle',
+      'effect on the job is binding-specific',
+    ],
+    errorModes: [
+      'unknown job → `not_found`',
+      'job not active → `job_inactive`',
+      'binding does not advertise inject → `inject_not_supported`',
+    ],
+    seeAlso: ['job_dispatch', 'job_terminate', 'worker_dispatch'],
+  },
+  {
+    name: 'job_terminate',
+    tier: 'confirm',
+    category: 'worker',
+    since: '0.7.0',
+    stability: 'beta',
+    description: 'Terminate a job. Always confirm-tier.',
+    inputSchema: z.object({
+      id_or_name: z.string().min(1),
+      force: z.boolean().optional().default(false),
+    }),
+    outputSchema: z.object({
+      ok: z.literal(true),
+      exit_code: z.number().int().optional(),
+    }),
+    sideEffects: [
+      'sends terminate(force) through the binding handle',
+      'emits `job_terminated` (shadowed by legacy `worker_terminated` via dual-emit)',
+    ],
+    errorModes: ['unknown job → `not_found`'],
+    seeAlso: ['job_status', 'worker_terminate'],
   },
 
   // ─── Trust scopes ────────────────────────────────────────────────────────

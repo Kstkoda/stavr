@@ -77,7 +77,11 @@ const EXPLICIT_CATEGORY: Record<string, ToolCategory> = {
  */
 const PREFIX_CATEGORY: Array<[ReadonlyArray<string>, ToolCategory]> = [
   [['trust_scope_', 'trust_scope.'], 'scope'],
-  [['worker_', 'worker.'], 'worker'],
+  // worker-dispatch Phase 3b — job_* tools share the 'worker' category with
+  // their legacy worker_* counterparts. 3c renames the category itself when
+  // the bespoke worker subsystem is deleted; for now both prefixes route here
+  // so the dashboard filter chip + permissions matrix list the pair together.
+  [['worker_', 'worker.', 'job_', 'job.'], 'worker'],
   [['github_', 'github.'], 'github'],
   [['steward_', 'steward.'], 'steward'],
   [['credential_', 'credential.'], 'credentials'],
@@ -123,12 +127,76 @@ const EXPLICIT_TIER: Record<string, Tier> = {
   worker_spawn: 'CONFIRM',
   worker_dispatch: 'CONFIRM',
   worker_terminate: 'CONFIRM',
+  // worker-dispatch Phase 3b — job_* tier mirrors its worker_* counterpart
+  // (parity is the contract: operator grants in actor_permissions that name
+  // worker_* IDs must resolve identically when they migrate to job_*).
+  // The pairing per recon §3:
+  //   job_list_bindings  ≡ worker_list_types
+  //   job_list           ≡ worker_list
+  //   job_status         ≡ worker_status
+  //   job_dispatch       ≡ worker_spawn        (start a new run)
+  //   job_inject         ≡ worker_dispatch     (mid-flight injection)
+  //   job_terminate      ≡ worker_terminate
+  job_list_bindings: 'AUTO',
+  job_list: 'AUTO',
+  job_status: 'AUTO',
+  job_dispatch: 'CONFIRM',
+  job_inject: 'CONFIRM',
+  job_terminate: 'CONFIRM',
   // Shell / credentials
   host_exec: 'EXPLICIT',
   propose_plan: 'CONFIRM',
   await_decision: 'AUTO',
   respond_to_decision: 'AUTO',
 };
+
+/**
+ * Phase 3b parity table — legacy worker_* IDs ↔ canonical job_* IDs.
+ *
+ * Operator-authored grants in actor_permissions reference tool IDs by
+ * string. During the deprecation window both names must resolve to the
+ * same tier so existing grants don't silently break when callers migrate
+ * one tool at a time. The constant is exported so the runtime gate can
+ * also use it to translate when looking up actor-specific overrides on
+ * one name but the call comes in on the other.
+ *
+ * Map shape: legacy → canonical.
+ */
+export const WORKER_TO_JOB_TOOL_ID_ALIAS: Readonly<Record<string, string>> = {
+  worker_list_types: 'job_list_bindings',
+  worker_list: 'job_list',
+  worker_status: 'job_status',
+  worker_spawn: 'job_dispatch',
+  worker_dispatch: 'job_inject',
+  worker_terminate: 'job_terminate',
+};
+
+/**
+ * The reverse alias table — built once at module load so the actor-permissions
+ * resolver and the deprecation-log helper can look up parity in either
+ * direction without re-computing.
+ */
+export const JOB_TO_WORKER_TOOL_ID_ALIAS: Readonly<Record<string, string>> =
+  Object.freeze(
+    Object.fromEntries(
+      Object.entries(WORKER_TO_JOB_TOOL_ID_ALIAS).map(([w, j]) => [j, w]),
+    ),
+  );
+
+/**
+ * Return the alias counterpart for a tool id (either direction), or
+ * undefined when the id has no counterpart in the rename pair table.
+ * Bi-directional: 'worker_spawn' → 'job_dispatch'; 'job_dispatch' →
+ * 'worker_spawn'.
+ *
+ * Used at the actor-permissions resolver (security/actor-permissions.ts)
+ * so an operator-written matrix row for one name applies to the other
+ * during the deprecation window — otherwise a stale grant for worker_spawn
+ * would silently NOT apply when a caller migrates to job_dispatch.
+ */
+export function aliasCounterpartFor(toolId: string): string | undefined {
+  return WORKER_TO_JOB_TOOL_ID_ALIAS[toolId] ?? JOB_TO_WORKER_TOOL_ID_ALIAS[toolId];
+}
 
 /**
  * Look up the default tier for a tool, falling back to category-based
@@ -186,6 +254,13 @@ const EXPLICIT_REVERSIBILITY: Record<string, 'reversible' | 'irreversible'> = {
   worker_spawn: 'irreversible',
   worker_dispatch: 'irreversible',
   worker_terminate: 'irreversible',
+  // Phase 3b parity — see WORKER_TO_JOB_TOOL_ID_ALIAS above.
+  job_list_bindings: 'reversible',
+  job_list: 'reversible',
+  job_status: 'reversible',
+  job_dispatch: 'irreversible',
+  job_inject: 'irreversible',
+  job_terminate: 'irreversible',
   host_exec: 'irreversible',
 };
 

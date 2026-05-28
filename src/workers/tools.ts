@@ -2,6 +2,16 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { toolError, toolJson } from '../server.js';
 import { OrchestratorError, type WorkerOrchestrator } from './orchestrator.js';
+import { logToolDeprecation } from '../jobs/deprecation-log.js';
+
+/**
+ * worker-dispatch Phase 3b — every legacy worker_* MCP tool emits a
+ * deprecation log line per call naming its job_* replacement. The legacy
+ * tools still route to WorkerOrchestrator (workers table) so a caller
+ * doing worker_spawn → worker_dispatch stays internally consistent
+ * during the deprecation window. Handler unification is 3c scope
+ * (operator decision; see WORKER_TO_JOB_TOOL_ID_ALIAS in tools/categories.ts).
+ */
 
 export function registerWorkerTools(server: McpServer, orch: WorkerOrchestrator): void {
   registerWorkerListTypes(server, orch);
@@ -16,10 +26,14 @@ function registerWorkerListTypes(server: McpServer, orch: WorkerOrchestrator): v
   server.registerTool(
     'worker_list_types',
     {
-      description: 'List registered worker types and their spawn parameter schemas. Auto-tier.',
+      description:
+        'DEPRECATED — use job_list_bindings. List registered worker types and their spawn parameter schemas. Auto-tier.',
       inputSchema: {},
     },
-    async () => toolJson({ types: orch.listTypes() }),
+    async () => {
+      logToolDeprecation('worker_list_types');
+      return toolJson({ types: orch.listTypes() });
+    },
   );
 }
 
@@ -28,7 +42,7 @@ function registerWorkerSpawn(server: McpServer, orch: WorkerOrchestrator): void 
     'worker_spawn',
     {
       description:
-        'Spawn a worker of the given type. Tier comes from the spawner; confirm-tier spawners gate on await_decision.',
+        'DEPRECATED — use job_dispatch. Spawn a worker of the given type. Tier comes from the spawner; confirm-tier spawners gate on await_decision.',
       inputSchema: {
         type: z.string().min(1),
         name: z.string().min(1).max(128),
@@ -36,6 +50,7 @@ function registerWorkerSpawn(server: McpServer, orch: WorkerOrchestrator): void 
       },
     },
     async (args) => {
+      logToolDeprecation('worker_spawn');
       try {
         const params = normalizeUnknownArg(args.params, 'params');
         const result = await orch.spawn(args.type, args.name, params);
@@ -67,13 +82,15 @@ function registerWorkerList(server: McpServer, orch: WorkerOrchestrator): void {
   server.registerTool(
     'worker_list',
     {
-      description: 'List workers, optionally filtered by type or status. Auto-tier.',
+      description:
+        'DEPRECATED — use job_list. List workers, optionally filtered by type or status. Auto-tier.',
       inputSchema: {
         type: z.string().optional(),
         status: z.enum(['starting', 'running', 'idle', 'terminated', 'crashed']).optional(),
       },
     },
     async (args) => {
+      logToolDeprecation('worker_list');
       const workers = orch.list({ type: args.type, status: args.status });
       return toolJson({ workers: workers.map(serializeWorker) });
     },
@@ -84,12 +101,14 @@ function registerWorkerStatus(server: McpServer, orch: WorkerOrchestrator): void
   server.registerTool(
     'worker_status',
     {
-      description: 'Full state of a single worker by id or name. Auto-tier.',
+      description:
+        'DEPRECATED — use job_status. Full state of a single worker by id or name. Auto-tier.',
       inputSchema: {
         id_or_name: z.string().min(1),
       },
     },
     async (args) => {
+      logToolDeprecation('worker_status');
       const rec = orch.status(args.id_or_name);
       if (!rec) return toolJson({ worker: null });
       return toolJson({ worker: serializeWorker(rec) });
@@ -101,13 +120,15 @@ function registerWorkerDispatch(server: McpServer, orch: WorkerOrchestrator): vo
   server.registerTool(
     'worker_dispatch',
     {
-      description: 'Deliver an instruction to a running worker. Per-spawner tier.',
+      description:
+        'DEPRECATED — use job_inject. Deliver an instruction to a running worker. Per-spawner tier.',
       inputSchema: {
         id_or_name: z.string().min(1),
         body: z.unknown(),
       },
     },
     async (args) => {
+      logToolDeprecation('worker_dispatch');
       try {
         const body = normalizeUnknownArg(args.body, 'body');
         const result = await orch.dispatch(args.id_or_name, body);
@@ -123,13 +144,15 @@ function registerWorkerTerminate(server: McpServer, orch: WorkerOrchestrator): v
   server.registerTool(
     'worker_terminate',
     {
-      description: 'Terminate a worker. Always confirm-tier.',
+      description:
+        'DEPRECATED — use job_terminate. Terminate a worker. Always confirm-tier.',
       inputSchema: {
         id_or_name: z.string().min(1),
         force: z.boolean().optional().default(false),
       },
     },
     async (args) => {
+      logToolDeprecation('worker_terminate');
       try {
         const result = await orch.terminate(args.id_or_name, args.force);
         return toolJson({ ok: true, exit_code: result.exitCode });
