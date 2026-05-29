@@ -140,7 +140,46 @@ the same `correlation_id` (the decision id).
 
 ---
 
-## Worker orchestration (spec 42)
+## Job orchestration (worker-dispatch BOM)
+
+The substrate name for "work stavR runs" is **job** now (the bespoke
+worker subsystem was retired in worker-dispatch Phase 3c.2). Primary
+event kinds are the `job_*` family below; the legacy `worker_*` kinds
+still fire via the **dual-emit translator**
+([`src/jobs/dual-emit.ts`](../src/jobs/dual-emit.ts)) for one
+deprecation-release window so existing subscribers (`stavr tail --kind
+worker_*`, notify channels keyed on `worker_terminated`, the Rust
+governor's event router) keep working.
+
+| Primary (job_*) | Legacy shadow (worker_*) | Notes |
+|---|---|---|
+| `job_dispatched` | (none — pre-running) | New: row inserted in `dispatched` state. |
+| `job_started` | `worker_spawned` | Synthesized `type = ${binding_kind}:${binding_target}`. |
+| `job_progress` | `worker_progress` | Legacy drops the `payload` slot. |
+| `job_metadata_changed` | `worker_metadata_changed` | Verbatim translation. |
+| `job_heartbeat` | `worker_activity` | Verbatim. |
+| `job_log` | `worker_log` | `job_id`/`job_name` → `worker_id`/`worker_name`. |
+| `job_error` | `worker_error` | Verbatim. |
+| `job_terminated` | `worker_terminated` | Lossy: `budget_exceeded` + `shed_by_host` → `terminated_by_user`. |
+| `job_stuck` | `worker_stuck` | Verbatim with synthesized `worker_type`. |
+
+`host_ceiling_refused` and `host_ceiling_shed` are emitted without a
+parallel name (already neutral). The `job_*` payload of
+`host_ceiling_shed` (since 3c.1) carries `job_id` / `job_name` /
+`binding_kind` / `binding_target` slot names; the legacy
+`WorkerOrchestrator.shedWorker` path was deleted in 3c.2 so the legacy
+`worker_id`/`worker_name`/`worker_type` slots are no longer emitted.
+
+---
+
+## Worker orchestration (legacy — dual-emit window)
+
+> **worker-dispatch Phase 3c.2 note:** these `worker_*` event kinds are
+> **legacy names** still emitted as dual-emit shadows of the canonical
+> `job_*` kinds (see the table above). They will be dropped in a future
+> release once subscribers have migrated; the schemas below document
+> the wire shape during the deprecation window so existing consumers
+> can continue working unmodified.
 
 All worker events carry the worker `id` in their payload. `correlation_id` is
 typically the spawning gated-decision id (when the spawner is CONFIRM tier).
@@ -172,7 +211,7 @@ typically the spawning gated-decision id (when the spawner is CONFIRM tier).
 
 ### `worker_dispatch_request`
 
-- **Fires when:** Another agent calls `worker_dispatch` to send an instruction.
+- **Fires when:** Another agent calls the legacy `worker_dispatch` MCP tool to send an instruction. After Phase 3c.2 this event flows only via dual-emit when an operator hits the new `job_inject` MCP tool (the legacy `worker_dispatch` tool registration is gone).
 - **Payload:** `target_worker_id`, `message_id`, `body`.
 - **Carries correlation_id?** Optional — set by the dispatching caller.
 
@@ -282,10 +321,13 @@ This mirroring is the canonical CC↔Switch event contract: any future stream
 format CC introduces should land here under a different `payload.format` value,
 not by inventing parallel kinds.
 
-### `worker_log` (reserved)
+### `worker_log` (legacy — dual-emit shadow)
 
-- **Status:** reserved — schema documented; emit-site lives in
-  `src/workers/cc.ts` and ships in Wave C.
+- **Status:** still emitted as the dual-emit shadow of `job_log`. The
+  original emit-site (legacy CC worker spawner at `src/workers/cc.ts`)
+  was deleted in worker-dispatch Phase 3c.2; the JobOrchestrator emits
+  `job_log` (primary) and the dual-emit translator publishes the
+  legacy `worker_log` parallel.
 - **Payload:** see above. `format` is currently always `'stream-json'`.
 - **Carries correlation_id?** Yes — the worker spawn correlation id.
 - **Typical subscribers:** dashboards that render CC turns,

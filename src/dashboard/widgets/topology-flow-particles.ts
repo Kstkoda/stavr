@@ -169,9 +169,11 @@ export const TOPOLOGY_FLOW_PARTICLES_JS = `
     return canvas.querySelector('.gnode[data-type="actor"][data-actor-class="' + cls + '"]');
   }
   function findTargetNode(evt) {
-    // Worker events go to the worker node; tool calls go to the matching
-    // MCP-category node; everything else lands on the core.
-    const pid = (evt.payload && (evt.payload.id || evt.payload.worker_id)) || evt.correlation_id;
+    // Job events go to the job (worker-typed) node; tool calls go to the
+    // matching MCP-category node; everything else lands on the core.
+    // payload.job_id is the new job_log slot; payload.worker_id still
+    // populated by dual-emit during the deprecation window.
+    const pid = (evt.payload && (evt.payload.id || evt.payload.job_id || evt.payload.worker_id)) || evt.correlation_id;
     if (pid) {
       const w = canvas.querySelector('.gnode[data-id="' + cssEscape(String(pid)) + '"]');
       if (w) return w;

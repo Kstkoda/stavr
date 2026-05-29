@@ -164,4 +164,13 @@ describe('ActorPermissionStore', () => {
       expect(perms.resolve('steward', 'worker_spawn').source).toBe('default');
     });
   });
+
+  // worker-dispatch Phase 3c.2 — the alias-aware fallback test block was
+  // here. Deleted along with `aliasCounterpartFor` and the legacy
+  // worker_* tool registrations. The legacy tool-ID strings (`worker_spawn`
+  // etc) still appear in the tests above only as arbitrary string tokens
+  // exercising the matrix-row CRUD + default-tier resolution — they no
+  // longer correspond to any registered tool, but the matrix table accepts
+  // any tool_id string and `defaultTierFor` returns the conservative
+  // 'CONFIRM' for unknown ids via the 'other' category branch.
 });

@@ -41,22 +41,26 @@ describe('v0.6.9 P6 — named policy presets', () => {
     }
   });
 
-  it('tight downgrades worker_spawn to CONFIRM', () => {
-    expect(BUILT_IN_POLICIES.tight.tiers.worker_spawn).toBe('CONFIRM');
+  it('tight downgrades job_dispatch to CONFIRM', () => {
+    expect(BUILT_IN_POLICIES.tight.tiers.job_dispatch).toBe('CONFIRM');
   });
 
-  it('developer lifts worker_spawn to AUTO but keeps host_exec EXPLICIT', () => {
-    expect(BUILT_IN_POLICIES.developer.tiers.worker_spawn).toBe('AUTO');
+  it('developer lifts job_dispatch to AUTO but keeps host_exec EXPLICIT', () => {
+    expect(BUILT_IN_POLICIES.developer.tiers.job_dispatch).toBe('AUTO');
     expect(BUILT_IN_POLICIES.developer.tiers.host_exec).toBe('EXPLICIT');
   });
 
   it('review-only locks down mutating tools to CONFIRM or NO_GO', () => {
     const r = BUILT_IN_POLICIES['review-only'].tiers;
-    expect(r.worker_spawn).toBe('NO_GO');
-    expect(r.worker_dispatch).toBe('NO_GO');
+    expect(r.job_dispatch).toBe('NO_GO');
+    expect(r.job_inject).toBe('NO_GO');
     expect(r.host_exec).toBe('NO_GO');
-    expect(r.worker_terminate).toBe('CONFIRM');
+    expect(r.job_terminate).toBe('CONFIRM');
   });
+
+  // worker-dispatch Phase 3c.2 — the Phase 3b worker_* / job_* preset
+  // parity describe block was here. Deleted along with the worker_*
+  // preset rows themselves; job_* is now the only substrate name.
 
   it('listPolicyPresets returns all three in stable order', () => {
     const presets = listPolicyPresets();
@@ -90,7 +94,7 @@ describe('v0.6.9 P6 — applyPolicyToActor', () => {
     );
     expect(result.cellsWritten).toBeGreaterThan(0);
     expect(result.cellsWritten).toBe(Object.keys(BUILT_IN_POLICIES.tight.tiers).length);
-    expect(perms.get('cowork-claude', 'worker_spawn')?.tier).toBe('CONFIRM');
+    expect(perms.get('cowork-claude', 'job_dispatch')?.tier).toBe('CONFIRM');
     expect(perms.get('cowork-claude', 'host_exec')?.tier).toBe('EXPLICIT');
   });
 
@@ -101,36 +105,36 @@ describe('v0.6.9 P6 — applyPolicyToActor', () => {
       perms,
       'operator',
     );
-    const spawnChange = result.changes.find((c) => c.tool_id === 'worker_spawn');
-    expect(spawnChange).toBeDefined();
-    expect(spawnChange!.from_tier).toBeNull();
-    expect(spawnChange!.to_tier).toBe('AUTO');
+    const dispatchChange = result.changes.find((c) => c.tool_id === 'job_dispatch');
+    expect(dispatchChange).toBeDefined();
+    expect(dispatchChange!.from_tier).toBeNull();
+    expect(dispatchChange!.to_tier).toBe('AUTO');
   });
 
   it('returns from_tier=<prior> when the cell already had a matrix row', () => {
-    perms.set('cc', 'worker_spawn', 'EXPLICIT', 'operator');
+    perms.set('cc', 'job_dispatch', 'EXPLICIT', 'operator');
     const result = applyPolicyToActor(
       BUILT_IN_POLICIES.developer,
       'cc',
       perms,
       'operator',
     );
-    const spawnChange = result.changes.find((c) => c.tool_id === 'worker_spawn');
-    expect(spawnChange?.from_tier).toBe('EXPLICIT');
-    expect(spawnChange?.to_tier).toBe('AUTO');
-    expect(perms.get('cc', 'worker_spawn')?.tier).toBe('AUTO');
+    const dispatchChange = result.changes.find((c) => c.tool_id === 'job_dispatch');
+    expect(dispatchChange?.from_tier).toBe('EXPLICIT');
+    expect(dispatchChange?.to_tier).toBe('AUTO');
+    expect(perms.get('cc', 'job_dispatch')?.tier).toBe('AUTO');
   });
 
   it('skips no-op writes when the cell already matches the preset', () => {
-    perms.set('operator', 'worker_spawn', 'AUTO', 'operator');
+    perms.set('operator', 'job_dispatch', 'AUTO', 'operator');
     const result = applyPolicyToActor(
       BUILT_IN_POLICIES.developer,
       'operator',
       perms,
       'operator',
     );
-    const spawnChange = result.changes.find((c) => c.tool_id === 'worker_spawn');
-    expect(spawnChange).toBeUndefined();
+    const dispatchChange = result.changes.find((c) => c.tool_id === 'job_dispatch');
+    expect(dispatchChange).toBeUndefined();
   });
 
   it('does not touch tools that are not mentioned in the preset', () => {
@@ -146,14 +150,14 @@ describe('v0.6.9 P6 — applyPolicyToActor', () => {
   });
 
   it('only affects the target actor — other actors are unchanged', () => {
-    perms.set('steward', 'worker_spawn', 'EXPLICIT', 'operator');
+    perms.set('steward', 'job_dispatch', 'EXPLICIT', 'operator');
     applyPolicyToActor(
       BUILT_IN_POLICIES.tight,
       'cowork-claude',
       perms,
       'operator',
     );
-    expect(perms.get('steward', 'worker_spawn')?.tier).toBe('EXPLICIT');
-    expect(perms.get('cowork-claude', 'worker_spawn')?.tier).toBe('CONFIRM');
+    expect(perms.get('steward', 'job_dispatch')?.tier).toBe('EXPLICIT');
+    expect(perms.get('cowork-claude', 'job_dispatch')?.tier).toBe('CONFIRM');
   });
 });

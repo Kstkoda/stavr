@@ -4,52 +4,61 @@
  *
  *   L4 INTENT     — Steward composer + last-5 intent timeline
  *   L3 PLANS      — 4 BOM cards + 24h gantt strip
- *   L2 WORKERS    — 6-up worker tiles (progress + step + uptime/eta)
+ *   L2 JOBS       — 6-up job tiles (progress + step + uptime/eta)
  *   L1 TOOL CALLS — throughput histogram + top-5 tools + qps/p95/err trends
  *   L0 SYSTEMS    — 5-up system tiles (name + status + 1h sparkline)
  *
  * Visual contract: each band is .glass with a left-edge gradient in its
  * tier colour (L4 purple, L3 sky, L2 green, L1 amber, L0 ink). Status is
  * communicated by halo/dot color (ok/warn/crit); type colour is reserved
- * for L0 chips + L2 worker pills.
+ * for L0 chips + L2 job pills.
  *
- * Data: HelmData (existing shape, untouched) feeds the L4 sub line and the
- * worker + system fixtures. The 24h gantt strip and the L1 trend
- * sparklines are deterministic stubs derived from event_count — real
- * series come from /metrics, polled by the page JS.
+ * Data: HelmData feeds the L4 sub line and the job + system fixtures. The
+ * 24h gantt strip and the L1 trend sparklines are deterministic stubs
+ * derived from event_count — real series come from /metrics, polled by
+ * the page JS.
+ *
+ * worker-dispatch Phase 3c.1 — L2 WORKERS band renamed to L2 JOBS;
+ * HelmWorker/HelmWorkerCounters → HelmJob/HelmJobCounters with binding
+ * kind+target replacing the legacy `type` field.
  */
 
 import type { Bom, ProfileMode } from '../../types/stavr-bom.js';
 import type { DecisionRecord } from '../../persistence.js';
 import { renderShell } from '../shell.js';
 import { renderPill, type PillVariant } from '../components/pill.js';
+import type { JobLifecycleState } from '../../jobs/lifecycle.js';
 
-export interface HelmWorker {
+export interface HelmJob {
   id: string;
-  type: string;
+  /** Binding kind — one of the four closed kinds (mcp-call / http /
+   *  process-spawn / cc-session-attach). */
+  binding_kind: string;
+  /** Named target within the kind (e.g. 'claude-code-subprocess',
+   *  'ollama-local'). */
+  binding_target: string;
   /**
-   * Legacy chip status. Retained for backwards compatibility — every L2
-   * worker chip carries a `data-state` attribute that downstream tests
-   * key off. New code should prefer `lifecycle_state` (added per BOM
-   * v0.6.6 P3) which carries the finer-grained classification.
+   * Legacy chip status. Retained for back-compat — every L2 job chip
+   * carries a `data-state` attribute that downstream tests key off. New
+   * code should prefer `lifecycle_state` which carries the finer-grained
+   * classification.
    */
   status: 'idle' | 'running' | 'crashed' | 'cleanup';
   uptime_sec?: number;
   current_step?: string;
   /**
-   * BOM v0.6.6 — derived lifecycle bucket. When present, drives the chip
-   * label and halo color. May be undefined for legacy HelmData payloads
-   * (tests + back-compat snapshots); helm renderers fall back to status.
+   * Derived lifecycle bucket — drives the chip label and halo color.
+   * Optional only for back-compat with bare HelmData fixtures.
    */
-  lifecycle_state?: import('../../workers/lifecycle.js').LifecycleState;
+  lifecycle_state?: JobLifecycleState;
 }
 
 /**
- * BOM v0.6.6 P3 — single-source counter snapshot for the L2 WORKERS band.
- * Lifetime counts on the right hand of `0 active · N completed · X crashed`
- * style display per BOM hard rule #5.
+ * Single-source counter snapshot for the L2 JOBS band. Lifetime counts on
+ * the right hand of `0 active · N completed · X crashed` style display
+ * per BOM v0.6.6 hard rule #5.
  */
-export interface HelmWorkerCounters {
+export interface HelmJobCounters {
   active: number;
   completed: number;
   crashed: number;
@@ -93,15 +102,14 @@ export interface HelmData {
   };
   boms: { recent: Bom[]; total: number; open: number };
   decisions: { recent: DecisionRecord[]; open: number };
-  workers: HelmWorker[];
+  jobs: HelmJob[];
   /**
-   * BOM v0.6.6 — counters from src/dashboard/data/worker-counters.ts.
-   * When undefined, the L2 band falls back to deriving from workers[]
-   * (length-based; conflates lifetime with currently-active — that's
-   * exactly the lie this PR is fixing, so transports.ts MUST populate
-   * this field).
+   * Counters from src/dashboard/data/job-counters.ts. When undefined, the
+   * L2 band falls back to deriving from jobs[] (length-based; conflates
+   * lifetime with currently-active — that's exactly the lie BOM v0.6.6
+   * fixed, so transports.ts MUST populate this field).
    */
-  worker_counters?: HelmWorkerCounters;
+  job_counters?: HelmJobCounters;
   systems: HelmSystem[];
   /** v0.6 — daily digest state. Undefined when the notify fabric is disabled. */
   digest?: HelmDigestState;
@@ -154,7 +162,7 @@ function fmtAgo(iso: string | undefined): string {
   return `${Math.round(secs / 86400)}d ago`;
 }
 
-function workerStatusClass(s: HelmWorker['status']): 'ok' | 'warn' | 'crit' | 'idle' {
+function jobStatusClass(s: HelmJob['status']): 'ok' | 'warn' | 'crit' | 'idle' {
   if (s === 'running') return 'ok';
   if (s === 'cleanup') return 'warn';
   if (s === 'crashed') return 'crit';
@@ -162,16 +170,14 @@ function workerStatusClass(s: HelmWorker['status']): 'ok' | 'warn' | 'crit' | 'i
 }
 
 /**
- * BOM v0.6.6 P3 — when a worker has a lifecycle_state, its chip uses the
- * lifecycle halo class instead of the legacy status mapping. Maps the
- * lifecycle halo categories (ok/warn/crit/neutral/operator) into the
- * existing iron-palette class names recognised by the L2 CSS.
+ * When a job has a lifecycle_state, its chip uses the lifecycle halo class
+ * instead of the legacy status mapping. Maps the lifecycle halo categories
+ * (ok/warn/crit/neutral/operator) into the iron-palette class names
+ * recognised by the L2 CSS.
  */
-function workerLifecycleClass(
-  state: import('../../workers/lifecycle.js').LifecycleState,
-): 'ok' | 'warn' | 'crit' | 'idle' {
+function jobLifecycleClass(state: JobLifecycleState): 'ok' | 'warn' | 'crit' | 'idle' {
   switch (state) {
-    case 'starting':
+    case 'dispatched':
     case 'running':            return 'ok';
     case 'killed-by-operator': return 'warn'; // operator action — distinct from crit (failure)
     case 'killed-by-system':
@@ -346,36 +352,33 @@ function renderPlansBand(d: HelmData): string {
   ].join('');
 }
 
-// ============================== L2 WORKERS =============================
-function renderWorkersBand(d: HelmData): string {
+// ============================== L2 JOBS ================================
+function renderJobsBand(d: HelmData): string {
   // BOM v0.6.6 hard rule #7: primary view shows ONLY currently-active
-  // workers — never historic chips. If lifecycle_state is populated, we
-  // filter on it; otherwise we fall back to the legacy status mapping
-  // (running/cleanup are the active shapes there).
-  const activeWorkers = d.workers.filter((w) => {
-    if (w.lifecycle_state) {
-      return w.lifecycle_state === 'starting' || w.lifecycle_state === 'running';
+  // jobs — never historic chips. If lifecycle_state is populated we
+  // filter on it; otherwise we fall back to the legacy status mapping.
+  const activeJobs = d.jobs.filter((j) => {
+    if (j.lifecycle_state) {
+      return j.lifecycle_state === 'dispatched' || j.lifecycle_state === 'running';
     }
-    // Legacy path: status === 'running' is the only definite active marker.
-    return w.status === 'running' || w.status === 'cleanup';
+    return j.status === 'running' || j.status === 'cleanup';
   });
-  const workers = activeWorkers.slice(0, 6);
-  const empty = workers.length === 0;
+  const jobs = activeJobs.slice(0, 6);
+  const empty = jobs.length === 0;
 
   // Per BOM hard rule #5: never display a single number that conflates
   // lifetime vs currently-active. The counters object (when populated by
   // transports.ts) carries both; fall back to deriving an "active" count
   // from the filtered list if missing.
-  const counters: HelmWorkerCounters = d.worker_counters ?? {
-    active: activeWorkers.length,
+  const counters: HelmJobCounters = d.job_counters ?? {
+    active: activeJobs.length,
     completed: 0,
     crashed: 0,
     killed_by_operator: 0,
     stale: 0,
-    total: d.workers.length,
+    total: d.jobs.length,
   };
 
-  // Compact summary line: "0 active · 7 completed · 1 crashed [· N stale]".
   const summaryParts: string[] = [`${counters.active} active`];
   if (counters.completed > 0)          summaryParts.push(`${counters.completed} completed`);
   if (counters.crashed > 0)            summaryParts.push(`${counters.crashed} crashed`);
@@ -383,61 +386,59 @@ function renderWorkersBand(d: HelmData): string {
   if (counters.stale > 0)              summaryParts.push(`${counters.stale} stale`);
   const summary = summaryParts.join(' · ');
 
-  // Acceptance test expects "No workers running" string — render an empty
-  // worker grid plus a footer note so the string survives.
   const cards = empty
-    ? `<div class="l2-empty">No workers running.</div>`
-    : workers.map((w) => {
+    ? `<div class="l2-empty">No jobs running.</div>`
+    : jobs.map((j) => {
         // Prefer lifecycle_state for the visual class so a force-killed
-        // worker reads visually distinct from a clean exit (BOM rule #6).
-        const sc = w.lifecycle_state
-          ? workerLifecycleClass(w.lifecycle_state)
-          : workerStatusClass(w.status);
-        const stepText = w.current_step ?? (w.status === 'idle' ? 'idle · ready' : '—');
-        const pct = w.status === 'running' ? 40 + ((w.uptime_sec ?? 0) % 50) : (w.status === 'idle' ? 0 : 70);
-        // data-state remains for back-compat; data-lifecycle is the
-        // forward-compatible attribute new tests should key off.
-        const lifecycleAttr = w.lifecycle_state
-          ? ` data-lifecycle="${escapeHtml(w.lifecycle_state)}"`
+        // job reads visually distinct from a clean exit (BOM rule #6).
+        const sc = j.lifecycle_state
+          ? jobLifecycleClass(j.lifecycle_state)
+          : jobStatusClass(j.status);
+        const stepText = j.current_step ?? (j.status === 'idle' ? 'idle · ready' : '—');
+        const pct = j.status === 'running' ? 40 + ((j.uptime_sec ?? 0) % 50) : (j.status === 'idle' ? 0 : 70);
+        const lifecycleAttr = j.lifecycle_state
+          ? ` data-lifecycle="${escapeHtml(j.lifecycle_state)}"`
           : '';
+        const bindingLabel = `${j.binding_kind}:${j.binding_target}`;
         return [
-          `<button type="button" class="l2-worker ${sc}" data-state="${escapeHtml(w.status)}"${lifecycleAttr}`,
-          ` data-worker-id="${escapeHtml(w.id)}" data-worker-type="${escapeHtml(w.type)}"`,
-          ` data-worker-step="${escapeHtml(w.current_step ?? '')}"`,
-          ` data-fi-open="worker">`,
-          `<div class="name"><span class="dot ${sc}"></span>${escapeHtml(w.id.slice(-10))} <span class="role">${escapeHtml(w.type)}</span></div>`,
+          `<button type="button" class="l2-job ${sc}" data-state="${escapeHtml(j.status)}"${lifecycleAttr}`,
+          ` data-job-id="${escapeHtml(j.id)}" data-job-kind="${escapeHtml(j.binding_kind)}"`,
+          ` data-job-target="${escapeHtml(j.binding_target)}"`,
+          ` data-job-step="${escapeHtml(j.current_step ?? '')}"`,
+          ` data-fi-open="job">`,
+          `<div class="name"><span class="dot ${sc}"></span>${escapeHtml(j.id.slice(-10))} <span class="role">${escapeHtml(bindingLabel)}</span></div>`,
           `<div class="progress"><div style="width:${pct}%;"></div></div>`,
           `<div class="step">${escapeHtml(stepText)}</div>`,
-          `<div class="meta"><span>${fmtUptime(w.uptime_sec)}</span><span class="eta">${w.status === 'running' ? '·' : '—'}</span></div>`,
+          `<div class="meta"><span>${fmtUptime(j.uptime_sec)}</span><span class="eta">${j.status === 'running' ? '·' : '—'}</span></div>`,
           `</button>`,
         ].join('');
       }).join('');
 
   // Pad to 6 visual slots with empty tiles.
-  const pad = empty ? 0 : Math.max(0, 6 - workers.length);
+  const pad = empty ? 0 : Math.max(0, 6 - jobs.length);
   const padCards = Array(pad).fill(0).map(() =>
-    `<div class="l2-worker idle"><div class="name"><span class="dot idle"></span>—</div><div class="progress"><div style="width:0%;"></div></div><div class="step">slot open</div><div class="meta"><span>—</span><span class="eta">—</span></div></div>`
+    `<div class="l2-job idle"><div class="name"><span class="dot idle"></span>—</div><div class="progress"><div style="width:0%;"></div></div><div class="step">slot open</div><div class="meta"><span>—</span><span class="eta">—</span></div></div>`
   ).join('');
 
   const historyLink = counters.total > counters.active
-    ? ` · <a href="/dashboard/workers?status=all" style="color:var(--sky);">view ${counters.total - counters.active} historic →</a>`
+    ? ` · <a href="/dashboard/jobs?state=all" style="color:var(--sky);">view ${counters.total - counters.active} historic →</a>`
     : '';
 
   return [
-    `<section class="band glass" data-level="L2" data-slot="workers">`,
+    `<section class="band glass" data-level="L2" data-slot="jobs">`,
     `<div class="band-head">`,
     `<div>`,
-    levelTag('L2', 'WORKERS'),
-    `<div class="level-name">Worker subprocesses</div>`,
-    `<div class="level-desc" data-role="worker-summary">${summary} · click any worker to inspect</div>`,
+    levelTag('L2', 'JOBS'),
+    `<div class="level-name">Job subprocesses</div>`,
+    `<div class="level-desc" data-role="job-summary">${summary} · click any job to inspect</div>`,
     `</div>`,
     `<div class="band-agg">`,
     `<div class="primary">${counters.active} active</div>`,
-    `<div class="secondary">${counters.crashed > 0 ? `<span class="crit">${counters.crashed} crashed</span> · ` : ''}<a href="/dashboard/workers" style="color:var(--sky);">workers →</a>${historyLink}</div>`,
+    `<div class="secondary">${counters.crashed > 0 ? `<span class="crit">${counters.crashed} crashed</span> · ` : ''}<a href="/dashboard/jobs" style="color:var(--sky);">jobs →</a>${historyLink}</div>`,
     `</div>`,
-    `<div class="band-arrow">› WORKERS</div>`,
+    `<div class="band-arrow">› JOBS</div>`,
     `</div>`,
-    `<div class="band-rich"><div class="l2-workers" data-role="workers-row">${cards}${padCards}</div></div>`,
+    `<div class="band-rich"><div class="l2-jobs" data-role="jobs-row">${cards}${padCards}</div></div>`,
     `</section>`,
   ].join('');
 }
@@ -756,11 +757,11 @@ body[data-active-page="helm"] > main.page { padding: 14px 18px 16px; overflow: h
 }
 
 /* ---------- L2 ---------- */
-.l2-workers {
+.l2-jobs {
   flex: 1; display: grid;
   grid-template-columns: repeat(6, 1fr); gap: 8px;
 }
-.l2-worker {
+.l2-job {
   background: rgba(0,0,0,.28);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -773,44 +774,44 @@ body[data-active-page="helm"] > main.page { padding: 14px 18px 16px; overflow: h
   color: var(--ink-0);
   font: inherit;
 }
-.l2-worker:hover { background: rgba(0,0,0,.42); border-color: var(--line-2); }
-.l2-worker .name {
+.l2-job:hover { background: rgba(0,0,0,.42); border-color: var(--line-2); }
+.l2-job .name {
   display: flex; align-items: center; gap: 6px;
   font-family: var(--mono); font-size: 11px; color: var(--ink-0);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.l2-worker .role { color: var(--ink-3); font-size: 11px; margin-left: auto; }
-.l2-worker .dot {
+.l2-job .role { color: var(--ink-3); font-size: 11px; margin-left: auto; }
+.l2-job .dot {
   width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
   background: var(--ink-3);
 }
-.l2-worker .dot.ok   { background: var(--ok);   box-shadow: 0 0 6px var(--ok); }
-.l2-worker .dot.warn { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
-.l2-worker .dot.crit { background: var(--crit); box-shadow: 0 0 6px var(--crit); animation: l2-pulse 1.4s ease-in-out infinite; }
-.l2-worker .dot.idle { background: var(--ink-3); }
+.l2-job .dot.ok   { background: var(--ok);   box-shadow: 0 0 6px var(--ok); }
+.l2-job .dot.warn { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.l2-job .dot.crit { background: var(--crit); box-shadow: 0 0 6px var(--crit); animation: l2-pulse 1.4s ease-in-out infinite; }
+.l2-job .dot.idle { background: var(--ink-3); }
 @keyframes l2-pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
-.l2-worker .progress {
+.l2-job .progress {
   height: 5px; background: rgba(255,255,255,.05); border-radius: 999px;
   overflow: hidden;
 }
-.l2-worker .progress > div {
+.l2-job .progress > div {
   height: 100%; background: linear-gradient(90deg, var(--green), rgba(109,213,140,.3));
 }
-.l2-worker.warn .progress > div { background: linear-gradient(90deg, var(--amber), rgba(226,169,66,.3)); }
-.l2-worker.crit .progress > div {
+.l2-job.warn .progress > div { background: linear-gradient(90deg, var(--amber), rgba(226,169,66,.3)); }
+.l2-job.crit .progress > div {
   background: repeating-linear-gradient(45deg, rgba(239,90,111,.55) 0 4px, rgba(239,90,111,.25) 4px 8px);
 }
-.l2-worker.idle .progress > div { background: var(--line-2); }
-.l2-worker .step {
+.l2-job.idle .progress > div { background: var(--line-2); }
+.l2-job .step {
   font-family: var(--mono); font-size: 11px; color: var(--ink-2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.l2-worker .meta {
+.l2-job .meta {
   display: flex; justify-content: space-between;
   font-family: var(--mono); font-size: 11px; color: var(--ink-3);
 }
-.l2-worker .meta .eta { color: var(--ink-1); }
-.l2-worker.crit .meta .eta { color: var(--crit); }
+.l2-job .meta .eta { color: var(--ink-1); }
+.l2-job.crit .meta .eta { color: var(--crit); }
 .l2-empty {
   grid-column: span 6; text-align: center;
   color: var(--ink-2); font-style: italic;
@@ -938,18 +939,20 @@ const HELM_JS = `
     });
   }
 
-  document.querySelectorAll('.l2-worker[data-fi-open="worker"]').forEach(function(btn) {
+  document.querySelectorAll('.l2-job[data-fi-open="job"]').forEach(function(btn) {
     btn.addEventListener('click', function(ev) {
       ev.stopPropagation();
+      const kind = btn.getAttribute('data-job-kind') || '';
+      const target = btn.getAttribute('data-job-target') || '';
       fi.openAt(btn, {
-        icon: 'W',
-        title: btn.getAttribute('data-worker-id') || 'worker',
-        sub: btn.getAttribute('data-worker-type') || '',
+        icon: 'J',
+        title: btn.getAttribute('data-job-id') || 'job',
+        sub: kind && target ? (kind + ':' + target) : (kind || target || ''),
         sections: [
-          { label: 'Status', value: btn.getAttribute('data-state') || '—' },
-          { label: 'Step',   value: btn.getAttribute('data-worker-step') || '—' },
+          { label: 'State', value: btn.getAttribute('data-lifecycle') || btn.getAttribute('data-state') || '—' },
+          { label: 'Step',  value: btn.getAttribute('data-job-step') || '—' },
         ],
-        actions: [{ label: 'Open Workers', onClick: "location.href='/dashboard/workers'" }],
+        actions: [{ label: 'Open Jobs', onClick: "location.href='/dashboard/jobs'" }],
       });
     });
   });
@@ -972,7 +975,7 @@ const HELM_JS = `
 
   // L3/L1 band-arrow click handlers — keep band-bodies clickable too
   document.querySelectorAll('.band[data-slot="plans"]   .band-arrow').forEach(function(b){ b.addEventListener('click', function(){ location.href='/dashboard/plans'; }); });
-  document.querySelectorAll('.band[data-slot="workers"] .band-arrow').forEach(function(b){ b.addEventListener('click', function(){ location.href='/dashboard/workers'; }); });
+  document.querySelectorAll('.band[data-slot="jobs"] .band-arrow').forEach(function(b){ b.addEventListener('click', function(){ location.href='/dashboard/jobs'; }); });
   document.querySelectorAll('.band[data-slot="tool-calls"] .band-arrow').forEach(function(b){ b.addEventListener('click', function(){ location.href='/dashboard/diagnostics'; }); });
   document.querySelectorAll('.band[data-slot="systems"] .band-arrow').forEach(function(b){ b.addEventListener('click', function(){ location.href='/dashboard/topology'; }); });
 
@@ -1079,7 +1082,7 @@ export function renderHelmPage(data?: HelmData): string {
     },
     boms: { recent: [], total: 0, open: 0 },
     decisions: { recent: [], open: 0 },
-    workers: [],
+    jobs: [],
     systems: [],
   };
 
@@ -1101,7 +1104,7 @@ export function renderHelmPage(data?: HelmData): string {
     `<div class="helm-stack">`,
     renderIntentBand(snapshot),
     renderPlansBand(snapshot),
-    renderWorkersBand(snapshot),
+    renderJobsBand(snapshot),
     renderToolCallsBand(snapshot),
     renderSystemsBand(snapshot),
     `</div>`,

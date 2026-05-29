@@ -16,7 +16,7 @@ function baseData(digest?: HelmDigestState): HelmData {
     },
     boms: { recent: [], total: 0, open: 0 },
     decisions: { recent: [], open: 0 },
-    workers: [],
+    jobs: [],
     systems: [],
     digest,
   };

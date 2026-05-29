@@ -4,10 +4,12 @@
  *
  * /dashboard       → 302 /dashboard/helm (v0.4 primary, was /dashboard/home)
  * /dashboard/home  → legacy alias kept for v0.3 bookmarks + integration tests
- * /dashboard/helm, /topology, /workers, /plans, /decide, /toolkit,
+ * /dashboard/helm, /topology, /jobs, /plans, /decide, /toolkit,
  * /mcps, /capabilities, /settings → server-rendered shell + page body.
- * /dashboard/streams → legacy alias for /dashboard/workers (renamed
- * chore/streams-to-workers); both serve the same renderer.
+ * /dashboard/workers → legacy alias for /dashboard/jobs (renamed
+ *   worker-dispatch Phase 3c.1); both serve the same renderer.
+ * /dashboard/streams → super-legacy alias for /dashboard/jobs
+ *   (chore/streams-to-workers heritage); same renderer.
  *
  * Page snapshots are pull-based: pages that need data (Helm/Home, Plans,
  * Topology, …) declare a getter on the DashboardPageDeps bag so
@@ -19,7 +21,7 @@ import { NAV_ENTRIES, LEGACY_NAV_ENTRIES, type DashboardPageId } from './shell.j
 import { renderHelmPage, type HelmData } from './pages/helm.js';
 import { renderHomePage, type HomeData } from './pages/home.js';
 import { renderTopologyPage, type TopologyData } from './pages/topology.js';
-import { renderWorkersPage, type WorkersData } from './pages/workers.js';
+import { renderJobsPage, type JobsData } from './pages/jobs.js';
 import { renderHistoryPage, type HistoryData } from './pages/history.js';
 import { renderPlansPage, type PlansData } from './pages/plans.js';
 import { renderDecidePage, type DecideData } from './pages/decide.js';
@@ -34,7 +36,7 @@ import { renderDiagnosticsPage, type DiagnosticsData } from './pages/diagnostics
 import { renderDiagnosticsOverview } from './pages/diagnostics-overview.js';
 import {
   renderConnectionsDetail,
-  renderWorkersDetail,
+  renderJobsDetail,
   renderFederationDetail,
   renderAlertsDetail,
 } from './pages/diagnostics-details.js';
@@ -53,8 +55,9 @@ export interface DashboardPageDeps {
   decideData?: () => DecideData;
   /** Snapshot used for Topology server-side initial paint (C5). */
   topologyData?: () => TopologyData;
-  /** Snapshot used for Workers server-side initial paint (C6). */
-  workersData?: () => WorkersData;
+  /** Snapshot used for Jobs server-side initial paint (worker-dispatch
+   *  Phase 3c.1 — renamed from workersData). */
+  jobsData?: () => JobsData;
   /** Snapshot used for History server-side initial paint (v0.8). */
   historyData?: () => HistoryData;
   /** Snapshot used for Toolkit server-side initial paint (C7). */
@@ -98,7 +101,7 @@ export function mountDashboardPages(
     helm:         () => renderHelmPage(deps.helmData?.()),
     home:         () => renderHomePage(deps.homeData?.()),
     topology:     () => renderTopologyPage(deps.topologyData?.()),
-    workers:      () => renderWorkersPage(deps.workersData?.()),
+    jobs:         () => renderJobsPage(deps.jobsData?.()),
     history:      () => renderHistoryPage(deps.historyData?.()),
     plans:        () => renderPlansPage(deps.plansData?.()),
     decide:       () => renderDecidePage(deps.decideData?.()),
@@ -130,10 +133,14 @@ export function mountDashboardPages(
     const d = deps.diagnosticsData?.();
     sendHtml(res, renderConnectionsDetail(d?.bricks ?? []));
   });
-  app.get('/dashboard/diagnostics/workers', (_req, res) => {
+  // worker-dispatch Phase 3c.1 — primary URL is /dashboard/diagnostics/jobs;
+  // /dashboard/diagnostics/workers stays as a thin alias to the same renderer.
+  const diagnosticsJobsHandler = (_req: express.Request, res: express.Response): void => {
     const d = deps.diagnosticsData?.();
-    sendHtml(res, renderWorkersDetail(d?.workers ?? []));
-  });
+    sendHtml(res, renderJobsDetail(d?.jobs ?? []));
+  };
+  app.get('/dashboard/diagnostics/jobs', diagnosticsJobsHandler);
+  app.get('/dashboard/diagnostics/workers', diagnosticsJobsHandler);
   app.get('/dashboard/diagnostics/federation', (_req, res) => {
     // peerCount on the DiagnosticsData bag is a number; until a richer
     // peer-roster getter wires through, render N placeholder rows so the

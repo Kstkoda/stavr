@@ -1,5 +1,21 @@
 import { z } from 'zod';
 
+/**
+ * Dual-emit deprecation window length (worker-dispatch BOM Phase 3a).
+ *
+ * During the cutover from the bespoke worker subsystem to invoke + job,
+ * the JobOrchestrator publishes every job_* event AND its legacy worker_*
+ * equivalent so external subscribers (dashboard, federation receivers,
+ * any operator-side broker tail) keep working without simultaneous
+ * code changes. The translation lives in src/jobs/dual-emit.ts.
+ *
+ * Window length is one minor release (0.7.x → 0.8.0 per recon §12 Q3).
+ * The constant is here, not in dual-emit.ts, so a `grep DEPRECATION_WINDOW`
+ * across the repo finds every consumer at a glance — when this number
+ * decrements to 0 the legacy `worker_*` emitters are deleted.
+ */
+export const DEPRECATION_WINDOW_RELEASES = 1;
+
 export const EventKind = z.enum([
   'session_started',
   'phase_started',
@@ -42,6 +58,15 @@ export const EventKind = z.enum([
   'trust_scope_progress',
   'trust_scope_completed',
   'trust_scope_action_authorized',
+  // worker-dispatch Phase 4 — grant-scope-aware enforcement on
+  // JobOrchestrator.dispatch. `grant_consumed` fires per successful
+  // dispatch with a budget decrement (NOT for sentinel-shape
+  // resolutions — operator's local hot path stays out of the audit
+  // log). `grant_denied` fires for every failed grant resolution with
+  // a structured reason (GrantDenialReason in src/trust/types.ts).
+  // No dual-emit shadows (new events; no legacy consumers).
+  'grant_consumed',
+  'grant_denied',
   // Spec 51 resilience principles
   'stale_pid_cleaned',
   // Spec 48 Layer 1 — Steward role + claim lifecycle
@@ -175,6 +200,21 @@ export const EventKind = z.enum([
   'host_ceiling_refused',
   'host_ceiling_shed',
   'host_ceiling_os_cap',
+  // worker-dispatch Phase 1 — invoke + job substrate. Additive; the
+  // worker_* events stay alive through the Phase 3 dual-emit window. See
+  // proposed/worker-dispatch-bom.md + proposed/worker-dispatch-recon.md §4.
+  'job_dispatched',
+  'job_started',
+  'job_progress',
+  'job_metadata_changed',
+  'job_heartbeat',
+  'job_log',
+  'job_error',
+  'job_terminated',
+  // worker-dispatch Phase 3a — watchdog dual-emit. Parallel to worker_stuck.
+  // The JobOrchestrator-attached watchdog (src/jobs/watchdog.ts) emits BOTH
+  // kinds during the deprecation window — see DEPRECATION_WINDOW_RELEASES.
+  'job_stuck',
 ]);
 export type EventKindT = z.infer<typeof EventKind>;
 
@@ -328,6 +368,91 @@ export const WorkerErrorPayload = z.object({
   recoverable: z.boolean(),
 });
 
+// worker-dispatch Phase 1 — job_* payloads (additive; live alongside
+// worker_* through the Phase 3 dual-emit window). See
+// proposed/worker-dispatch-recon.md §4 for the migration map.
+
+export const JobDispatchedPayload = z.object({
+  id: z.string(),
+  name: z.string(),
+  binding_kind: z.enum(['mcp-call', 'http', 'process-spawn', 'cc-session-attach']),
+  binding_target: z.string(),
+  params_hash: z.string(),
+  budget: z
+    .object({
+      max_runtime_ms: z.number().int().positive().optional(),
+      max_steps: z.number().int().positive().optional(),
+      credit_pool: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const JobStartedPayload = z.object({
+  id: z.string(),
+  name: z.string(),
+  binding_kind: z.string(),
+  binding_target: z.string(),
+  pid: z.number().int().optional(),
+  metadata: z.record(z.unknown()).default({}),
+});
+
+export const JobProgressPayload = z.object({
+  id: z.string(),
+  message: z.string(),
+  payload: z.unknown().optional(),
+});
+
+export const JobMetadataChangedPayload = z.object({
+  id: z.string(),
+  patch: z.record(z.unknown()),
+});
+
+export const JobHeartbeatPayload = z.object({
+  id: z.string(),
+  detail: z.string().optional(),
+});
+
+export const JobLogPayload = z.object({
+  job_id: z.string(),
+  job_name: z.string(),
+  stream: z.enum(['stdout', 'stderr']),
+  format: z.enum(['stream-json', 'raw']).optional(),
+  event: z.unknown().optional(),
+  line: z.string().optional(),
+  truncated: z.boolean().optional(),
+});
+
+export const JobErrorPayload = z.object({
+  id: z.string(),
+  message: z.string(),
+  recoverable: z.boolean(),
+});
+
+export const JobTerminatedPayload = z.object({
+  id: z.string(),
+  reason: z.enum([
+    'completed',
+    'crashed',
+    'terminated_by_user',
+    'budget_exceeded',
+    'shed_by_host',
+  ]),
+  exit_code: z.number().int().optional(),
+  result: z.unknown().optional(),
+});
+
+export const JobStuckPayload = z.object({
+  job_id: z.string(),
+  job_name: z.string(),
+  binding_kind: z.string(),
+  binding_target: z.string(),
+  pid: z.number().int().optional(),
+  started_at: z.string(),
+  last_activity_at: z.string(),
+  idle_seconds: z.number().nonnegative(),
+  hint: z.string(),
+});
+
 // Trust-scope payloads (spec 46)
 
 export const ActionMatcherSchema = z.object({
@@ -389,6 +514,48 @@ export const TrustScopeCompletedPayload = z.object({
   reason: z.enum(['action_cap_reached', 'expired', 'revoked']),
   actions_executed: z.number().int().nonnegative(),
   completed_at: z.string(),
+});
+
+/**
+ * worker-dispatch Phase 4 — emitted per successful JobOrchestrator.dispatch
+ * that consumed a real grant. NOT emitted for sentinel-shape resolutions
+ * (operator-shape actor with no covering grant — local hot path).
+ *
+ * `budget_before` / `budget_after` are nullable: a grant with
+ * `budget_remaining = NULL` is unbudgeted (back-compat) and decrement
+ * is a no-op; both fields surface as null on the event in that case.
+ */
+export const GrantConsumedPayload = z.object({
+  actor_id: z.string(),
+  grant_id: z.string(),
+  tool: z.string(),
+  binding_target: z.string(),
+  budget_before: z.number().int().nullable(),
+  budget_after: z.number().int().nullable(),
+});
+
+/**
+ * worker-dispatch Phase 4 — emitted per failed grant resolution or
+ * decrement. The `reason` enum mirrors GrantDenialReason in
+ * src/trust/types.ts so operators / external auditors can correlate
+ * denials across the audit log without parsing free-form messages.
+ */
+export const GrantDeniedPayload = z.object({
+  actor_id: z.string(),
+  grant_id: z.string().optional(),
+  tool: z.string(),
+  binding_target: z.string(),
+  budget_before: z.number().int().nullable().optional(),
+  reason: z.enum([
+    'grant_required',
+    'grant_not_found',
+    'grant_not_for_actor',
+    'tool_not_covered',
+    'target_not_covered',
+    'budget_exhausted',
+    'grant_expired',
+    'grant_revoked',
+  ]),
 });
 
 export const TrustScopeActionAuthorizedPayload = z.object({
@@ -1035,6 +1202,9 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     trust_scope_progress: TrustScopeProgressPayload,
     trust_scope_completed: TrustScopeCompletedPayload,
     trust_scope_action_authorized: TrustScopeActionAuthorizedPayload,
+    // worker-dispatch Phase 4 — grant-scope-aware enforcement audit events.
+    grant_consumed: GrantConsumedPayload,
+    grant_denied: GrantDeniedPayload,
     credential_added: CredentialAddedPayload,
     credential_grant_added: CredentialGrantAddedPayload,
     credential_grant_revoked: CredentialGrantRevokedPayload,
@@ -1096,6 +1266,16 @@ export function validatePayloadForKind(kind: EventKindT, payload: unknown): void
     federation_handoff_started: FederationHandoffStartedPayload,
     federation_handoff_completed: FederationHandoffCompletedPayload,
     tier3_assertion_recorded: Tier3AssertionRecordedPayload,
+    // worker-dispatch Phase 1 — invoke + job substrate.
+    job_dispatched: JobDispatchedPayload,
+    job_started: JobStartedPayload,
+    job_progress: JobProgressPayload,
+    job_metadata_changed: JobMetadataChangedPayload,
+    job_heartbeat: JobHeartbeatPayload,
+    job_log: JobLogPayload,
+    job_error: JobErrorPayload,
+    job_terminated: JobTerminatedPayload,
+    job_stuck: JobStuckPayload,
   };
   const schema = map[kind];
   if (schema) schema.parse(payload);

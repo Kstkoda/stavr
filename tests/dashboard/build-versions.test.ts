@@ -164,7 +164,7 @@ describe('v0.6.8 Section 0 — diagnostics page integration', () => {
     const { renderDiagnosticsPage } = await import('../../src/dashboard/pages/diagnostics.js');
     const html = renderDiagnosticsPage({
       bricks: [],
-      workers: [],
+      jobs: [],
       versions: {
         daemonVersion: '0.6.5',
         daemonGitSha: '1022fee',
@@ -198,7 +198,7 @@ describe('v0.6.8 Section 0 — diagnostics page integration', () => {
     const { renderDiagnosticsPage } = await import('../../src/dashboard/pages/diagnostics.js');
     const html = renderDiagnosticsPage({
       bricks: [],
-      workers: [],
+      jobs: [],
       versions: {
         daemonVersion: '0.0.0-dev',
         daemonGitSha: null,

@@ -8,14 +8,14 @@
  * Engine detail is in pages/diagnostics.ts (the existing dense layout,
  * enhanced in Phase 3 with the 4-section jump-bar).
  */
-import type { WorkerRecord } from '../../persistence.js';
+import type { JobRecord } from '../../jobs/types.js';
 import type { InstalledBrickLite } from '../adapters/topology.js';
 import { renderShell } from '../shell.js';
-import { fetchWorkerCounters } from '../data/worker-counters.js';
-import { deriveLifecycleState } from '../../workers/lifecycle.js';
+import { fetchJobCounters } from '../data/job-counters.js';
+import { deriveLifecycleState } from '../../jobs/lifecycle.js';
 import { metricTooltip } from '../components/tooltips.js';
 
-export type DiagnosticsDetailId = 'connections' | 'workers' | 'federation' | 'alerts';
+export type DiagnosticsDetailId = 'connections' | 'jobs' | 'federation' | 'alerts';
 
 function escapeHtml(s: string): string {
   return String(s)
@@ -193,36 +193,38 @@ export function renderConnectionsDetail(bricks: InstalledBrickLite[] = []): stri
   });
 }
 
-// =================== Workers ===================
-export function renderWorkersDetail(workers: WorkerRecord[] = []): string {
+// =================== Jobs ===================
+export function renderJobsDetail(jobs: JobRecord[] = []): string {
   const now = Date.now();
-  const counters = fetchWorkerCounters(workers, now);
+  const counters = fetchJobCounters(jobs, now);
   const crashed = counters.crashed + counters.killed_by_system;
   const summary = [
     { l: 'Active', v: String(counters.active), cls: counters.active > 0 ? 'ok' : 'idle' },
     { l: 'Lifetime', v: String(counters.total), cls: 'idle' },
     { l: 'Crashed', v: String(crashed), cls: crashed > 0 ? 'crit' : 'ok' },
   ];
-  const rows = workers.map((w) => {
-    const lifecycle = deriveLifecycleState(w, now);
+  const rows = jobs.map((j) => {
+    const lifecycle = deriveLifecycleState(j, now);
     const cls: 'ok' | 'warn' | 'crit' | 'idle' =
       lifecycle === 'crashed' || lifecycle === 'killed-by-system' ? 'crit'
-      : lifecycle === 'running' || lifecycle === 'starting' ? 'ok'
+      : lifecycle === 'running' || lifecycle === 'dispatched' ? 'ok'
       : lifecycle === 'stale' || lifecycle === 'completed-error' || lifecycle === 'killed-by-operator' ? 'warn'
       : 'idle';
+    const bindingLabel = `${j.binding_kind}:${j.binding_target}`;
+    const cwd = typeof j.metadata?.cwd === 'string' ? j.metadata.cwd : '';
     return [
       `<tr>`,
-      `<td>${escapeHtml(w.name || w.id)}</td>`,
-      `<td>${escapeHtml(w.type)}</td>`,
-      `<td style="color:var(--ink-3);">${escapeHtml(w.cwd ? w.cwd.slice(0, 30) : '—')}</td>`,
+      `<td>${escapeHtml(j.name || j.id)}</td>`,
+      `<td>${escapeHtml(bindingLabel)}</td>`,
+      `<td style="color:var(--ink-3);">${escapeHtml(cwd ? cwd.slice(0, 30) : '—')}</td>`,
       `<td><span class="diag-pill ${cls}">${escapeHtml(lifecycle)}</span></td>`,
-      `<td style="color:var(--ink-3);">${escapeHtml((w.started_at || '').slice(11, 19))}</td>`,
+      `<td style="color:var(--ink-3);">${escapeHtml((j.started_at || '').slice(11, 19))}</td>`,
       `</tr>`,
     ].join('');
   }).join('');
   const body = [
     `<div class="diag-detail">`,
-    renderHeader({ id: 'workers', title: 'Workers', sub: 'Active + last-4h workers (per Phase 5 retention). Per-worker output lives on the Workers page.' }),
+    renderHeader({ id: 'jobs', title: 'Jobs', sub: 'Active + last-4h jobs (per Phase 5 retention). Per-job output lives on the Jobs page.' }),
     `<div class="diag-summary">`,
     summary.map((s) => {
       const tip = metricTooltip(s.l.toLowerCase()) ?? '';
@@ -231,19 +233,19 @@ export function renderWorkersDetail(workers: WorkerRecord[] = []): string {
     }).join(''),
     `</div>`,
     `<div class="diag-table">`,
-    `<div class="diag-table-head"><span>Worker roster</span><span>${workers.length} total</span></div>`,
-    workers.length === 0
-      ? `<div class="diag-empty">No workers yet. Workers spawn when CC dispatches or Steward runs a plan.</div>`
-      : `<table><thead><tr><th>Name</th><th>Type</th><th>cwd</th><th>State</th><th>Started</th></tr></thead><tbody>${rows}</tbody></table>`,
+    `<div class="diag-table-head"><span>Job roster</span><span>${jobs.length} total</span></div>`,
+    jobs.length === 0
+      ? `<div class="diag-empty">No jobs yet. Jobs dispatch when CC asks or Steward runs a plan.</div>`
+      : `<table><thead><tr><th>Name</th><th>Binding</th><th>cwd</th><th>State</th><th>Started</th></tr></thead><tbody>${rows}</tbody></table>`,
     `</div>`,
     `<div class="diag-related">`,
-    `<a href="/dashboard/workers">live workers →</a>`,
+    `<a href="/dashboard/jobs">live jobs →</a>`,
     `<a href="/dashboard/topology">topology →</a>`,
     `</div>`,
     `</div>`,
   ].join('');
   return renderShell({
-    title: 'Stavr — Diagnostics · workers',
+    title: 'Stavr — Diagnostics · jobs',
     activePage: 'diagnostics',
     body,
     head: `<style>${DETAIL_CSS}</style>`,
@@ -371,7 +373,7 @@ export function renderAlertsDetail(alerts: AlertLite[] = []): string {
 export function renderDiagnosticsDetailStub(id: DiagnosticsDetailId): string {
   switch (id) {
     case 'connections': return renderConnectionsDetail([]);
-    case 'workers':     return renderWorkersDetail([]);
+    case 'jobs':        return renderJobsDetail([]);
     case 'federation':  return renderFederationDetail([]);
     case 'alerts':      return renderAlertsDetail([]);
   }

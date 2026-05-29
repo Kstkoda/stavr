@@ -12,14 +12,19 @@
  *   - snapshot.ram_used_pct_ewma >= ceiling.shed_threshold_pct
  *   - snapshot.ram_free_gb       <  ceiling.shed_min_free_ram_gb
  *
- * Victim selection: the most-recently-spawned worker. The intuition is that
- * the most recent spawn is the one most likely to have caused the headroom
- * drop, and shedding it makes the *least* progress lost (it's also the one
- * the operator will most easily re-launch).
+ * Victim selection: the most-recently-dispatched job. The intuition is
+ * that the most recent dispatch is the one most likely to have caused the
+ * headroom drop, and shedding it makes the *least* progress lost (it's
+ * also the one the operator will most easily re-launch).
  *
  * Cool-down: after a shed, the watchdog waits one full headroom_window_ms
  * before considering a second shed. That prevents the watchdog from killing
- * three workers in a row when the EWMA hasn't caught up yet.
+ * three jobs in a row when the EWMA hasn't caught up yet.
+ *
+ * worker-dispatch Phase 3c.2 — SheddableOrchestrator interface renamed
+ * from worker-named methods (liveWorkerIdsInSpawnOrder / shedWorker) to
+ * job-named methods (liveJobIdsInDispatchOrder / shedJob) when the
+ * bespoke WorkerOrchestrator deleted. JobOrchestrator implements both.
  */
 import { getLogger } from '../log.js';
 import type { HostCeiling } from '../types/host-ceiling.js';
@@ -27,8 +32,8 @@ import type { HostHeadroomMonitor } from '../observability/host-headroom-poller.
 
 export interface SheddableOrchestrator {
   liveCount(): number;
-  liveWorkerIdsInSpawnOrder(): string[];
-  shedWorker(workerId: string, reason: string): Promise<{ exitCode?: number }>;
+  liveJobIdsInDispatchOrder(): string[];
+  shedJob(jobId: string, reason: string): Promise<{ exitCode?: number }>;
 }
 
 export interface LoadShedderOpts {
@@ -85,9 +90,9 @@ export function startLoadShedder(opts: LoadShedderOpts): LoadShedderStop {
       }
     }
 
-    const live = opts.orchestrator.liveWorkerIdsInSpawnOrder();
+    const live = opts.orchestrator.liveJobIdsInDispatchOrder();
     if (live.length === 0) {
-      // Nothing to shed — the headroom problem isn't from stavR workers.
+      // Nothing to shed — the headroom problem isn't from stavR jobs.
       // Phase 4 (OS cap) is what we depend on here.
       return;
     }
@@ -100,11 +105,11 @@ export function startLoadShedder(opts: LoadShedderOpts): LoadShedderStop {
         : `ram_free_gb=${snap.ram_free_gb.toFixed(2)} under ${opts.ceiling.shed_min_free_ram_gb}`;
 
     try {
-      await opts.orchestrator.shedWorker(victim, reason);
+      await opts.orchestrator.shedJob(victim, reason);
       lastShedAt = now();
     } catch (err) {
-      getLogger().warn('load-shedder: shedWorker threw', {
-        worker_id: victim,
+      getLogger().warn('load-shedder: shedJob threw', {
+        job_id: victim,
         error: (err as Error).message,
       });
     }

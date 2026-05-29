@@ -22,6 +22,8 @@ import type {
   ProfileMode,
 } from './types/stavr-bom.js';
 import { DEFAULT_PROFILES } from './types/stavr-bom.js';
+import type { BindingKind, JobRecord } from './jobs/types.js';
+import type { JobLifecycleState } from './jobs/lifecycle.js';
 
 export interface StoredEvent extends Event {
   id: string;
@@ -232,6 +234,41 @@ export class EventStore {
       }
     }
 
+    // worker-dispatch Phase 4 — additive trust_scopes columns for
+    // grant-scope-aware enforcement on JobOrchestrator.dispatch.
+    //   - actor_id        : NULL = global capability (back-compat for
+    //     pre-Phase-4 grants); set = grant is bound to one actor, mismatch
+    //     denies with reason 'grant_not_for_actor'.
+    //   - covered_tools_json   : JSON array of MCP tool name strings.
+    //     NULL = wildcard '*' for back-compat. Empty array [] = covers
+    //     nothing (fail-closed). Explicit '*' string = wildcard.
+    //   - covered_targets_json : JSON array of binding_target strings.
+    //     Same NULL / [] / '*' semantics as covered_tools_json.
+    //   - budget_remaining : NULL = unbudgeted / infinite (back-compat).
+    //     Decremented atomically per JobOrchestrator.dispatch.
+    //     Distinct from expires_after_actions (the gated-action cap);
+    //     dispatch-budget and action-cap are independent counters.
+    // Idempotent pragma probe + ALTER for existing on-disk DBs; fresh DBs
+    // get the columns via the CREATE TABLE declaration below.
+    const trustScopesCols = this.db
+      .prepare(`PRAGMA table_info(trust_scopes)`)
+      .all() as Array<{ name: string }>;
+    if (trustScopesCols.length > 0) {
+      const has = (n: string) => trustScopesCols.some((r) => r.name === n);
+      if (!has('actor_id')) {
+        this.db.exec(`ALTER TABLE trust_scopes ADD COLUMN actor_id TEXT`);
+      }
+      if (!has('covered_tools_json')) {
+        this.db.exec(`ALTER TABLE trust_scopes ADD COLUMN covered_tools_json TEXT`);
+      }
+      if (!has('covered_targets_json')) {
+        this.db.exec(`ALTER TABLE trust_scopes ADD COLUMN covered_targets_json TEXT`);
+      }
+      if (!has('budget_remaining')) {
+        this.db.exec(`ALTER TABLE trust_scopes ADD COLUMN budget_remaining INTEGER`);
+      }
+    }
+
     this.db.exec(`
 
       CREATE TABLE IF NOT EXISTS decisions (
@@ -294,6 +331,35 @@ export class EventStore {
       CREATE INDEX IF NOT EXISTS idx_workers_lifecycle_state
         ON workers(lifecycle_state);
 
+      -- worker-dispatch Phase 1 — the JobRecord. stavR-owned async lifecycle
+      -- record, decoupled from the executor binding. See src/jobs/types.ts.
+      -- The workers table stays during the cutover window; Phase 3 drops it
+      -- once the dashboard + tools no longer reference it.
+      CREATE TABLE IF NOT EXISTS jobs (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        binding_kind TEXT NOT NULL,
+        binding_target TEXT NOT NULL,
+        params_hash TEXT NOT NULL,
+        lifecycle_state TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        last_activity_at TEXT,
+        metadata_json TEXT NOT NULL,
+        termination_reason TEXT,
+        exit_code INTEGER,
+        result_json TEXT,
+        budget_json TEXT,
+        audit_correlation_id TEXT,
+        federation_role TEXT,
+        originator_peer TEXT,
+        grant_id TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_jobs_lifecycle_state ON jobs(lifecycle_state);
+      CREATE INDEX IF NOT EXISTS idx_jobs_binding_kind ON jobs(binding_kind);
+      CREATE INDEX IF NOT EXISTS idx_jobs_name_active
+        ON jobs(name) WHERE lifecycle_state IN ('dispatched', 'running');
+
       CREATE TABLE IF NOT EXISTS trust_scopes (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -309,9 +375,21 @@ export class EventStore {
         spec_url TEXT,
         proposed_at TEXT,
         actions_executed INTEGER NOT NULL DEFAULT 0,
-        completed_at TEXT
+        completed_at TEXT,
+        -- worker-dispatch Phase 4 — grant-scope-aware enforcement on
+        -- JobOrchestrator.dispatch. See the additive-migration block in
+        -- init() for back-compat semantics.
+        actor_id TEXT,
+        covered_tools_json TEXT,
+        covered_targets_json TEXT,
+        budget_remaining INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_trust_scopes_status ON trust_scopes(status);
+      -- worker-dispatch Phase 4 — resolveGrant for operator-shape actors
+      -- filters by (status='active', actor_id IS NULL OR actor_id=?); index
+      -- on (status, actor_id) keeps that lookup cheap as the table grows.
+      CREATE INDEX IF NOT EXISTS idx_trust_scopes_status_actor
+        ON trust_scopes(status, actor_id);
 
       CREATE TABLE IF NOT EXISTS scope_actions (
         id TEXT PRIMARY KEY,
@@ -1315,6 +1393,196 @@ export class EventStore {
     return !row;
   }
 
+  // ---- worker-dispatch Phase 1 — JobRecord CRUD ---------------------------
+
+  upsertJob(record: JobRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO jobs
+           (id, name, binding_kind, binding_target, params_hash, lifecycle_state,
+            started_at, ended_at, last_activity_at, metadata_json,
+            termination_reason, exit_code, result_json, budget_json,
+            audit_correlation_id, federation_role, originator_peer, grant_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
+           binding_kind = excluded.binding_kind,
+           binding_target = excluded.binding_target,
+           params_hash = excluded.params_hash,
+           lifecycle_state = excluded.lifecycle_state,
+           ended_at = excluded.ended_at,
+           last_activity_at = excluded.last_activity_at,
+           metadata_json = excluded.metadata_json,
+           termination_reason = excluded.termination_reason,
+           exit_code = excluded.exit_code,
+           result_json = excluded.result_json,
+           budget_json = excluded.budget_json,
+           audit_correlation_id = excluded.audit_correlation_id,
+           federation_role = excluded.federation_role,
+           originator_peer = excluded.originator_peer,
+           grant_id = excluded.grant_id`,
+      )
+      .run(
+        record.id,
+        record.name,
+        record.binding_kind,
+        record.binding_target,
+        record.params_hash,
+        record.lifecycle_state,
+        record.started_at,
+        record.ended_at ?? null,
+        record.last_activity_at ?? null,
+        JSON.stringify(record.metadata),
+        record.termination_reason ?? null,
+        record.exit_code ?? null,
+        record.result === undefined ? null : JSON.stringify(record.result),
+        record.budget ? JSON.stringify(record.budget) : null,
+        record.audit_correlation_id ?? null,
+        record.federation_role ?? null,
+        record.originator_peer ?? null,
+        record.grant_id ?? null,
+      );
+  }
+
+  getJob(idOrName: string): JobRecord | undefined {
+    const byId = this.db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(idOrName) as
+      | JobRow
+      | undefined;
+    if (byId) return jobRowToRecord(byId);
+    const row = this.db
+      .prepare(
+        `SELECT * FROM jobs
+         WHERE name = ?
+         ORDER BY (lifecycle_state IN ('dispatched','running')) DESC, started_at DESC
+         LIMIT 1`,
+      )
+      .get(idOrName) as JobRow | undefined;
+    return row ? jobRowToRecord(row) : undefined;
+  }
+
+  listJobs(filter?: { binding_kind?: BindingKind; lifecycle_state?: JobLifecycleState }): JobRecord[] {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter?.binding_kind) {
+      where.push(`binding_kind = ?`);
+      params.push(filter.binding_kind);
+    }
+    if (filter?.lifecycle_state) {
+      where.push(`lifecycle_state = ?`);
+      params.push(filter.lifecycle_state);
+    }
+    const sql = `SELECT * FROM jobs ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY started_at ASC`;
+    const rows = this.db.prepare(sql).all(...params) as JobRow[];
+    return rows.map(jobRowToRecord);
+  }
+
+  updateJobMetadata(id: string, patch: Record<string, unknown>): JobRecord | undefined {
+    const existing = this.getJob(id);
+    if (!existing) return undefined;
+    const merged = { ...existing.metadata, ...patch };
+    const last = new Date().toISOString();
+    this.db
+      .prepare(`UPDATE jobs SET metadata_json = ?, last_activity_at = ? WHERE id = ?`)
+      .run(JSON.stringify(merged), last, id);
+    return { ...existing, metadata: merged, last_activity_at: last };
+  }
+
+  updateJobLifecycleState(id: string, state: JobLifecycleState): JobRecord | undefined {
+    const existing = this.getJob(id);
+    if (!existing) return undefined;
+    const last = new Date().toISOString();
+    this.db
+      .prepare(`UPDATE jobs SET lifecycle_state = ?, last_activity_at = ? WHERE id = ?`)
+      .run(state, last, id);
+    return { ...existing, lifecycle_state: state, last_activity_at: last };
+  }
+
+  markJobTerminated(
+    id: string,
+    reason: JobRecord['termination_reason'] & string,
+    exitCode?: number,
+    result?: unknown,
+  ): JobRecord | undefined {
+    const existing = this.getJob(id);
+    if (!existing) return undefined;
+    // Terminal lifecycle state derived from termination_reason + exit_code.
+    let state: JobLifecycleState;
+    if (reason === 'terminated_by_user') {
+      state = 'killed-by-operator';
+    } else if (reason === 'shed_by_host') {
+      state = 'killed-by-system';
+    } else if (reason === 'crashed') {
+      state = 'crashed';
+    } else if (reason === 'budget_exceeded') {
+      state = 'killed-by-system';
+    } else {
+      // completed
+      state = exitCode && exitCode !== 0 ? 'completed-error' : 'completed-clean';
+    }
+    const ended = new Date().toISOString();
+    this.db
+      .prepare(
+        `UPDATE jobs SET lifecycle_state = ?, ended_at = ?, termination_reason = ?,
+           exit_code = ?, result_json = ?
+         WHERE id = ?`,
+      )
+      .run(
+        state,
+        ended,
+        reason,
+        exitCode ?? null,
+        result === undefined ? null : JSON.stringify(result),
+        id,
+      );
+    return {
+      ...existing,
+      lifecycle_state: state,
+      ended_at: ended,
+      termination_reason: reason,
+      exit_code: exitCode,
+      result,
+    };
+  }
+
+  /** Active jobs the watchdog should evaluate for staleness. Parallels
+   *  listWorkersForWatchdog. */
+  listJobsForWatchdog(): Array<{
+    id: string;
+    name: string;
+    binding_kind: string;
+    binding_target: string;
+    started_at: string;
+    last_activity_at: string | null;
+    lifecycle_state: string;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT id, name, binding_kind, binding_target, started_at, last_activity_at,
+                lifecycle_state
+         FROM jobs WHERE lifecycle_state IN ('dispatched', 'running')`,
+      )
+      .all() as Array<{
+        id: string;
+        name: string;
+        binding_kind: string;
+        binding_target: string;
+        started_at: string;
+        last_activity_at: string | null;
+        lifecycle_state: string;
+      }>;
+  }
+
+  jobNameIsAvailable(name: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM jobs
+         WHERE name = ? AND lifecycle_state IN ('dispatched', 'running')
+         LIMIT 1`,
+      )
+      .get(name);
+    return !row;
+  }
+
   listRecentDecisions(limit = 20): DecisionRecord[] {
     const rows = this.db
       .prepare(`SELECT correlation_id FROM decisions ORDER BY requested_at DESC LIMIT ?`)
@@ -2046,6 +2314,50 @@ interface WorkerRow {
   termination_reason: string | null;
   exit_code: number | null;
   lifecycle_state: string | null;
+}
+
+interface JobRow {
+  id: string;
+  name: string;
+  binding_kind: string;
+  binding_target: string;
+  params_hash: string;
+  lifecycle_state: string;
+  started_at: string;
+  ended_at: string | null;
+  last_activity_at: string | null;
+  metadata_json: string;
+  termination_reason: string | null;
+  exit_code: number | null;
+  result_json: string | null;
+  budget_json: string | null;
+  audit_correlation_id: string | null;
+  federation_role: string | null;
+  originator_peer: string | null;
+  grant_id: string | null;
+}
+
+function jobRowToRecord(row: JobRow): JobRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    binding_kind: row.binding_kind as JobRecord['binding_kind'],
+    binding_target: row.binding_target,
+    params_hash: row.params_hash,
+    lifecycle_state: row.lifecycle_state as JobLifecycleState,
+    started_at: row.started_at,
+    ended_at: row.ended_at ?? undefined,
+    last_activity_at: row.last_activity_at ?? undefined,
+    metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
+    termination_reason: (row.termination_reason as JobRecord['termination_reason']) ?? undefined,
+    exit_code: row.exit_code ?? undefined,
+    result: row.result_json ? (JSON.parse(row.result_json) as unknown) : undefined,
+    budget: row.budget_json ? (JSON.parse(row.budget_json) as JobRecord['budget']) : undefined,
+    audit_correlation_id: row.audit_correlation_id ?? undefined,
+    federation_role: (row.federation_role as JobRecord['federation_role']) ?? undefined,
+    originator_peer: row.originator_peer ?? undefined,
+    grant_id: row.grant_id ?? undefined,
+  };
 }
 
 function workerRowToRecord(row: WorkerRow): WorkerRecord {

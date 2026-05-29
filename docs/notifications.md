@@ -172,6 +172,8 @@ The notification fabric now taps four additional event kinds:
 | `trust_scope_proposed` | `scope_proposed` | `warn` | [Grant] [Reject] [Open dashboard] |
 | `host_exec_denied` | `host_exec_denied` | `warn` | [View audit] |
 | `worker_dispatch_failed` | `worker_dispatch_failed` | `crit` | [View logs] |
+> The `worker_dispatch_failed` event is a legacy name still emitted via dual-emit during the worker-dispatch deprecation window (see [event-taxonomy.md](./event-taxonomy.md)). Subscribers don't need to migrate today; a future release will rename the notification kind to `job_dispatch_failed`.
+
 | `cc_quota_warning` | `cc_quota_warning` | `warn` (`crit` at ≥95 %) | [View status] |
 
 [Grant] routes to `TrustStore.grant(scopeId, "notify:telegram")` — same audit shape as a dashboard click; emits `trust_scope_granted`. [Reject] revokes the proposed scope and emits a dedicated `trust_scope_rejected` event. Both honour the same `wrong_state` short-circuit if the scope isn't in `proposed` state any more (e.g. operator granted from the dashboard in the meantime).

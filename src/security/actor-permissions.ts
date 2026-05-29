@@ -175,6 +175,13 @@ export class ActorPermissionStore {
   resolve(actorId: string, toolId: string): ResolvedTier {
     const row = this.get(actorId, toolId);
     if (row) return { tier: row.tier, source: 'matrix' };
+    // worker-dispatch Phase 3c.2 — the worker_*/job_* alias-aware fallback
+    // branch deleted. The bespoke worker subsystem is gone; legacy
+    // worker_* tool IDs no longer exist as registered tools, so an alias
+    // lookup has nothing to resolve to. Operators with stale matrix rows
+    // referencing `worker_spawn` etc. land on direct-hit (the row still
+    // exists in the table — see ResolvedTier.matrix), but no tool invokes
+    // those names anymore so the row is inert data until cleaned up.
     if (isOperatorShapeActor(actorId)) {
       return { tier: defaultTierFor(toolId), source: 'default' };
     }

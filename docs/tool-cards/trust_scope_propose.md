@@ -306,7 +306,7 @@ AUTO — runs without confirmation. Read-only or has built-in escape hatches; th
       {
         "tool": "github_merge_pr",
         "param_constraints": {
-          "repo": "Kstkoda/stavr"
+          "repo": "stenlund/stavr"
         }
       }
     ],

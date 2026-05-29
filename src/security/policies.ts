@@ -5,11 +5,14 @@
 //
 //   - tight        — everything CONFIRM or stricter; reads stay AUTO
 //   - developer    — relaxed for the actor running developer workloads:
-//                    worker_spawn / propose_plan AUTO, host_exec still
+//                    job_dispatch / propose_plan AUTO, host_exec still
 //                    EXPLICIT (irreversible shell never goes below EXPLICIT)
 //   - review-only  — every actionable tool downgraded to CONFIRM or NO_GO;
 //                    reads + subscribes remain AUTO so the dashboard still
 //                    surfaces activity, but nothing mutates without a click
+//
+// worker-dispatch Phase 3c.2 — worker_* preset rows deleted alongside the
+// bespoke worker subsystem. job_* tools cover the substrate now.
 //
 // Applying a policy writes one matrix row per tool to the
 // `actor_permissions` table for the target actor — equivalent to the
@@ -57,16 +60,17 @@ export const BUILT_IN_POLICIES: Record<PolicyPresetId, PolicyPreset> = {
       subscribe_to_events: 'AUTO',
       unsubscribe: 'AUTO',
       get_events: 'AUTO',
-      worker_list: 'AUTO',
-      worker_list_types: 'AUTO',
-      worker_status: 'AUTO',
       steward_ask: 'AUTO',
       await_decision: 'AUTO',
       respond_to_decision: 'CONFIRM',
-      // writes / spawns — CONFIRM
-      worker_spawn: 'CONFIRM',
-      worker_dispatch: 'CONFIRM',
-      worker_terminate: 'CONFIRM',
+      // job substrate (was worker_* + job_* parity in Phase 3b; 3c.2
+      // dropped the worker_* entries when the bespoke subsystem deleted)
+      job_list: 'AUTO',
+      job_list_bindings: 'AUTO',
+      job_status: 'AUTO',
+      job_dispatch: 'CONFIRM',
+      job_inject: 'CONFIRM',
+      job_terminate: 'CONFIRM',
       propose_plan: 'CONFIRM',
       // dangerous — EXPLICIT
       host_exec: 'EXPLICIT',
@@ -75,22 +79,22 @@ export const BUILT_IN_POLICIES: Record<PolicyPresetId, PolicyPreset> = {
   developer: {
     id: 'developer',
     label: 'Developer',
-    description: 'Worker spawn AUTO; plan + dispatch CONFIRM; host_exec stays EXPLICIT.',
+    description: 'Job dispatch AUTO; plan + inject CONFIRM; host_exec stays EXPLICIT.',
     tiers: {
       emit_event: 'AUTO',
       subscribe_to_events: 'AUTO',
       unsubscribe: 'AUTO',
       get_events: 'AUTO',
-      worker_list: 'AUTO',
-      worker_list_types: 'AUTO',
-      worker_status: 'AUTO',
       steward_ask: 'AUTO',
       await_decision: 'AUTO',
       respond_to_decision: 'AUTO',
       // dev hot-path
-      worker_spawn: 'AUTO',
-      worker_dispatch: 'CONFIRM',
-      worker_terminate: 'CONFIRM',
+      job_list: 'AUTO',
+      job_list_bindings: 'AUTO',
+      job_status: 'AUTO',
+      job_dispatch: 'AUTO',
+      job_inject: 'CONFIRM',
+      job_terminate: 'CONFIRM',
       propose_plan: 'AUTO',
       // host_exec NEVER drops below EXPLICIT — arbitrary shell deserves
       // friction even when the operator has signed off on the actor
@@ -106,16 +110,16 @@ export const BUILT_IN_POLICIES: Record<PolicyPresetId, PolicyPreset> = {
       subscribe_to_events: 'AUTO',
       unsubscribe: 'AUTO',
       get_events: 'AUTO',
-      worker_list: 'AUTO',
-      worker_list_types: 'AUTO',
-      worker_status: 'AUTO',
       steward_ask: 'AUTO',
       await_decision: 'AUTO',
       respond_to_decision: 'CONFIRM',
       // mutations blocked entirely
-      worker_spawn: 'NO_GO',
-      worker_dispatch: 'NO_GO',
-      worker_terminate: 'CONFIRM',
+      job_list: 'AUTO',
+      job_list_bindings: 'AUTO',
+      job_status: 'AUTO',
+      job_dispatch: 'NO_GO',
+      job_inject: 'NO_GO',
+      job_terminate: 'CONFIRM',
       propose_plan: 'CONFIRM',
       host_exec: 'NO_GO',
     },

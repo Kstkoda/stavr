@@ -5,21 +5,24 @@
  *   - Jobs banner (7 pills)
  *   - Section 1: MCPs        — gauges + trend chart + roster
  *   - Section 2: stavR fleet — gauges + trend chart + roster
- *   - Section 3: Workers     — gauges + trend chart + roster
+ *   - Section 3: Jobs        — gauges + trend chart + roster
  *   - Bottom row: Self-heal log (left) + Live trace tail (right)
  *   - Window selector (5m / 1h / 24h / 7d) drives all chart ranges
  *
- * Data: bricks + workers fed in via DiagnosticsData (optional). The trend
+ * Data: bricks + jobs fed in via DiagnosticsData (optional). The trend
  * + gauge + heal feeds are pulled live from /metrics and /dashboard/stream
  * SSE by the page JS — server-side render is the empty/stub state so the
  * page is never blank.
+ *
+ * worker-dispatch Phase 3c.1 — Section 3 retargeted from WorkerRecord
+ * onto JobRecord; data slot renamed `workers` → `jobs`.
  */
-import type { WorkerRecord } from '../../persistence.js';
+import type { JobRecord } from '../../jobs/types.js';
 import type { InstalledBrickLite } from '../adapters/topology.js';
 import { renderShell } from '../shell.js';
 import { renderIcon, resolveIconId } from '../components/icon-sprite.js';
-import { deriveLifecycleState } from '../../workers/lifecycle.js';
-import { fetchWorkerCounters } from '../data/worker-counters.js';
+import { deriveLifecycleState } from '../../jobs/lifecycle.js';
+import { fetchJobCounters } from '../data/job-counters.js';
 import {
   snapshotBuildVersions,
   formatUptime,
@@ -35,7 +38,7 @@ import {
 
 export interface DiagnosticsData {
   bricks?: InstalledBrickLite[];
-  workers?: WorkerRecord[];
+  jobs?: JobRecord[];
   /** Peer count (federated daemons). Defaults to 0 until federation lands. */
   peerCount?: number;
   /**
@@ -884,7 +887,7 @@ const DIAGNOSTICS_JS = `
       const errPts = pointsFor(body.errors && body.errors.points);
       applySeries('mcp-trend',    [mcpPts, p95Pts, errPts]);
       applySeries('fleet-trend',  [mcpPts, errPts]);
-      applySeries('worker-trend', [p95Pts, errPts]);
+      applySeries('job-trend',    [p95Pts, errPts]);
     } catch (_) {}
   }
   document.querySelectorAll('.window-bar button').forEach(function(b) {
@@ -1225,7 +1228,7 @@ const DIAGNOSTICS_JS = `
 // =============================== render ================================
 export function renderDiagnosticsPage(data?: DiagnosticsData): string {
   const bricks = data?.bricks ?? [];
-  const workers = data?.workers ?? [];
+  const jobs = data?.jobs ?? [];
   const peers = data?.peerCount ?? 0;
   // v0.6.8 Section 0 — fall back to a live snapshot when the caller didn't
   // pre-fetch (e.g. dashboard router without explicit deps wiring). Tests
@@ -1239,8 +1242,11 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
   const buildVersionsSection = renderBuildVersionsSection(versions);
   const perfSection = renderPerfSection();
 
-  // ----- Jobs banner -----
-  const jobs = [
+  // ----- Cron-job banner -----
+  // NB: these are cron-style scheduled tasks (backup, CI, deploy etc), not
+  // stavR JobRecord entries. The outer container keeps the legacy
+  // `jobs-banner` class so the existing CSS rule still applies.
+  const cronBannerItems = [
     { l: 'Backup',     v: '✓',            cls: 'ok' as const },
     { l: 'CI',         v: '✓',            cls: 'ok' as const },
     { l: 'Deploy',     v: '✓',            cls: 'ok' as const },
@@ -1251,7 +1257,7 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
   ];
   const jobsBanner = [
     `<div class="jobs-banner glass" style="padding:8px 10px;">`,
-    jobs.map((j) => `<div class="job-pill ${j.cls}"><span class="l">${escapeHtml(j.l)}</span><span class="v">${escapeHtml(j.v)}</span></div>`).join(''),
+    cronBannerItems.map((c) => `<div class="job-pill ${c.cls}"><span class="l">${escapeHtml(c.l)}</span><span class="v">${escapeHtml(c.v)}</span></div>`).join(''),
     `</div>`,
   ].join('');
 
@@ -1336,54 +1342,56 @@ export function renderDiagnosticsPage(data?: DiagnosticsData): string {
     roster: renderRoster('Fleet · roster', ['RSS', 'loop', 'qps'], fleetRows),
   });
 
-  // ----- Section 3: Workers + scopes -----
-  // BOM v0.6.6 P3 — Workers gauges + roster read from the single-source
-  // counters so this section agrees with Helm L2 + Topology header. Per
-  // BOM hard rule #5 the row meta carries lifetime AND active counts;
-  // the active gauge is the live one operators key off.
-  const workerNow = Date.now();
-  const workerCounters = fetchWorkerCounters(workers, workerNow);
-  const workerRows: RosterRow[] = workers.map((w) => {
-    const lifecycle = deriveLifecycleState(w, workerNow);
+  // ----- Section 3: Jobs + scopes -----
+  // Jobs gauges + roster read from the single-source counters so this
+  // section agrees with Helm L2 + Topology header. Per BOM v0.6.6 hard
+  // rule #5 the row meta carries lifetime AND active counts; the active
+  // gauge is the live one operators key off.
+  const jobNow = Date.now();
+  const jobCounters = fetchJobCounters(jobs, jobNow);
+  const jobRows: RosterRow[] = jobs.map((j) => {
+    const lifecycle = deriveLifecycleState(j, jobNow);
     const status: 'ok' | 'crit' | 'idle' | 'warn' =
       lifecycle === 'crashed' || lifecycle === 'killed-by-system' ? 'crit'
-      : lifecycle === 'running' || lifecycle === 'starting' ? 'ok'
+      : lifecycle === 'running' || lifecycle === 'dispatched' ? 'ok'
       : lifecycle === 'stale' || lifecycle === 'completed-error' || lifecycle === 'killed-by-operator' ? 'warn'
       : 'idle';
+    const bindingLabel = `${j.binding_kind}:${j.binding_target}`;
+    const cwd = typeof j.metadata?.cwd === 'string' ? j.metadata.cwd : '';
     return {
-      name: w.name || w.id,
-      iconId: resolveIconId(w.type),
+      name: j.name || j.id,
+      iconId: resolveIconId(j.binding_kind),
       status,
       cols: [
-        escapeHtml(w.type),
-        `<span style="color:var(--ink-3);">${w.cwd ? escapeHtml(w.cwd.slice(0, 24)) : '—'}</span>`,
+        escapeHtml(bindingLabel),
+        `<span style="color:var(--ink-3);">${cwd ? escapeHtml(cwd.slice(0, 24)) : '—'}</span>`,
         `<span style="color:var(--ink-3);">${escapeHtml(lifecycle)}</span>`,
       ],
     };
   });
-  const workerActive = workerCounters.active;
-  const workerCrashed = workerCounters.crashed + workerCounters.killed_by_system;
-  const workerTrend = renderTrendChart(
-    'Workers · throughput',
+  const jobActive = jobCounters.active;
+  const jobCrashed = jobCounters.crashed + jobCounters.killed_by_system;
+  const jobTrend = renderTrendChart(
+    'Jobs · throughput',
     [
       { name: 'active',  color: 'var(--green)' },
       { name: 'crashed', color: 'var(--crit)'  },
     ],
     {
-      slot: 'worker-trend',
-      ...(workerActive > 0 ? {} : { emptyMessage: 'No active workers — spawn a job to see throughput.' }),
+      slot: 'job-trend',
+      ...(jobActive > 0 ? {} : { emptyMessage: 'No active jobs — dispatch a job to see throughput.' }),
     },
   );
   const workerSection = renderSection({
-    title: 'Section 3 · Workers + scopes',
-    meta: `${workerActive} active · ${workerCounters.total} lifetime`,
+    title: 'Section 3 · Jobs + scopes',
+    meta: `${jobActive} active · ${jobCounters.total} lifetime`,
     gauges: [
-      renderGauge('active',  String(workerActive), 'workers', 'ok', Math.min(100, workerActive * 12)),
-      renderGauge('crashed', String(workerCrashed), 'workers', workerCrashed > 0 ? 'crit' : 'ok', workerCrashed > 0 ? 100 : 0),
+      renderGauge('active',  String(jobActive), 'jobs', 'ok', Math.min(100, jobActive * 12)),
+      renderGauge('crashed', String(jobCrashed), 'jobs', jobCrashed > 0 ? 'crit' : 'ok', jobCrashed > 0 ? 100 : 0),
       renderGauge('scopes',  '—', 'active',  'ok', 0),
     ].join(''),
-    trend: workerTrend,
-    roster: renderRoster('Workers · roster', ['Type', 'cwd', 'eta'], workerRows),
+    trend: jobTrend,
+    roster: renderRoster('Jobs · roster', ['Kind', 'cwd', 'eta'], jobRows),
   });
 
   // ----- v0.5 P6: Steward subprocess panel (additive) -----

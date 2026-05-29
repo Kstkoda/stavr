@@ -59,8 +59,8 @@ function makeFakeOrch(ids: string[]): SheddableOrchestrator & { shed: string[] }
   const shed: string[] = [];
   return {
     liveCount: () => ids.length - shed.length,
-    liveWorkerIdsInSpawnOrder: () => ids.filter((i) => !shed.includes(i)),
-    shedWorker: async (id, _reason) => {
+    liveJobIdsInDispatchOrder: () => ids.filter((i) => !shed.includes(i)),
+    shedJob: async (id, _reason) => {
       shed.push(id);
       return { exitCode: 0 };
     },
@@ -96,7 +96,7 @@ describe('startLoadShedder', () => {
     expect(orch.shed).toEqual([]);
   });
 
-  it('sheds the most-recent worker when ram_used_pct_ewma is over the threshold', async () => {
+  it('sheds the most-recent job when ram_used_pct_ewma is over the threshold', async () => {
     const sched = fakeScheduler();
     const orch = makeFakeOrch(['oldest', 'mid', 'newest']);
     startLoadShedder({
@@ -183,7 +183,7 @@ describe('startLoadShedder', () => {
     expect(orch.shed).toEqual(['b', 'a']);
   });
 
-  it('does nothing when there are no live workers', async () => {
+  it('does nothing when there are no live jobs', async () => {
     const sched = fakeScheduler();
     const orch = makeFakeOrch([]);
     startLoadShedder({
@@ -211,13 +211,13 @@ describe('startLoadShedder', () => {
     expect(orch.shed).toEqual([]);
   });
 
-  it('swallows shedWorker throws and continues on next tick', async () => {
+  it('swallows shedJob throws and continues on next tick', async () => {
     const sched = fakeScheduler();
     let calls = 0;
     const orch: SheddableOrchestrator = {
       liveCount: () => 2,
-      liveWorkerIdsInSpawnOrder: () => ['x', 'y'],
-      shedWorker: async () => {
+      liveJobIdsInDispatchOrder: () => ['x', 'y'],
+      shedJob: async () => {
         calls += 1;
         throw new Error('boom');
       },

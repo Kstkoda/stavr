@@ -80,14 +80,14 @@ AUTO — runs without confirmation. Read-only or has built-in escape hatches; th
   "args": {
     "kinds": [
       "decision_request",
-      "worker_progress"
+      "job_progress"
     ]
   },
   "result": {
     "subscription_id": "sub_...",
     "kinds": [
       "decision_request",
-      "worker_progress"
+      "job_progress"
     ],
     "replayed_events": 0
   }

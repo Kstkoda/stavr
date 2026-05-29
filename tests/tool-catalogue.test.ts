@@ -37,12 +37,14 @@ interface Catalogue {
  * subprocess dependencies that aren't worth setting up here).
  */
 function extractRegisteredToolNames(): string[] {
+  // worker-dispatch Phase 3c.2 — src/workers/tools.ts deleted with the
+  // bespoke worker subsystem; src/jobs/tools.ts is the job_* surface.
   const sources = [
     'src/server.ts',
     'src/tools/decisions.ts',
     'src/adapters/github.ts',
     'src/adapters/github-writes.ts',
-    'src/workers/tools.ts',
+    'src/jobs/tools.ts',
     'src/trust/tools.ts',
   ];
   const names = new Set<string>();

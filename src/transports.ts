@@ -17,10 +17,10 @@ import {
 } from './server.js';
 import { loadChannelStatuses } from './dashboard/data/channels.js';
 import { fetchToolsData } from './dashboard/data/tools-data.js';
-import { fetchWorkerCounters } from './dashboard/data/worker-counters.js';
+import { fetchJobCounters } from './dashboard/data/job-counters.js';
 import { fetchHostCeilingData } from './dashboard/data/host-ceiling.js';
 import { fetchTopologyExtras } from './dashboard/data/topology-data.js';
-import { deriveLifecycleState } from './workers/lifecycle.js';
+import { deriveLifecycleState } from './jobs/lifecycle.js';
 import { fetchPermissionsData } from './dashboard/data/permissions-data.js';
 import { fetchDecisionsHistory } from './dashboard/data/history/decisions.js';
 import { fetchScopesHistory } from './dashboard/data/history/scopes.js';
@@ -1520,14 +1520,14 @@ export function mountDashboardRoutes(
   }
 
   // v0.3 dashboard shell — /dashboard redirects to /dashboard/home; per-page
-  // routes (home, topology, workers, plans, decide, toolkit, capabilities,
+  // routes (home, topology, jobs, plans, decide, toolkit, capabilities,
   // settings) render the shared shell. Must run BEFORE any /dashboard/<page>/*
   // JSON endpoints so Express dispatches the page route for bare GETs.
-  // Topology page snapshot — current workers + installed bricks + in-flight
+  // Topology page snapshot — current jobs + installed bricks + in-flight
   // BOMs grouped by trust scope. Lightweight; the page reloads on relevant
   // SSE events rather than tracking deltas.
   function topologyData() {
-    const workers = broker.store.listWorkers();
+    const jobs = broker.store.listJobs();
     const installed = broker.store.listInstalledBricks();
     const bricks = installed.map((b) => ({
       id: b.id,
@@ -1565,7 +1565,7 @@ export function mountDashboardRoutes(
       perms: getOrCreateActorPermissionStore(broker),
     });
     return {
-      workers,
+      jobs,
       bricks,
       scopes,
       inFlightBoms,
@@ -1619,15 +1619,16 @@ export function mountDashboardRoutes(
     };
   }
 
-  function workersDataRaw() {
-    const workers = broker.store.listWorkers();
+  function jobsDataRaw() {
+    const jobs = broker.store.listJobs();
     const recent: Record<string, StoredEvent[]> = {};
-    if (workers.length > 0) {
+    if (jobs.length > 0) {
       const allRecent = broker.store.getEvents({ limit: workersMaxEvents }).events;
-      const idSet = new Set(workers.map((w) => w.id));
+      const idSet = new Set(jobs.map((j) => j.id));
       for (const ev of allRecent) {
         const corr = ev.correlation_id;
-        const payloadId = (ev.payload as { id?: string } | null | undefined)?.id;
+        const payload = ev.payload as { id?: string; job_id?: string } | null | undefined;
+        const payloadId = payload?.id ?? payload?.job_id;
         const targetId = corr && idSet.has(corr)
           ? corr
           : payloadId && idSet.has(payloadId)
@@ -1640,7 +1641,7 @@ export function mountDashboardRoutes(
         recent[id] = recent[id].slice(-8);
       }
     }
-    return { workers, recent };
+    return { jobs, recent };
   }
 
   // Toolkit page snapshot — every registered connector with its
@@ -1741,35 +1742,38 @@ export function mountDashboardRoutes(
     };
   }
 
-  // bom-oom-leak-hunt C2.2 — memoized accessors. Workers page is the
-  // hotter path (full event scan per render); home is the more frequent
-  // path (5s poll). Both wrapped at the same TTL — overrideable via env.
+  // bom-oom-leak-hunt C2.2 — memoized accessors. Jobs page is the hotter
+  // path (full event scan per render); home is the more frequent path
+  // (5s poll). Both wrapped at the same TTL — overrideable via env.
   const homeData = memoize(homeDataRaw, dashboardCacheMs);
-  const workersData = memoize(workersDataRaw, Math.max(1, Math.floor(dashboardCacheMs / 2)));
+  const jobsData = memoize(jobsDataRaw, Math.max(1, Math.floor(dashboardCacheMs / 2)));
 
   // v0.4 Helm page — derived from the same underlying state as Home (we want
   // the same memoization to amortise the cost of broker.store reads). The
-  // shape is denser (workers row, sys-chips, intent summary).
+  // shape is denser (jobs row, sys-chips, intent summary).
   function helmDataRaw(): import('./dashboard/pages/helm.js').HelmData {
     const h = homeData();
-    // BOM v0.6.6 — derive lifecycle_state for every worker and feed it
-    // through to the L2 chip + counter summary. Cap raw scan at 64 (twice
-    // the historical 32-chip cap) so the counter math sees enough rows
-    // for "lifetime" but render still slices to 6 active chips in helm.ts.
-    const allWorkers = broker.store.listWorkers();
+    // Derive lifecycle_state for every job and feed it through to the L2
+    // chip + counter summary. Cap raw scan at 64 (twice the historical
+    // 32-chip cap) so the counter math sees enough rows for "lifetime"
+    // but render still slices to 6 active chips in helm.ts.
+    const allJobs = broker.store.listJobs();
     const now = Date.now();
-    const counters = fetchWorkerCounters(allWorkers, now);
-    const workers = allWorkers.slice(0, 32).map((w) => {
-      const lifecycle = deriveLifecycleState(w, now);
+    const counters = fetchJobCounters(allJobs, now);
+    const jobs = allJobs.slice(0, 32).map((j) => {
+      const lifecycle = deriveLifecycleState(j, now);
+      // Map the lifecycle to the legacy HelmJob.status enum for back-compat
+      // with the data-state attribute tests still key off.
+      const status: 'idle' | 'running' | 'crashed' | 'cleanup' =
+        lifecycle === 'running' ? 'running'
+        : lifecycle === 'crashed' || lifecycle === 'killed-by-system' ? 'crashed'
+        : lifecycle === 'dispatched' ? 'cleanup'
+        : 'idle';
       return {
-        id: w.id,
-        type: w.type,
-        status: ((): 'idle' | 'running' | 'crashed' | 'cleanup' => {
-          if (w.status === 'running') return 'running';
-          if (w.status === 'crashed') return 'crashed';
-          if (w.status === 'starting') return 'cleanup';
-          return 'idle';
-        })(),
+        id: j.id,
+        binding_kind: j.binding_kind,
+        binding_target: j.binding_target,
+        status,
         lifecycle_state: lifecycle,
         current_step: undefined,
       };
@@ -1804,8 +1808,8 @@ export function mountDashboardRoutes(
       },
       boms: h.boms,
       decisions: h.decisions,
-      workers,
-      worker_counters: {
+      jobs,
+      job_counters: {
         active: counters.active,
         completed: counters.completed_clean + counters.completed_error,
         crashed: counters.crashed + counters.killed_by_system,
@@ -1822,16 +1826,12 @@ export function mountDashboardRoutes(
   // v0.4 MCPs page — installed bricks come straight from the brick registry;
   // the static github.com/mcp snapshot lives in the page module itself so
   // it's bundled with the daemon and doesn't require a registry lookup.
-  // v0.6.11 Phase 6e (UX audit B3) — Diagnostics Section 3 was reading
-  // its workers from `data.workers ?? []` but mountDashboardPages had no
-  // diagnosticsData getter wired, so the page always saw an empty list
-  // and reported "0 active · 0 lifetime" while Streams + Topology saw
-  // the live 16. This getter feeds the same single source of truth
-  // (broker.store.listWorkers + listInstalledBricks) all three pages
-  // consume so the counts agree.
+  // worker-dispatch Phase 3c.1 — Diagnostics Section 3 reads JobRecord
+  // via `data.jobs`; same single source of truth (broker.store.listJobs +
+  // listInstalledBricks) that Helm + Topology consume so the counts agree.
   function diagnosticsData(): import('./dashboard/pages/diagnostics.js').DiagnosticsData {
     return {
-      workers: broker.store.listWorkers(),
+      jobs: broker.store.listJobs(),
       bricks: broker.store.listInstalledBricks().map((b) => ({
         id: b.id,
         display_name: b.display_name,
@@ -1887,7 +1887,7 @@ export function mountDashboardRoutes(
     };
   }
 
-  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, workersData, historyData, toolkitData, mcpsData, toolsData, permissionsData, capabilitiesData, settingsData, diagnosticsData, familyModeData });
+  mountDashboardPages(app, { helmData, homeData, plansData, decideData, topologyData, jobsData, historyData, toolkitData, mcpsData, toolsData, permissionsData, capabilitiesData, settingsData, diagnosticsData, familyModeData });
 
   // v0.8 — XHR endpoint backing the History page's "Load more" + range
   // re-fetch. Same data sources as historyData() but with caller-supplied

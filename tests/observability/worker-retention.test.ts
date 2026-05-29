@@ -1,7 +1,14 @@
 /**
  * v0.6.12 Phase 5 — worker retention policy tests.
+ *
+ * Phase 3a (worker-dispatch BOM) renames the env vars
+ * STAVR_WORKER_RETENTION_HOURS → STAVR_JOB_RETENTION_HOURS and
+ * STAVR_WORKER_HARD_DELETE_DAYS → STAVR_JOB_HARD_DELETE_DAYS. The legacy
+ * names are still read for one release with a console.warn. The
+ * "env resolution — Phase 3a renamed env vars" describe block below
+ * covers that backwards-compat behaviour.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   archiveWindowMs,
   hardDeleteCutoffIso,
@@ -16,25 +23,75 @@ describe('worker-retention — env resolution', () => {
   it('defaults to 4h archive + 30d hard-delete when no env set', () => {
     delete process.env.STAVR_WORKER_RETENTION_HOURS;
     delete process.env.STAVR_WORKER_HARD_DELETE_DAYS;
+    delete process.env.STAVR_JOB_RETENTION_HOURS;
+    delete process.env.STAVR_JOB_HARD_DELETE_DAYS;
     const opts = resolveWorkerRetentionOpts();
     expect(opts.retentionHours).toBe(4);
     expect(opts.hardDeleteDays).toBe(30);
   });
 
-  it('honors env overrides', () => {
+  it('honors legacy env overrides (with deprecation warn)', () => {
+    delete process.env.STAVR_JOB_RETENTION_HOURS;
+    delete process.env.STAVR_JOB_HARD_DELETE_DAYS;
     process.env.STAVR_WORKER_RETENTION_HOURS = '12';
     process.env.STAVR_WORKER_HARD_DELETE_DAYS = '7';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const opts = resolveWorkerRetentionOpts();
     expect(opts.retentionHours).toBe(12);
     expect(opts.hardDeleteDays).toBe(7);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('rejects non-positive values (falls back to defaults)', () => {
+    delete process.env.STAVR_JOB_RETENTION_HOURS;
+    delete process.env.STAVR_JOB_HARD_DELETE_DAYS;
     process.env.STAVR_WORKER_RETENTION_HOURS = '0';
     process.env.STAVR_WORKER_HARD_DELETE_DAYS = '-5';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const opts = resolveWorkerRetentionOpts();
     expect(opts.retentionHours).toBe(4);
     expect(opts.hardDeleteDays).toBe(30);
+    warn.mockRestore();
+  });
+
+  describe('Phase 3a — STAVR_JOB_* env vars', () => {
+    it('prefers STAVR_JOB_* over STAVR_WORKER_* with no warning when only new is set', () => {
+      delete process.env.STAVR_WORKER_RETENTION_HOURS;
+      delete process.env.STAVR_WORKER_HARD_DELETE_DAYS;
+      process.env.STAVR_JOB_RETENTION_HOURS = '8';
+      process.env.STAVR_JOB_HARD_DELETE_DAYS = '60';
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const opts = resolveWorkerRetentionOpts();
+      expect(opts.retentionHours).toBe(8);
+      expect(opts.hardDeleteDays).toBe(60);
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('JOB_* wins when both are set, with a conflict warning', () => {
+      process.env.STAVR_JOB_RETENTION_HOURS = '8';
+      process.env.STAVR_WORKER_RETENTION_HOURS = '24';
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const opts = resolveWorkerRetentionOpts();
+      expect(opts.retentionHours).toBe(8);
+      expect(warn).toHaveBeenCalled();
+      const msg = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+      expect(msg).toContain('STAVR_JOB_RETENTION_HOURS');
+      expect(msg).toContain('STAVR_WORKER_RETENTION_HOURS');
+      warn.mockRestore();
+    });
+
+    it('falls back to legacy with deprecation warn when only legacy set', () => {
+      delete process.env.STAVR_JOB_RETENTION_HOURS;
+      process.env.STAVR_WORKER_RETENTION_HOURS = '20';
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const opts = resolveWorkerRetentionOpts();
+      expect(opts.retentionHours).toBe(20);
+      const msg = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+      expect(msg).toContain('deprecated');
+      warn.mockRestore();
+    });
   });
 
   it('archiveWindowMs converts hours to ms', () => {

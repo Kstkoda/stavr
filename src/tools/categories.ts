@@ -22,9 +22,14 @@
  * Categories surface in the `/dashboard/tools` page header filter + the
  * Topology permissions overlay (PR #2). Keep the set small and meaningful
  * — operators should be able to scan it without re-reading docs.
+ *
+ * worker-dispatch Phase 3c.2 note: the category symbol stays `'worker'`
+ * for now — the operator-visible label is what flipped to "Jobs" (see
+ * src/dashboard/data/topology-data.ts CATEGORY_LABELS map). Renaming the
+ * symbol itself is a separate operator-visible-strings cycle.
  */
 export type ToolCategory =
-  | 'worker'        // worker_spawn, worker_terminate, worker_get_status, …
+  | 'worker'        // job_dispatch / job_terminate / job_status / …
   | 'scope'         // trust_scope_*
   | 'github'        // github_* — read + write
   | 'steward'       // steward_*
@@ -77,7 +82,10 @@ const EXPLICIT_CATEGORY: Record<string, ToolCategory> = {
  */
 const PREFIX_CATEGORY: Array<[ReadonlyArray<string>, ToolCategory]> = [
   [['trust_scope_', 'trust_scope.'], 'scope'],
-  [['worker_', 'worker.'], 'worker'],
+  // worker-dispatch Phase 3c.2 — legacy worker_* tool IDs are gone; only
+  // job_* prefixes route here now. The category symbol stays 'worker' for
+  // back-compat with persisted actor_permissions / catalogue rows.
+  [['job_', 'job.'], 'worker'],
   [['github_', 'github.'], 'github'],
   [['steward_', 'steward.'], 'steward'],
   [['credential_', 'credential.'], 'credentials'],
@@ -115,14 +123,16 @@ const EXPLICIT_TIER: Record<string, Tier> = {
   subscribe_to_events: 'AUTO',
   unsubscribe: 'AUTO',
   get_events: 'AUTO',
-  worker_list_types: 'AUTO',
-  worker_list: 'AUTO',
-  worker_status: 'AUTO',
   steward_ask: 'AUTO',
-  // Writes / spawns
-  worker_spawn: 'CONFIRM',
-  worker_dispatch: 'CONFIRM',
-  worker_terminate: 'CONFIRM',
+  // Job substrate (worker-dispatch — formerly worker_* in Phase 3b
+  // alias-pair shape; the worker_* entries and their alias tables
+  // deleted in Phase 3c.2 with the bespoke worker subsystem).
+  job_list_bindings: 'AUTO',
+  job_list: 'AUTO',
+  job_status: 'AUTO',
+  job_dispatch: 'CONFIRM',
+  job_inject: 'CONFIRM',
+  job_terminate: 'CONFIRM',
   // Shell / credentials
   host_exec: 'EXPLICIT',
   propose_plan: 'CONFIRM',
@@ -176,16 +186,18 @@ const EXPLICIT_REVERSIBILITY: Record<string, 'reversible' | 'irreversible'> = {
   subscribe_to_events: 'reversible',
   unsubscribe: 'reversible',
   get_events: 'reversible',
-  worker_list_types: 'reversible',
-  worker_list: 'reversible',
-  worker_status: 'reversible',
   steward_ask: 'reversible',
   propose_plan: 'reversible',
   await_decision: 'reversible',
   respond_to_decision: 'irreversible',
-  worker_spawn: 'irreversible',
-  worker_dispatch: 'irreversible',
-  worker_terminate: 'irreversible',
+  // Job substrate (worker-dispatch — worker_* entries deleted in 3c.2
+  // alongside the bespoke worker subsystem).
+  job_list_bindings: 'reversible',
+  job_list: 'reversible',
+  job_status: 'reversible',
+  job_dispatch: 'irreversible',
+  job_inject: 'irreversible',
+  job_terminate: 'irreversible',
   host_exec: 'irreversible',
 };
 

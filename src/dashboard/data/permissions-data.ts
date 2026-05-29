@@ -97,8 +97,8 @@ export function fetchPermissionsData(opts: {
   // the chokepoint will ACTUALLY enforce (including the peer:* default-
   // deny). Was previously inlined as get-or-defaultTierFor, which under-
   // reported peer effective tiers — a peer with no row would appear in
-  // the UI as 'CONFIRM' for worker_spawn while the chokepoint actually
-  // denied with NO_GO. Now they match.
+  // the UI as 'CONFIRM' for job_dispatch (formerly worker_spawn) while
+  // the chokepoint actually denied with NO_GO. Now they match.
   const matrix: PermissionsMatrixCell[] = [];
   for (const actor of actors) {
     for (const t of tools) {
