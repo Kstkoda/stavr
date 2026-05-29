@@ -234,6 +234,41 @@ export class EventStore {
       }
     }
 
+    // worker-dispatch Phase 4 — additive trust_scopes columns for
+    // grant-scope-aware enforcement on JobOrchestrator.dispatch.
+    //   - actor_id        : NULL = global capability (back-compat for
+    //     pre-Phase-4 grants); set = grant is bound to one actor, mismatch
+    //     denies with reason 'grant_not_for_actor'.
+    //   - covered_tools_json   : JSON array of MCP tool name strings.
+    //     NULL = wildcard '*' for back-compat. Empty array [] = covers
+    //     nothing (fail-closed). Explicit '*' string = wildcard.
+    //   - covered_targets_json : JSON array of binding_target strings.
+    //     Same NULL / [] / '*' semantics as covered_tools_json.
+    //   - budget_remaining : NULL = unbudgeted / infinite (back-compat).
+    //     Decremented atomically per JobOrchestrator.dispatch.
+    //     Distinct from expires_after_actions (the gated-action cap);
+    //     dispatch-budget and action-cap are independent counters.
+    // Idempotent pragma probe + ALTER for existing on-disk DBs; fresh DBs
+    // get the columns via the CREATE TABLE declaration below.
+    const trustScopesCols = this.db
+      .prepare(`PRAGMA table_info(trust_scopes)`)
+      .all() as Array<{ name: string }>;
+    if (trustScopesCols.length > 0) {
+      const has = (n: string) => trustScopesCols.some((r) => r.name === n);
+      if (!has('actor_id')) {
+        this.db.exec(`ALTER TABLE trust_scopes ADD COLUMN actor_id TEXT`);
+      }
+      if (!has('covered_tools_json')) {
+        this.db.exec(`ALTER TABLE trust_scopes ADD COLUMN covered_tools_json TEXT`);
+      }
+      if (!has('covered_targets_json')) {
+        this.db.exec(`ALTER TABLE trust_scopes ADD COLUMN covered_targets_json TEXT`);
+      }
+      if (!has('budget_remaining')) {
+        this.db.exec(`ALTER TABLE trust_scopes ADD COLUMN budget_remaining INTEGER`);
+      }
+    }
+
     this.db.exec(`
 
       CREATE TABLE IF NOT EXISTS decisions (
@@ -340,9 +375,21 @@ export class EventStore {
         spec_url TEXT,
         proposed_at TEXT,
         actions_executed INTEGER NOT NULL DEFAULT 0,
-        completed_at TEXT
+        completed_at TEXT,
+        -- worker-dispatch Phase 4 — grant-scope-aware enforcement on
+        -- JobOrchestrator.dispatch. See the additive-migration block in
+        -- init() for back-compat semantics.
+        actor_id TEXT,
+        covered_tools_json TEXT,
+        covered_targets_json TEXT,
+        budget_remaining INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_trust_scopes_status ON trust_scopes(status);
+      -- worker-dispatch Phase 4 — resolveGrant for operator-shape actors
+      -- filters by (status='active', actor_id IS NULL OR actor_id=?); index
+      -- on (status, actor_id) keeps that lookup cheap as the table grows.
+      CREATE INDEX IF NOT EXISTS idx_trust_scopes_status_actor
+        ON trust_scopes(status, actor_id);
 
       CREATE TABLE IF NOT EXISTS scope_actions (
         id TEXT PRIMARY KEY,

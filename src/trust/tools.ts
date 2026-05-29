@@ -45,6 +45,15 @@ function registerPropose(server: McpServer, broker: Broker, store: TrustStore): 
         expires_at: z.string().datetime().optional(),
         expires_after_actions: z.number().int().positive().optional(),
         spec_url: z.string().optional(),
+        // worker-dispatch Phase 4 — grant-scope-aware enforcement on
+        // JobOrchestrator.dispatch. All optional; omitting them yields
+        // a pre-Phase-4-shaped grant (covers everything, unbudgeted,
+        // any actor) for back-compat with existing trust_scope_grant
+        // call sites.
+        actor_id: z.string().optional(),
+        covered_tools: z.array(z.string().min(1)).optional(),
+        covered_targets: z.array(z.string().min(1)).optional(),
+        budget_remaining: z.number().int().nonnegative().optional(),
         source_agent: z.string().default('co'),
       },
     },
@@ -62,6 +71,10 @@ function registerPropose(server: McpServer, broker: Broker, store: TrustStore): 
         expires_at: args.expires_at,
         expires_after_actions: args.expires_after_actions,
         spec_url: args.spec_url,
+        actor_id: args.actor_id,
+        covered_tools: args.covered_tools,
+        covered_targets: args.covered_targets,
+        budget_remaining: args.budget_remaining,
       });
       await broker.publish({
         kind: 'trust_scope_proposed',

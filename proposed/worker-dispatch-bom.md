@@ -80,7 +80,27 @@ The sub-phases are linear — 3b consumes 3a's dual-emit substrate (the legacy `
 
 ## Phase 4 — Scope-aware enforcement (hard prerequisite for federation)
 
-Today the enforcement chokepoint checks an actor's *tier* but not their *grant scope* (trust scopes only gate the `gatedAction` subset). Make the chokepoint **grant-scope-aware**: every job step from a federated principal is validated against the specific grant — resource, feature, budget, expiry — before it runs. This MUST land before Phase 5. `high` sensitivity — it is a security primitive; operator approval gate.
+Today the enforcement chokepoint checks an actor's *tier* but not their *grant scope* (trust scopes only gate the `gatedAction` subset). Phase 4 lands **grant-scope-aware enforcement at the `JobOrchestrator.dispatch` path** — every job dispatch is validated against a specific grant (actor binding + tool coverage + target coverage + budget + expiry) before it runs. This MUST land before Phase 5. `high` sensitivity — it is a security primitive; operator approval gate.
+
+### Locked composition (operator 10-3-1, 2026-05-29 — option C)
+
+  - **peer:\* actors:** dispatch MUST include an explicit `grant_id`. No auto-resolve. Missing → reason `'grant_required'`.
+  - **Operator-shape actors** (`loopback:*`, `unstamped-loopback`, KNOWN_ACTORS — operator / cowork-claude / cc / steward): `JobOrchestrator` auto-resolves the most-permissive active grant covering (tool, target). No covering grant → internal `'sentinel'` shape (always covers, never budgeted, **never persisted as `grant_id`** on the JobRecord, no `grant_consumed` audit event fires). Operator's local hot path stays uncluttered.
+  - **Per-actor association** (operator's lock #1): nullable `actor_id` column on `trust_scopes`. NULL = global capability (back-compat). Set = grant is bound to one actor; resolution-time mismatch → `'grant_not_for_actor'`.
+  - **Coverage check** (locked): two independent set-membership checks. `grant.covered_tools` must include the MCP tool name AND `grant.covered_targets` must include the requested `binding_target`. NULL covered_* (back-compat) → wildcard. Explicit `'*'` membership → wildcard. **Empty array `[]` → covers nothing (fail-closed)** per operator's lock #2.
+  - **Budget** (operator's lock #6): NEW column `budget_remaining` distinct from `expires_after_actions` (the gated-action cap stays untouched). NULL = unbudgeted / infinite. Decremented atomically per successful dispatch via better-sqlite3 transaction. Exhausted → `'budget_exhausted'`.
+  - **Expiry / lifecycle:** `grant.expires_at <= now` → `'grant_expired'` (with lazy-promotion to `status='expired'`). Any non-`active` status → `'grant_revoked'`.
+  - **Matrix tier remains the upstream gate.** `buildChokepointGate` is unchanged; NO_GO from the matrix denies before JobOrchestrator is even reached. The grant gate is ADDITIVE, not a replacement.
+  - **Phase 4 gates ONLY `JobOrchestrator.dispatch`** (operator's lock #3). `job_inject` + `job_terminate` pass through unchanged at the orchestrator layer — chokepoint CONFIRM-tier matrix still gates them independently.
+  - **All denials carry structured `reason`** (a `GrantDenialReason` enum: `grant_required` | `grant_not_found` | `grant_not_for_actor` | `tool_not_covered` | `target_not_covered` | `budget_exhausted` | `grant_expired` | `grant_revoked`).
+  - **New audit events** (no dual-emit shadows): `grant_consumed { actor_id, grant_id, tool, binding_target, budget_before, budget_after }` and `grant_denied { actor_id, grant_id?, tool, binding_target, budget_before?, reason }`. Retention class `audit`.
+
+### Deferred (NOT built in Phase 4)
+
+  - **General chokepoint scope-awareness** ("Option B" — `buildChokepointGate` itself becoming scope-aware for the whole gated-action subset). Phase 4 narrows scope-awareness to JobOrchestrator only; the chokepoint stays unchanged.
+  - **Federation cluster-global metering** (an actor hitting N daemons shouldn't get N times the budget) — deferred to Phase 5.
+  - **Dashboard exposure of new fields** (`covered_tools`, `covered_targets`, `budget_remaining`, `actor_id`) — `trust_scope_status` MCP tool surfaces them in Phase 4 so operators can query via tool; full dashboard pages defer to a follow-up cycle.
+  - **`job_inject` / `job_terminate` grant gating** — chokepoint matrix tier still gates these.
 
 ## Phase 5 — The federated job-flow
 

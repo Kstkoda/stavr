@@ -183,6 +183,9 @@ function getOrCreateJobOrchestrator(broker: Broker): JobOrchestrator {
     store: broker.store,
     ceiling: ceilingCtx?.ceiling,
     headroomMonitor: ceilingCtx?.monitor,
+    // worker-dispatch Phase 4 — grant-scope-aware enforcement. Trust
+    // store is shared per-broker; getOrCreateTrustStore is idempotent.
+    trustStore: getOrCreateTrustStore(broker),
   });
   jobOrchestratorsByBroker.set(broker, orch);
   return orch;

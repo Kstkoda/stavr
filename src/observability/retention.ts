@@ -54,6 +54,12 @@ export const AUDIT_KINDS: ReadonlySet<string> = new Set([
   'trust_scope_revoked',
   'trust_scope_extended',
   'trust_scope_completed',
+  // worker-dispatch Phase 4 — grant-scope-aware enforcement audit events.
+  // Every grant decision (consumed or denied) is audit-bearing — it's the
+  // forensic record of who used what budget when and why anything was
+  // refused at the JobOrchestrator gate.
+  'grant_consumed',
+  'grant_denied',
   // Decisions — every user/operator approval or refusal
   'decision_request',
   'decision_response',

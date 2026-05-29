@@ -26,6 +26,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { toolError, toolJson } from '../server.js';
+import { logContext } from '../observability/logger.js';
 import { JobOrchestrator, OrchestratorError } from './orchestrator.js';
 import type { JobRecord } from './types.js';
 
@@ -77,6 +78,13 @@ function registerJobDispatch(server: McpServer, orch: JobOrchestrator): void {
     async (args) => {
       try {
         const params = normalizeUnknownArg(args.params, 'params');
+        // worker-dispatch Phase 4 — thread calling actor identity from
+        // AsyncLocalStorage (HTTP middleware in transports.ts stamps it
+        // per request; stdio sessions fall through to the same
+        // `'unstamped-loopback'` default the chokepoint uses). The
+        // orchestrator's grant gate keys peer:* vs operator-shape off
+        // this; absent value defaults to operator-shape inside dispatch.
+        const actorId = logContext.getStore()?.actor_id;
         const result = await orch.dispatch({
           binding_kind: args.binding_kind,
           binding_target: args.binding_target,
@@ -87,6 +95,7 @@ function registerJobDispatch(server: McpServer, orch: JobOrchestrator): void {
           federation_role: args.federation_role,
           originator_peer: args.originator_peer,
           grant_id: args.grant_id,
+          actor_id: actorId,
         });
         return toolJson({ job: serializeJob(result.job) });
       } catch (err) {

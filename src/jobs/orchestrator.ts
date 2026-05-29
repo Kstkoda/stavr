@@ -41,6 +41,8 @@ import type {
   HeadroomSnapshot,
   HostHeadroomMonitor,
 } from '../observability/host-headroom-poller.js';
+import type { TrustStore } from '../trust/store.js';
+import type { GrantDenialReason } from '../trust/types.js';
 
 const IDLE_AFTER_MS = 5 * 60 * 1000;
 
@@ -79,6 +81,15 @@ export interface JobOrchestratorOptions {
    * handles (out of scope for 3a).
    */
   maxRuntimeMsCeiling?: number;
+  /**
+   * worker-dispatch Phase 4 — grant-scope-aware enforcement. When wired,
+   * every dispatch passes through TrustStore.resolveGrant +
+   * TrustStore.decrementBudget. Omitting trustStore disables the gate
+   * (fail-open for callers that haven't migrated — e.g. existing tests
+   * that don't exercise grants). The MCP-tool-wired path always passes
+   * it in via src/jobs/tools.ts.
+   */
+  trustStore?: TrustStore;
 }
 
 export interface JobDispatchInput {
@@ -91,6 +102,18 @@ export interface JobDispatchInput {
   federation_role?: JobRecord['federation_role'];
   originator_peer?: string;
   grant_id?: string;
+  /**
+   * worker-dispatch Phase 4 — calling actor identity. Drives the
+   * peer:* vs operator-shape distinction in the grant gate. The MCP
+   * tool handler (src/jobs/tools.ts) reads this from
+   * `logContext.actor_id` (AsyncLocalStorage stamped by HTTP
+   * middleware in transports.ts); stdio sessions fall through to
+   * `'unstamped-loopback'`. Optional only because pre-Phase-4 callers
+   * (tests, future programmatic callers) may not have it; absent
+   * actor_id with a trustStore wired implicitly behaves as
+   * `'unstamped-loopback'` (operator-shape).
+   */
+  actor_id?: string;
 }
 
 export class OrchestratorError extends Error {
@@ -98,6 +121,48 @@ export class OrchestratorError extends Error {
     super(message);
   }
 }
+
+/**
+ * worker-dispatch Phase 4 — grant-consumed audit event payload, emitted
+ * adjacent to the budget decrement so the DB write and the audit event
+ * are never separated by a throwable admission gate.
+ */
+interface GrantConsumedInfo {
+  actor_id: string;
+  grant_id: string;
+  tool: string;
+  binding_target: string;
+  budget_before: number | null;
+  budget_after: number | null;
+}
+
+/**
+ * worker-dispatch Phase 4 — return shape of the RESOLVE phase of the grant
+ * gate (split from the DECREMENT phase so a failed admission gate between
+ * the two cannot leak budget). The resolve phase produces one of:
+ *
+ *   - `fail-open`: trustStore unwired — caller passes input.grant_id through
+ *     to JobRecord verbatim, no decrement, no audit event.
+ *   - `sentinel`: operator-shape with no covering grant — undefined grant_id
+ *     on JobRecord, no decrement, no audit event.
+ *   - `pending`: real grant resolved, coverage passed, but budget has NOT
+ *     yet been decremented. Caller MUST invoke decrementResolvedGrant after
+ *     admission gates pass and treat its failure as a grant_denied throw.
+ *
+ * Any denial during resolve emits grant_denied + throws inside
+ * resolveGrantOrThrow — it never returns a denial to the caller.
+ */
+type GrantResolvePhase =
+  | { kind: 'fail-open'; passthroughGrantId: string | undefined }
+  | { kind: 'sentinel' }
+  | {
+      kind: 'pending';
+      grantId: string;
+      budgetBefore: number | null;
+      actorIdForAudit: string;
+      toolName: string;
+      bindingTarget: string;
+    };
 
 interface LiveJob {
   record: JobRecord;
@@ -120,6 +185,10 @@ export class JobOrchestrator {
   private headroomMonitor: HostHeadroomMonitor | undefined;
   private readonly maxConcurrentPerActor: number | undefined;
   private readonly maxRuntimeMsCeiling: number | undefined;
+  // worker-dispatch Phase 4 — when wired, the dispatch path passes through
+  // resolveGrant + decrementBudget. Late-bindable via setTrustStore so the
+  // server can construct the orchestrator before the trust store exists.
+  private trustStore: TrustStore | undefined;
 
   constructor(opts: JobOrchestratorOptions) {
     this.broker = opts.broker;
@@ -129,6 +198,18 @@ export class JobOrchestrator {
     this.headroomMonitor = opts.headroomMonitor;
     this.maxConcurrentPerActor = opts.maxConcurrentPerActor;
     this.maxRuntimeMsCeiling = opts.maxRuntimeMsCeiling;
+    this.trustStore = opts.trustStore;
+  }
+
+  /**
+   * worker-dispatch Phase 4 — late-bind the trust store so the daemon's
+   * construction order (broker → orchestrator → trust store) doesn't
+   * force eager trust-store creation. Idempotent: re-calling replaces
+   * the binding. Absent trustStore disables the grant gate (fail-open
+   * for tests / programmatic callers that don't exercise grants).
+   */
+  setTrustStore(trustStore: TrustStore): void {
+    this.trustStore = trustStore;
   }
 
   /** Late-bind the ceiling + headroom monitor — mirrors the WorkerOrchestrator
@@ -219,12 +300,28 @@ export class JobOrchestrator {
     }
     const validated = parsed.data;
 
-    // Phase 3a — admission control. Order: pre-dispatch budget shape check
-    // (cheapest, no I/O), then per-actor concurrency, then global host
-    // ceiling. The most-actionable refusal wins; each emits a
-    // host_ceiling_refused event so the dashboard can surface why.
+    // Phase 3a/4 — admission control. Order:
+    //   1. budget shape (cheapest, no I/O)
+    //   2. grant RESOLVE phase (resolveGrant + coverage check; emits
+    //      grant_denied + throws before any slot is reserved)
+    //   3. per-actor concurrency (reserves a slot)
+    //   4. host ceiling (releases slot on throw)
+    //   5. grant DECREMENT phase (atomic budget write; releases slot +
+    //      emits grant_denied + throws on race-loss)
+    //   6. JobRecord insert + job_dispatched + grant_consumed — co-located
+    //      so the DB decrement and the audit event are never separated by
+    //      a throwable gate.
+    //
+    // The resolve/decrement split is deliberate: a denied or coverage-
+    // failed grant throws before checkPerActorConcurrency reserves, AND a
+    // throw between resolve and decrement (concurrency or host ceiling)
+    // can no longer drain grant budget on a dispatch that never produced
+    // a running job.
     const actorId = resolveActorId(input);
     this.checkBudgetShape(input.budget);
+
+    const grantResolution = await this.resolveGrantOrThrow(input);
+
     await this.checkPerActorConcurrency(actorId, key, input.name);
     try {
       await this.checkHostAdmission(key, input.name);
@@ -234,6 +331,45 @@ export class JobOrchestrator {
       this.releaseActorSlot(actorId);
       throw err;
     }
+
+    // Decrement the grant budget AFTER admission so a throw from the
+    // concurrency/host gates above cannot drain a grant on a dispatch
+    // that never produced a running job. Failure here (grant raced into
+    // revoked/expired/exhausted between resolve and decrement) is a
+    // grant_denied throw — release the actor slot first to mirror the
+    // checkHostAdmission catch above.
+    let consumedGrantId: string | undefined;
+    let grantConsumedInfo: GrantConsumedInfo | undefined;
+    if (grantResolution.kind === 'fail-open') {
+      consumedGrantId = grantResolution.passthroughGrantId;
+    } else if (grantResolution.kind === 'pending') {
+      const decrement = this.trustStore!.decrementBudget(grantResolution.grantId);
+      if (!decrement.ok) {
+        this.releaseActorSlot(actorId);
+        await this.emitGrantDenied({
+          actor_id: grantResolution.actorIdForAudit,
+          grant_id: grantResolution.grantId,
+          tool: grantResolution.toolName,
+          binding_target: grantResolution.bindingTarget,
+          budget_before: grantResolution.budgetBefore,
+          reason: decrement.reason,
+        });
+        throw new OrchestratorError(
+          'grant_denied',
+          `dispatch denied: ${decrement.reason} (actor=${grantResolution.actorIdForAudit}, grant=${grantResolution.grantId})`,
+        );
+      }
+      consumedGrantId = grantResolution.grantId;
+      grantConsumedInfo = {
+        actor_id: grantResolution.actorIdForAudit,
+        grant_id: grantResolution.grantId,
+        tool: grantResolution.toolName,
+        binding_target: grantResolution.bindingTarget,
+        budget_before: grantResolution.budgetBefore,
+        budget_after: decrement.budget_after,
+      };
+    }
+    // sentinel kind: consumedGrantId stays undefined, no audit event.
 
     const id = randomUUID();
     const startedAt = new Date().toISOString();
@@ -246,6 +382,9 @@ export class JobOrchestrator {
 
     // Insert the dispatched-state row BEFORE calling the binding, so a crash
     // mid-dispatch leaves a forensic trail rather than a silent failure.
+    // Phase 4 — grant_id reflects what the gate RESOLVED to (vs what the
+    // caller PASSED in input). Sentinel resolutions leave it undefined,
+    // matching the operator's "local hot path stays out of audit" lock.
     const dispatchedRecord: JobRecord = {
       id,
       name: input.name,
@@ -260,7 +399,7 @@ export class JobOrchestrator {
       audit_correlation_id: input.audit_correlation_id,
       federation_role: input.federation_role,
       originator_peer: input.originator_peer,
-      grant_id: input.grant_id,
+      grant_id: consumedGrantId,
     };
     this.store.upsertJob(dispatchedRecord);
     await this.publish(
@@ -276,6 +415,19 @@ export class JobOrchestrator {
       undefined,
       sourceAgent(binding, input.name),
     );
+
+    // Phase 4 — grant_consumed audit event. Fires only for real grants
+    // (sentinel resolutions don't get an event per the operator lock).
+    // Emitted adjacent to the decrement region — no throwable admission
+    // gate between the DB write above and this audit event.
+    if (grantConsumedInfo) {
+      await this.publish(
+        'grant_consumed',
+        grantConsumedInfo,
+        undefined,
+        sourceAgent(binding, input.name),
+      );
+    }
 
     const ctx: BindingContext = {
       jobId: id,
@@ -579,6 +731,96 @@ export class JobOrchestrator {
       }
     }, this.idleAfterMs);
     if (typeof live.idleTimer.unref === 'function') live.idleTimer.unref();
+  }
+
+  /**
+   * worker-dispatch Phase 4 — grant gate RESOLVE phase. Runs resolveGrant +
+   * coverage check ONLY; the atomic budget decrement happens later in
+   * dispatch(), AFTER per-actor concurrency and host admission gates,
+   * so a throw from those gates cannot drain a grant on a dispatch that
+   * never produced a running job.
+   *
+   * On any denial: emits `grant_denied` with the structured reason and
+   * throws OrchestratorError BEFORE any side effects (no concurrency
+   * slot reserved, no JobRecord row inserted). The throw uses code
+   * 'grant_denied' so MCP-tool callers can pattern-match.
+   *
+   * Returns:
+   *   - `fail-open` when no trustStore is wired (pre-Phase-4 callers).
+   *     Caller's input.grant_id passes through to JobRecord verbatim.
+   *   - `sentinel` for operator-shape actors with no covering grant.
+   *     JobRecord.grant_id stays undefined; no grant_consumed event.
+   *   - `pending` for real grants — caller MUST decrement before the
+   *     JobRecord insert and treat decrement failure as grant_denied.
+   *
+   * Insertion site: dispatch() admission pipeline, between
+   * `checkBudgetShape` (cheap, no I/O) and `checkPerActorConcurrency`
+   * (which RESERVES a slot). Failing the grant before concurrency
+   * reservation preserves the lock "denied grants do NOT burn per-actor
+   * concurrency."
+   */
+  private async resolveGrantOrThrow(input: JobDispatchInput): Promise<GrantResolvePhase> {
+    if (!this.trustStore) {
+      return { kind: 'fail-open', passthroughGrantId: input.grant_id };
+    }
+    // Phase 4 gates only the `job_dispatch` MCP tool surface — that's the
+    // hardcoded tool name. job_inject + job_terminate are NOT gated at
+    // the JobOrchestrator layer per the operator's lock (chokepoint
+    // CONFIRM-tier matrix still gates them).
+    const toolName = 'job_dispatch';
+    // Treat absent actor_id as 'unstamped-loopback' (operator-shape) —
+    // mirrors the chokepoint default in src/security/decision-gate.ts.
+    const actorId = input.actor_id ?? 'unstamped-loopback';
+
+    const resolution = this.trustStore.resolveGrant({
+      actor_id: actorId,
+      tool: toolName,
+      binding_target: input.binding_target,
+      grant_id: input.grant_id,
+    });
+
+    if (resolution.kind === 'denied') {
+      await this.emitGrantDenied({
+        actor_id: actorId,
+        grant_id: resolution.grant_id,
+        tool: toolName,
+        binding_target: input.binding_target,
+        reason: resolution.reason,
+      });
+      throw new OrchestratorError(
+        'grant_denied',
+        `dispatch denied: ${resolution.reason} (actor=${actorId}, tool=${toolName}, target=${input.binding_target}${resolution.grant_id ? `, grant=${resolution.grant_id}` : ''})`,
+      );
+    }
+
+    if (resolution.kind === 'sentinel') {
+      return { kind: 'sentinel' };
+    }
+
+    return {
+      kind: 'pending',
+      grantId: resolution.grant_id,
+      budgetBefore: resolution.budget_before,
+      actorIdForAudit: actorId,
+      toolName,
+      bindingTarget: input.binding_target,
+    };
+  }
+
+  private async emitGrantDenied(payload: {
+    actor_id: string;
+    grant_id?: string;
+    tool: string;
+    binding_target: string;
+    budget_before?: number | null;
+    reason: GrantDenialReason;
+  }): Promise<void> {
+    await this.broker.publish({
+      kind: 'grant_denied',
+      at: new Date().toISOString(),
+      source_agent: 'stavr-jobs',
+      payload,
+    });
   }
 
   /**
